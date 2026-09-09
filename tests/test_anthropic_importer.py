@@ -191,6 +191,10 @@ def test_parses_manifest_and_every_supported_archive(tmp_path: Path) -> None:
         "memory_file_snapshot": 1,
         "conversation_message": 2,
     }
+    namespaces = Counter(event.source_record_namespace for event in events)
+    assert namespaces["message"] == 1
+    assert namespaces["design_message"] == 1
+    assert namespaces["project"] == 1
 
 
 def test_uses_visible_content_blocks_and_preserves_provider_fields(tmp_path: Path) -> None:

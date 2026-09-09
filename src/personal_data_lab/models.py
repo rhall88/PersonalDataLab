@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any, Self
+from typing import Any, Literal, Self
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -14,12 +14,19 @@ class NormalizedEvent(BaseModel):
     occurred_at: datetime | None
     source: str
     event_type: str
+    source_record_namespace: str = "event"
     actor_identity: str | None = None
     text: str | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
     source_record_id: str
     source_node_id: str | None = None
     parent_source_node_id: str | None = None
+    provider_updated_at: datetime | None = None
+    authority_at: datetime | None = None
+    authority_kind: Literal[
+        "provider_revision", "provider_updated_at", "exported_at", "unknown"
+    ] = "unknown"
+    lifecycle_state: Literal["active", "provider_deleted"] = "active"
 
 
 class NormalizedConversation(BaseModel):
@@ -29,11 +36,18 @@ class NormalizedConversation(BaseModel):
 
     source: str
     source_conversation_id: str
+    source_record_namespace: str = "conversation"
     title: str | None = None
     started_at: datetime | None = None
     ended_at: datetime | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
     events: tuple[NormalizedEvent, ...] = ()
+    provider_updated_at: datetime | None = None
+    authority_at: datetime | None = None
+    authority_kind: Literal[
+        "provider_revision", "provider_updated_at", "exported_at", "unknown"
+    ] = "unknown"
+    lifecycle_state: Literal["active", "provider_deleted"] = "active"
 
 
 class ParsedExport(BaseModel):
@@ -48,6 +62,9 @@ class ParsedExport(BaseModel):
     sha256: str
     size_bytes: int
     exported_at: datetime | None = None
+    export_id: str | None = None
+    snapshot_kind: Literal["unknown", "partial", "complete"] = "unknown"
+    snapshot_scope: str = "provider"
     conversations: tuple[NormalizedConversation, ...] = ()
     events: tuple[NormalizedEvent, ...] = ()
 
@@ -83,6 +100,18 @@ class ImportResult(BaseModel):
     database_conversations: int
     source_events: int
     database_events: int
+    run_id: int | None = None
+    inserted_conversations: int = 0
+    updated_conversations: int = 0
+    unchanged_conversations: int = 0
+    stale_conversations: int = 0
+    tombstoned_conversations: int = 0
+    inserted_events: int = 0
+    updated_events: int = 0
+    unchanged_events: int = 0
+    stale_events: int = 0
+    tombstoned_events: int = 0
+    short_circuited: bool = False
 
     @property
     def reconciled(self) -> bool:

@@ -8,6 +8,8 @@ This repository contains the completed foundation and its first two source impor
 - PostgreSQL 18 plus pgvector
 - canonical records (`people`, `identities`, `conversations`, `events`, and `attachments`)
 - source-file provenance (`source_files`, `source_file_conversations`, and `source_file_events`)
+- import-run and per-observation provenance with deterministic canonical fingerprints
+- cumulative reconciliation for inserts, genuine updates, unchanged overlap, and stale data
 - OpenAI data-export importer
 - Anthropic data-export importer
 - reconciliation tests
@@ -64,6 +66,20 @@ py -3.12 -m venv .venv
 python -m pip install --upgrade pip
 python -m pip install -e ".[dev]"
 ```
+
+### Upgrade an existing PR2 database
+
+Initialization SQL is only applied when PostgreSQL creates an empty data volume. Back up an
+existing database, install the new importer, and apply the tracked migrations explicitly:
+
+```powershell
+personal-data-lab migrate
+```
+
+The command is idempotent. It backfills provider namespaces and canonical fingerprints and
+converts existing source-file memberships into compact legacy observations. Those migrated
+observations are marked as membership-only provenance because the old schema did not retain the
+content fingerprint seen in each historical export.
 
 ## 5. Store untouched exports
 
@@ -148,15 +164,28 @@ but they are derived data and are not importer inputs. The untouched manifest an
 
 ## Canonical records and export provenance
 
-A logical provider conversation is canonical by `(source, source_conversation_id)`. A
-logical event is canonical by `(source, source_record_id)`. Importing overlapping
-exports therefore does not duplicate conversations or events. The join tables retain
-every observation:
+A logical provider record is canonical by `(source, source_record_namespace,
+source_record_id)`. Conversations retain their provider conversation ID under the same
+namespaced rule. Namespaces prevent IDs reused by different provider products or record types
+from colliding.
+
+Each canonical row stores a deterministic content fingerprint, the authority timestamp that
+selected its current representation, and a revision counter. Imports classify observations as
+new, updated, unchanged, or stale. Unchanged overlap does not update the canonical row, and an
+older export imported later cannot overwrite a newer authoritative representation. Differing
+content with equal or incomparable authority fails closed instead of using invocation order.
+
+The database keeps both compatibility joins and run-scoped observations:
 
 ```text
 source_files ── source_file_conversations ── conversations
 source_files ── source_file_events ───────── events
+import_runs ─── event_observations ───────── events
 ```
+
+Observation rows store keys and fingerprints, not another copy of canonical text or JSON. A later
+export that omits an older record does not delete or deactivate it: absence is not a provider
+deletion signal.
 
 For OpenAI messages, `source_record_id` contains `message.id`, `source_node_id` contains
 the mapping-node ID, and `parent_source_node_id` contains the structural parent-node ID.
@@ -206,6 +235,10 @@ non-sensitive CI-only password.
   does not silently discard them.
 - Re-importing an identical source is idempotent, and overlapping exports add only new
   canonical records while retaining complete provenance.
+- Exact completed imports are short-circuited, and unchanged records in distinct overlapping
+  exports do not rewrite canonical payloads.
+- Older exports cannot regress newer canonical content; ambiguous equal-authority changes fail.
+- Records missing from later exports remain part of the cumulative historical corpus.
 - Attachments remain filesystem-backed; PostgreSQL stores metadata and paths only.
 - The database is exposed only on the local machine.
 

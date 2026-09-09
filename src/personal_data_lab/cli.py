@@ -7,6 +7,7 @@ from collections.abc import Sequence
 from .anthropic_importer import parse_anthropic_export
 from .config import database_url
 from .database import create_database_engine, import_openai_export, import_parsed_exports
+from .migrations import LATEST_SCHEMA_VERSION, migrate_database
 from .openai_importer import parse_openai_export
 
 
@@ -22,6 +23,8 @@ def _parser() -> argparse.ArgumentParser:
     )
     anthropic.add_argument("manifest", help="manifest JSON beside the untouched ZIP archives")
     anthropic.add_argument("--database-url", help="overrides DATABASE_URL from .env")
+    migrate = subparsers.add_parser("migrate", help="upgrade an existing database schema")
+    migrate.add_argument("--database-url", help="overrides DATABASE_URL from .env")
     return parser
 
 
@@ -58,7 +61,44 @@ def main(argv: Sequence[str] | None = None) -> int:
                     ),
                     "source_events": sum(result.source_events for result in results),
                     "database_events": sum(result.database_events for result in results),
+                    "inserted_conversations": sum(
+                        result.inserted_conversations for result in results
+                    ),
+                    "updated_conversations": sum(
+                        result.updated_conversations for result in results
+                    ),
+                    "unchanged_conversations": sum(
+                        result.unchanged_conversations for result in results
+                    ),
+                    "stale_conversations": sum(
+                        result.stale_conversations for result in results
+                    ),
+                    "tombstoned_conversations": sum(
+                        result.tombstoned_conversations for result in results
+                    ),
+                    "inserted_events": sum(result.inserted_events for result in results),
+                    "updated_events": sum(result.updated_events for result in results),
+                    "unchanged_events": sum(result.unchanged_events for result in results),
+                    "stale_events": sum(result.stale_events for result in results),
+                    "tombstoned_events": sum(
+                        result.tombstoned_events for result in results
+                    ),
+                    "short_circuited": all(result.short_circuited for result in results),
                     "reconciled": all(result.reconciled for result in results),
+                },
+                indent=2,
+            )
+        )
+        return 0
+    if args.command == "migrate":
+        engine = create_database_engine(database_url(args.database_url))
+        applied = migrate_database(engine)
+        print(
+            json.dumps(
+                {
+                    "schema_version": LATEST_SCHEMA_VERSION,
+                    "applied": list(applied),
+                    "changed": bool(applied),
                 },
                 indent=2,
             )

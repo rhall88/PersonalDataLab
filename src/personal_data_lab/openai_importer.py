@@ -90,12 +90,14 @@ def _normalize_conversation(raw: Any, index: int) -> NormalizedConversation:
     if not conversation_id:
         raise OpenAIExportError(f"conversation at index {index} has no id")
 
+    updated_at = _timestamp(raw.get("update_time"))
     events: list[NormalizedEvent] = []
     for node_id, message, parent_id in _iter_messages(raw):
         author = message.get("author") if isinstance(message.get("author"), dict) else {}
         role = author.get("role") if isinstance(author.get("role"), str) else None
         raw_message_id = message.get("id")
         message_id = str(raw_message_id) if raw_message_id else node_id
+        message_updated_at = _timestamp(message.get("update_time")) or updated_at
         content = message.get("content")
         content_type = content.get("content_type") if isinstance(content, dict) else None
         metadata = {
@@ -113,21 +115,27 @@ def _normalize_conversation(raw: Any, index: int) -> NormalizedConversation:
                 occurred_at=_timestamp(message.get("create_time")),
                 source=SOURCE,
                 event_type="conversation_message",
+                source_record_namespace="message",
                 actor_identity=role,
                 text=_message_text(content),
                 metadata=metadata,
                 source_record_id=message_id,
                 source_node_id=node_id,
                 parent_source_node_id=parent_id,
+                provider_updated_at=message_updated_at,
+                authority_at=message_updated_at,
+                authority_kind=(
+                    "provider_updated_at" if message_updated_at is not None else "unknown"
+                ),
             )
         )
 
     occurred = [event.occurred_at for event in events if event.occurred_at is not None]
     created_at = _timestamp(raw.get("create_time"))
-    updated_at = _timestamp(raw.get("update_time"))
     return NormalizedConversation(
         source=SOURCE,
         source_conversation_id=str(conversation_id),
+        source_record_namespace="chat",
         title=raw.get("title") if isinstance(raw.get("title"), str) else None,
         started_at=min(occurred) if occurred else created_at,
         ended_at=max(occurred) if occurred else updated_at or created_at,
@@ -137,6 +145,9 @@ def _normalize_conversation(raw: Any, index: int) -> NormalizedConversation:
             if key in raw and raw[key] is not None
         },
         events=tuple(events),
+        provider_updated_at=updated_at,
+        authority_at=updated_at,
+        authority_kind="provider_updated_at" if updated_at is not None else "unknown",
     )
 
 
@@ -213,6 +224,8 @@ def parse_openai_export(source_path: str | Path) -> ParsedExport:
             original_path=original_path,
             sha256=sha256,
             size_bytes=size_bytes,
+            snapshot_kind="complete",
+            snapshot_scope="account",
             conversations=conversations,
         )
     except ValidationError as error:

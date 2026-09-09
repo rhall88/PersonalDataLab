@@ -56,6 +56,9 @@ def test_parses_standalone_conversations_json(tmp_path: Path) -> None:
     assert parsed.conversations[0].events[1].text == "Hi\nthere"
     assert parsed.conversations[0].events[1].actor_identity == "assistant"
     assert parsed.conversations[0].events[0].source_record_id == "message-user"
+    assert parsed.conversations[0].source_record_namespace == "chat"
+    assert parsed.conversations[0].events[0].source_record_namespace == "message"
+    assert parsed.conversations[0].events[0].authority_kind == "provider_updated_at"
     assert parsed.conversations[0].events[0].source_node_id == "node-user"
     assert parsed.conversations[0].events[1].parent_source_node_id == "node-user"
     assert (

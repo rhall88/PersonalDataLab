@@ -58,6 +58,11 @@ def _truncate(engine: Engine) -> None:
             text(
                 """
                 TRUNCATE TABLE
+                    event_observations,
+                    conversation_observations,
+                    attachment_observations,
+                    import_run_source_files,
+                    source_file_locations,
                     attachments,
                     source_file_events,
                     source_file_conversations,
@@ -65,7 +70,8 @@ def _truncate(engine: Engine) -> None:
                     identities,
                     people,
                     conversations,
-                    source_files
+                    source_files,
+                    import_runs
                 RESTART IDENTITY CASCADE
                 """
             ),
@@ -86,7 +92,13 @@ def _message(node_id: str, message_id: str, parent_id: str, body: str, offset: i
     }
 
 
-def _write_export(directory: Path, messages: list[dict], *, title: str = "Synthetic") -> Path:
+def _write_export(
+    directory: Path,
+    messages: list[dict],
+    *,
+    title: str = "Synthetic",
+    updated_at: int = 1_700_000_100,
+) -> Path:
     directory.mkdir()
     mapping: dict[str, Any] = {"root": {"id": "root", "parent": None, "message": None}}
     for item in messages:
@@ -100,7 +112,7 @@ def _write_export(directory: Path, messages: list[dict], *, title: str = "Synthe
             "id": "conversation-1",
             "title": title,
             "create_time": 1_700_000_000,
-            "update_time": 1_700_000_100,
+            "update_time": updated_at,
             "mapping": mapping,
         }
     ]
@@ -153,10 +165,30 @@ def test_identical_import_twice_is_idempotent(database_engine: Engine, tmp_path:
     parsed = parse_openai_export(path)
 
     first = import_openai_export(database_engine, parsed)
+    with database_engine.connect() as connection:
+        canonical_before = connection.execute(
+            text(
+                """
+                SELECT canonical_revision, canonical_updated_at
+                FROM events WHERE source_record_id = 'message-a'
+                """
+            )
+        ).one()
     second = import_openai_export(database_engine, parsed)
+    with database_engine.connect() as connection:
+        canonical_after = connection.execute(
+            text(
+                """
+                SELECT canonical_revision, canonical_updated_at
+                FROM events WHERE source_record_id = 'message-a'
+                """
+            )
+        ).one()
 
     assert first.source_file_id == second.source_file_id
     assert second.reconciled
+    assert second.short_circuited
+    assert tuple(canonical_before) == tuple(canonical_after)
     assert _counts(database_engine) == {
         "source_files": 1,
         "conversations": 1,
@@ -184,6 +216,7 @@ def test_overlapping_exports_preserve_membership_without_canonical_duplicates(
             _message("node-b", "message-b", "node-a", "B", 2),
             _message("node-c", "message-c", "node-b", "C", 3),
         ],
+        updated_at=1_700_000_200,
     )
     parsed_a = parse_openai_export(export_a)
     parsed_b = parse_openai_export(export_b)
@@ -193,6 +226,10 @@ def test_overlapping_exports_preserve_membership_without_canonical_duplicates(
     result_b = import_openai_export(database_engine, parsed_b)
 
     assert result_a.reconciled and result_b.reconciled
+    assert result_a.inserted_events == 2
+    assert result_b.inserted_events == 1
+    assert result_b.unchanged_events == 2
+    assert result_b.updated_events == 0
     assert _counts(database_engine) == {
         "source_files": 2,
         "conversations": 1,
@@ -230,10 +267,13 @@ def test_later_export_updates_canonical_event_and_keeps_both_memberships(
     export_b = _write_export(
         tmp_path / "export-b",
         [_message("node-a", "message-a", "root", "hello edited", 1)],
+        updated_at=1_700_000_200,
     )
 
     import_openai_export(database_engine, parse_openai_export(export_a))
-    import_openai_export(database_engine, parse_openai_export(export_b))
+    result = import_openai_export(database_engine, parse_openai_export(export_b))
+
+    assert result.updated_events == 1
 
     assert _counts(database_engine) == {
         "source_files": 2,
@@ -253,7 +293,151 @@ def test_later_export_updates_canonical_event_and_keeps_both_memberships(
             ),
             {},
         ).one()
+        observations = connection.execute(
+            text(
+                """
+                SELECT outcome, encode(observed_content_fingerprint, 'hex')
+                FROM event_observations eo
+                JOIN events e ON e.id = eo.event_id
+                WHERE e.source_record_id = 'message-a'
+                ORDER BY eo.import_run_id
+                """
+            )
+        ).all()
     assert tuple(event) == ("hello edited", "node-a", "root")
+    assert [row[0] for row in observations] == ["inserted", "updated"]
+    assert len({row[1] for row in observations}) == 2
+
+
+def test_older_export_imported_later_cannot_regress_canonical_event(
+    database_engine: Engine,
+    tmp_path: Path,
+) -> None:
+    newer = _write_export(
+        tmp_path / "newer",
+        [_message("node-a", "message-a", "root", "current", 1)],
+        updated_at=1_700_000_300,
+    )
+    older = _write_export(
+        tmp_path / "older",
+        [_message("node-a", "message-a", "root", "stale", 1)],
+        updated_at=1_700_000_200,
+    )
+
+    import_openai_export(database_engine, parse_openai_export(newer))
+    stale = import_openai_export(database_engine, parse_openai_export(older))
+
+    assert stale.stale_events == 1
+    assert stale.updated_events == 0
+    with database_engine.connect() as connection:
+        row = connection.execute(
+            text(
+                """
+                SELECT text, canonical_revision
+                FROM events
+                WHERE source = 'openai'
+                  AND source_record_namespace = 'message'
+                  AND source_record_id = 'message-a'
+                """
+            )
+        ).one()
+    assert tuple(row) == ("current", 1)
+
+
+def test_later_export_absence_keeps_historical_canonical_event(
+    database_engine: Engine,
+    tmp_path: Path,
+) -> None:
+    baseline = _write_export(
+        tmp_path / "baseline",
+        [
+            _message("node-a", "message-a", "root", "A", 1),
+            _message("node-b", "message-b", "root", "B", 2),
+        ],
+        updated_at=1_700_000_100,
+    )
+    later = _write_export(
+        tmp_path / "later",
+        [_message("node-b", "message-b", "root", "B", 2)],
+        updated_at=1_700_000_200,
+    )
+
+    import_openai_export(database_engine, parse_openai_export(baseline))
+    import_openai_export(database_engine, parse_openai_export(later))
+
+    with database_engine.connect() as connection:
+        record_ids = connection.execute(
+            text(
+                """
+                SELECT source_record_id
+                FROM events
+                WHERE source = 'openai' AND source_record_namespace = 'message'
+                ORDER BY source_record_id
+                """
+            )
+        ).scalars().all()
+    assert list(record_ids) == ["message-a", "message-b"]
+
+
+def test_equal_authority_with_different_content_rolls_back(
+    database_engine: Engine,
+    tmp_path: Path,
+) -> None:
+    first = _write_export(
+        tmp_path / "first",
+        [_message("node-a", "message-a", "root", "first", 1)],
+        updated_at=1_700_000_100,
+    )
+    conflicting = _write_export(
+        tmp_path / "conflicting",
+        [_message("node-a", "message-a", "root", "conflict", 1)],
+        updated_at=1_700_000_100,
+    )
+    import_openai_export(database_engine, parse_openai_export(first))
+
+    with pytest.raises(ReconciliationError, match="equal authority"):
+        import_openai_export(database_engine, parse_openai_export(conflicting))
+
+    with database_engine.connect() as connection:
+        text_value = connection.execute(
+            text("SELECT text FROM events WHERE source_record_id = 'message-a'")
+        ).scalar_one()
+    assert text_value == "first"
+
+
+def test_event_namespaces_allow_provider_ids_to_repeat(
+    database_engine: Engine,
+) -> None:
+    parsed = ParsedExport(
+        source="synthetic",
+        parser_version="synthetic-v1",
+        filename="synthetic.json",
+        original_path="synthetic://namespaces",
+        sha256="f" * 64,
+        size_bytes=1,
+        events=(
+            NormalizedEvent(
+                occurred_at=None,
+                source="synthetic",
+                event_type="first",
+                source_record_namespace="first_kind",
+                source_record_id="same-id",
+            ),
+            NormalizedEvent(
+                occurred_at=None,
+                source="synthetic",
+                event_type="second",
+                source_record_namespace="second_kind",
+                source_record_id="same-id",
+            ),
+        ),
+    )
+
+    result = import_parsed_exports(database_engine, (parsed,))[0]
+
+    assert result.inserted_events == 2
+    with database_engine.connect() as connection:
+        assert connection.execute(text("SELECT COUNT(*) FROM events")).scalar_one() == 2
 
 
 def test_parent_node_relationship_resolves_within_conversation(
