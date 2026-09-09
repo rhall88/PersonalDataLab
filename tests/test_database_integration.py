@@ -1,0 +1,319 @@
+from __future__ import annotations
+
+import json
+import os
+from collections.abc import Iterator
+from datetime import UTC, datetime
+from pathlib import Path
+from typing import Any
+
+import pytest
+from sqlalchemy import Engine, text
+
+from personal_data_lab.database import (
+    ReconciliationError,
+    create_database_engine,
+    import_openai_export,
+)
+from personal_data_lab.models import NormalizedConversation, NormalizedEvent, ParsedExport
+from personal_data_lab.openai_importer import parse_openai_export
+
+pytestmark = pytest.mark.integration
+
+TABLES = (
+    "source_files",
+    "conversations",
+    "events",
+    "source_file_conversations",
+    "source_file_events",
+)
+
+
+@pytest.fixture(scope="module")
+def database_engine() -> Iterator[Engine]:
+    test_database_url = os.getenv("TEST_DATABASE_URL")
+    if not test_database_url:
+        pytest.skip("TEST_DATABASE_URL is not set")
+    engine = create_database_engine(test_database_url)
+    with engine.connect() as connection:
+        database_name = str(connection.execute(text("SELECT current_database()"), {}).scalar_one())
+    if not database_name.endswith("_test"):
+        engine.dispose()
+        pytest.fail("integration tests require a database name ending in '_test'")
+    yield engine
+    engine.dispose()
+
+
+@pytest.fixture(autouse=True)
+def clean_database(database_engine: Engine) -> Iterator[None]:
+    _truncate(database_engine)
+    yield
+    _truncate(database_engine)
+
+
+def _truncate(engine: Engine) -> None:
+    with engine.begin() as connection:
+        connection.execute(
+            text(
+                """
+                TRUNCATE TABLE
+                    attachments,
+                    source_file_events,
+                    source_file_conversations,
+                    events,
+                    identities,
+                    people,
+                    conversations,
+                    source_files
+                RESTART IDENTITY CASCADE
+                """
+            ),
+            {},
+        )
+
+
+def _message(node_id: str, message_id: str, parent_id: str, body: str, offset: int) -> dict:
+    return {
+        "node_id": node_id,
+        "parent_id": parent_id,
+        "message": {
+            "id": message_id,
+            "author": {"role": "user" if offset % 2 else "assistant"},
+            "create_time": 1_700_000_000 + offset,
+            "content": {"content_type": "text", "parts": [body]},
+        },
+    }
+
+
+def _write_export(directory: Path, messages: list[dict], *, title: str = "Synthetic") -> Path:
+    directory.mkdir()
+    mapping: dict[str, Any] = {"root": {"id": "root", "parent": None, "message": None}}
+    for item in messages:
+        mapping[item["node_id"]] = {
+            "id": item["node_id"],
+            "parent": item["parent_id"],
+            "message": item["message"],
+        }
+    payload = [
+        {
+            "id": "conversation-1",
+            "title": title,
+            "create_time": 1_700_000_000,
+            "update_time": 1_700_000_100,
+            "mapping": mapping,
+        }
+    ]
+    path = directory / "conversations.json"
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    return path
+
+
+def _counts(engine: Engine) -> dict[str, int]:
+    with engine.connect() as connection:
+        return {
+            table_name: int(
+                connection.execute(text(f"SELECT COUNT(*) FROM {table_name}"), {}).scalar_one()
+            )
+            for table_name in TABLES
+        }
+
+
+def test_first_import(database_engine: Engine, tmp_path: Path) -> None:
+    path = _write_export(
+        tmp_path / "export-a",
+        [
+            _message("node-a", "message-a", "root", "A", 1),
+            _message("node-b", "message-b", "node-a", "B", 2),
+        ],
+    )
+
+    result = import_openai_export(database_engine, parse_openai_export(path))
+
+    assert result.reconciled
+    assert result.source_conversations == result.database_conversations == 1
+    assert result.source_events == result.database_events == 2
+    assert _counts(database_engine) == {
+        "source_files": 1,
+        "conversations": 1,
+        "events": 2,
+        "source_file_conversations": 1,
+        "source_file_events": 2,
+    }
+
+
+def test_identical_import_twice_is_idempotent(database_engine: Engine, tmp_path: Path) -> None:
+    path = _write_export(
+        tmp_path / "export-a",
+        [
+            _message("node-a", "message-a", "root", "A", 1),
+            _message("node-b", "message-b", "node-a", "B", 2),
+        ],
+    )
+    parsed = parse_openai_export(path)
+
+    first = import_openai_export(database_engine, parsed)
+    second = import_openai_export(database_engine, parsed)
+
+    assert first.source_file_id == second.source_file_id
+    assert second.reconciled
+    assert _counts(database_engine) == {
+        "source_files": 1,
+        "conversations": 1,
+        "events": 2,
+        "source_file_conversations": 1,
+        "source_file_events": 2,
+    }
+
+
+def test_overlapping_exports_preserve_membership_without_canonical_duplicates(
+    database_engine: Engine,
+    tmp_path: Path,
+) -> None:
+    export_a = _write_export(
+        tmp_path / "export-a",
+        [
+            _message("node-a", "message-a", "root", "A", 1),
+            _message("node-b", "message-b", "node-a", "B", 2),
+        ],
+    )
+    export_b = _write_export(
+        tmp_path / "export-b",
+        [
+            _message("node-a", "message-a", "root", "A", 1),
+            _message("node-b", "message-b", "node-a", "B", 2),
+            _message("node-c", "message-c", "node-b", "C", 3),
+        ],
+    )
+    parsed_a = parse_openai_export(export_a)
+    parsed_b = parse_openai_export(export_b)
+    assert parsed_a.sha256 != parsed_b.sha256
+
+    result_a = import_openai_export(database_engine, parsed_a)
+    result_b = import_openai_export(database_engine, parsed_b)
+
+    assert result_a.reconciled and result_b.reconciled
+    assert _counts(database_engine) == {
+        "source_files": 2,
+        "conversations": 1,
+        "events": 3,
+        "source_file_conversations": 2,
+        "source_file_events": 5,
+    }
+    with database_engine.connect() as connection:
+        rows = connection.execute(
+            text(
+                """
+                SELECT sfe.source_file_id, e.source_record_id
+                FROM source_file_events sfe
+                JOIN events e ON e.id = sfe.event_id
+                ORDER BY sfe.source_file_id, e.source_record_id
+                """
+            ),
+            {},
+        ).all()
+    memberships: dict[int, list[str]] = {}
+    for source_file_id, source_record_id in rows:
+        memberships.setdefault(int(source_file_id), []).append(str(source_record_id))
+    assert memberships[result_a.source_file_id] == ["message-a", "message-b"]
+    assert memberships[result_b.source_file_id] == ["message-a", "message-b", "message-c"]
+
+
+def test_later_export_updates_canonical_event_and_keeps_both_memberships(
+    database_engine: Engine,
+    tmp_path: Path,
+) -> None:
+    export_a = _write_export(
+        tmp_path / "export-a",
+        [_message("node-a", "message-a", "root", "hello", 1)],
+    )
+    export_b = _write_export(
+        tmp_path / "export-b",
+        [_message("node-a", "message-a", "root", "hello edited", 1)],
+    )
+
+    import_openai_export(database_engine, parse_openai_export(export_a))
+    import_openai_export(database_engine, parse_openai_export(export_b))
+
+    assert _counts(database_engine) == {
+        "source_files": 2,
+        "conversations": 1,
+        "events": 1,
+        "source_file_conversations": 2,
+        "source_file_events": 2,
+    }
+    with database_engine.connect() as connection:
+        event = connection.execute(
+            text(
+                """
+                SELECT text, source_node_id, parent_source_node_id
+                FROM events
+                WHERE source = 'openai' AND source_record_id = 'message-a'
+                """
+            ),
+            {},
+        ).one()
+    assert tuple(event) == ("hello edited", "node-a", "root")
+
+
+def test_parent_node_relationship_resolves_within_conversation(
+    database_engine: Engine,
+    tmp_path: Path,
+) -> None:
+    path = _write_export(
+        tmp_path / "export-a",
+        [
+            _message("node-user", "message-user", "root", "parent", 1),
+            _message("node-assistant", "message-assistant", "node-user", "child", 2),
+        ],
+    )
+    import_openai_export(database_engine, parse_openai_export(path))
+
+    with database_engine.connect() as connection:
+        relationship = connection.execute(
+            text(
+                """
+                SELECT child.source_record_id, parent.source_record_id
+                FROM events child
+                JOIN events parent
+                  ON parent.conversation_id = child.conversation_id
+                 AND parent.source_node_id = child.parent_source_node_id
+                WHERE child.source_record_id = 'message-assistant'
+                """
+            ),
+            {},
+        ).one()
+
+    assert tuple(relationship) == ("message-assistant", "message-user")
+
+
+def test_reconciliation_failure_rolls_back_every_table(database_engine: Engine) -> None:
+    duplicate_events = tuple(
+        NormalizedEvent(
+            occurred_at=datetime(2026, 1, index, tzinfo=UTC),
+            source="openai",
+            event_type="conversation_message",
+            text=f"duplicate {index}",
+            source_record_id="duplicate-message",
+            source_node_id=f"node-{index}",
+            parent_source_node_id="root",
+        )
+        for index in (1, 2)
+    )
+    parsed = ParsedExport(
+        filename="synthetic.json",
+        original_path="synthetic://rollback-test",
+        sha256="a" * 64,
+        size_bytes=1,
+        conversations=(
+            NormalizedConversation(
+                source="openai",
+                source_conversation_id="rollback-conversation",
+                events=duplicate_events,
+            ),
+        ),
+    )
+
+    with pytest.raises(ReconciliationError, match="import rolled back"):
+        import_openai_export(database_engine, parsed)
+
+    assert _counts(database_engine) == {table_name: 0 for table_name in TABLES}

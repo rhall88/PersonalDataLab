@@ -1,0 +1,19 @@
+.env
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.pytest-temp/
+.coverage
+htmlcov/
+*.egg-info/
+
+# Raw and derived personal data must never be committed.
+data/raw/
+data/media/
+data/parquet/
+data/backups/
+
+*.log
+.DS_Store
+Thumbs.db
