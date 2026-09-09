@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any
+from typing import Any, Self
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class NormalizedEvent(BaseModel):
@@ -41,11 +41,26 @@ class ParsedExport(BaseModel):
 
     model_config = ConfigDict(frozen=True)
 
+    source: str
+    parser_version: str
     filename: str
     original_path: str
     sha256: str
     size_bytes: int
-    conversations: tuple[NormalizedConversation, ...]
+    exported_at: datetime | None = None
+    conversations: tuple[NormalizedConversation, ...] = ()
+    events: tuple[NormalizedEvent, ...] = ()
+
+    @model_validator(mode="after")
+    def require_one_source(self) -> Self:
+        for conversation in self.conversations:
+            if conversation.source != self.source:
+                raise ValueError("conversation source must match parsed export source")
+            if any(event.source != self.source for event in conversation.events):
+                raise ValueError("conversation event source must match parsed export source")
+        if any(event.source != self.source for event in self.events):
+            raise ValueError("standalone event source must match parsed export source")
+        return self
 
     @property
     def conversation_count(self) -> int:
@@ -53,7 +68,9 @@ class ParsedExport(BaseModel):
 
     @property
     def event_count(self) -> int:
-        return sum(len(conversation.events) for conversation in self.conversations)
+        return len(self.events) + sum(
+            len(conversation.events) for conversation in self.conversations
+        )
 
 
 class ImportResult(BaseModel):
