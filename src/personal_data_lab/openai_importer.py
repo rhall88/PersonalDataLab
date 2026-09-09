@@ -207,6 +207,8 @@ def parse_openai_export(source_path: str | Path) -> ParsedExport:
                     )
                 seen_record_ids.add(event.source_record_id)
         return ParsedExport(
+            source=SOURCE,
+            parser_version=PARSER_VERSION,
             filename=filename,
             original_path=original_path,
             sha256=sha256,

@@ -2,17 +2,18 @@
 
 A local, provenance-first foundation for importing personal data into PostgreSQL.
 
-This repository contains **only the first vertical slice**:
+This repository contains the completed foundation and its first two source importers:
 
 - Docker Compose
 - PostgreSQL 18 plus pgvector
 - canonical records (`people`, `identities`, `conversations`, `events`, and `attachments`)
 - source-file provenance (`source_files`, `source_file_conversations`, and `source_file_events`)
-- one importer: OpenAI data exports
+- OpenAI data-export importer
+- Anthropic data-export importer
 - reconciliation tests
 - Windows/PowerShell setup instructions
 
-MCP, embeddings, other importers, full-text search, analytics, DuckDB/Parquet, identity
+MCP, embeddings, other source importers, full-text search, analytics, DuckDB/Parquet, identity
 resolution automation, and derived claims are deliberately deferred.
 
 ## 1. Prerequisites
@@ -55,20 +56,6 @@ The database is bound to `127.0.0.1`, persists in the `postgres_data` Docker vol
 and initializes pgvector plus the schema on the first start. PostgreSQL 18 stores its
 versioned data directory beneath the volume mounted at `/var/lib/postgresql`.
 
-### Reset the pre-merge development database
-
-This PR changes the initial schema. Because the first slice has not been merged yet,
-reset the temporary development database instead of introducing a migration framework:
-
-```powershell
-docker compose down -v
-docker compose up -d --wait
-```
-
-**Warning:** `docker compose down -v` permanently deletes the local PostgreSQL volume
-and every database record in it. It does not touch immutable exports under `data/raw/`.
-Only run it while this database is disposable or after making an appropriate backup.
-
 ## 4. Install the importer
 
 ```powershell
@@ -78,19 +65,31 @@ python -m pip install --upgrade pip
 python -m pip install -e ".[dev]"
 ```
 
-## 5. Store the untouched export
+## 5. Store untouched exports
 
-Keep the original OpenAI ZIP unchanged. For example:
+Keep original provider files unchanged. For example:
 
 ```text
-data/raw/openai/2026-09-08/openai-export.zip
+data/raw/
+├── anthropic/
+│   └── 2026-09-09/
+│       ├── manifest-....json
+│       ├── conversations-000.zip
+│       ├── design_chats-000.zip
+│       ├── light_metadata-000.zip
+│       ├── memories-000.zip
+│       └── projects-000.zip
+└── openai/
+    └── 2026-09-08/
+        └── openai-export.zip
 ```
 
 Everything below `data/raw/` is ignored by Git. Do not edit, replace, or unpack over
-the original ZIP. The importer reads the archive directly and records its SHA-256,
-path, size, parser version, and ingestion time.
+the original files. The importers read ZIP archives directly and record each source
+archive's SHA-256, path, size, parser version, export time when supplied, and ingestion
+time.
 
-## 6. Import and reconcile
+## 6. Import OpenAI and reconcile
 
 ```powershell
 personal-data-lab import-openai data\raw\openai\2026-09-08\openai-export.zip
@@ -119,11 +118,39 @@ Successful output resembles:
 event membership rows persisted for this `source_file_id`; they are not corpus-wide
 canonical totals.
 
+## 7. Import Anthropic and reconcile
+
+Place the untouched Anthropic manifest beside every `*-000.zip` file it names, then
+pass the local manifest to the importer:
+
+```powershell
+personal-data-lab import-anthropic data\raw\anthropic\2026-09-09\manifest-....json
+```
+
+The importer supports the `conversations`, `design_chats`, `light_metadata`, `memories`,
+and `projects` categories. It reads only the sibling archives named by the manifest. It
+does not call, log, or persist the manifest's signed download endpoints, so an expired
+endpoint does not matter after the source files have been downloaded.
+
+Each archive becomes its own `source_files` row. All five archives are imported in one
+database transaction, and the command reports per-file and total reconciliation. A
+failure in any archive rolls back the complete batch.
+
+For ordinary Claude messages, canonical event text comes only from
+`content[type=text]` blocks, joined with newlines. Provider content blocks, attachment
+metadata, file references, and any differing top-level export text remain in the event's
+`metadata.anthropic` object. This slice does not invent attachment filesystem paths or
+perform automatic person/identity resolution.
+
+Previously generated normalized ZIPs are useful as independent reconciliation oracles,
+but they are derived data and are not importer inputs. The untouched manifest and
+`*-000.zip` archives remain the source of truth.
+
 ## Canonical records and export provenance
 
-A logical OpenAI conversation is canonical by `(source, source_conversation_id)`. A
-logical message is canonical by `(source, source_record_id)`. Importing overlapping
-exports therefore does not duplicate conversations or messages. The join tables retain
+A logical provider conversation is canonical by `(source, source_conversation_id)`. A
+logical event is canonical by `(source, source_record_id)`. Importing overlapping
+exports therefore does not duplicate conversations or events. The join tables retain
 every observation:
 
 ```text
@@ -137,7 +164,7 @@ This keeps the message and graph identifier namespaces distinct. If a message la
 ID, the importer explicitly falls back to its mapping-node ID and marks that fallback in
 event metadata.
 
-## 7. Run tests
+## 8. Run tests
 
 Unit tests do not require a database:
 
@@ -172,6 +199,9 @@ non-sensitive CI-only password.
 - Every logical conversation and event exists once in the canonical corpus.
 - Join tables link each canonical record to every export that contained it.
 - OpenAI message IDs, mapping-node IDs, and parent-node IDs remain distinct.
+- Anthropic message UUIDs and parent-message UUIDs remain available for graph traversal.
+- Anthropic provider content blocks, attachment metadata, and file references remain
+  traceable without copying binary attachments into PostgreSQL.
 - Messages without textual content are still retained as events, so reconciliation
   does not silently discard them.
 - Re-importing an identical source is idempotent, and overlapping exports add only new
@@ -218,18 +248,18 @@ Development belongs on a feature branch. Do not commit implementation work direc
 to `main`:
 
 ```powershell
-git switch -c feature/first-vertical-slice
+git switch -c feature/anthropic-importer
 # make and test changes
-git push -u origin feature/first-vertical-slice
-gh pr create --base main --title "Build the first vertical slice"
+git push -u origin feature/anthropic-importer
+gh pr create --base main --title "Add the Anthropic data importer"
 ```
 
 Review the pull request before merging.
 
 ## Deferred roadmap
 
-After this PR is reviewed and merged, the intended order is: Claude importer,
-iMessage, Meta, Google, Apple, corpus-wide reconciliation, identity resolution,
+After the Anthropic importer is reviewed and merged, the intended order is: iMessage,
+Meta, Google, Apple, corpus-wide reconciliation, identity resolution,
 ordinary search and analytics, a read-only AI database account, generic PostgreSQL
 MCP, custom personal-data MCP, embeddings, Parquet/DuckDB, then evidence-backed
-derived analysis. None of those features belong in this slice.
+derived analysis. None of those features belong in the Anthropic-importer slice.

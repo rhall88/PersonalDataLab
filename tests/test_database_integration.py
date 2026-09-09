@@ -14,6 +14,7 @@ from personal_data_lab.database import (
     ReconciliationError,
     create_database_engine,
     import_openai_export,
+    import_parsed_exports,
 )
 from personal_data_lab.models import NormalizedConversation, NormalizedEvent, ParsedExport
 from personal_data_lab.openai_importer import parse_openai_export
@@ -300,6 +301,8 @@ def test_reconciliation_failure_rolls_back_every_table(database_engine: Engine) 
         for index in (1, 2)
     )
     parsed = ParsedExport(
+        source="openai",
+        parser_version="openai-test-v1",
         filename="synthetic.json",
         original_path="synthetic://rollback-test",
         sha256="a" * 64,
@@ -317,3 +320,68 @@ def test_reconciliation_failure_rolls_back_every_table(database_engine: Engine) 
         import_openai_export(database_engine, parsed)
 
     assert _counts(database_engine) == {table_name: 0 for table_name in TABLES}
+
+
+def test_batch_import_supports_conversations_and_standalone_events(
+    database_engine: Engine,
+) -> None:
+    message = NormalizedEvent(
+        occurred_at=datetime(2026, 9, 4, tzinfo=UTC),
+        source="anthropic",
+        event_type="conversation_message",
+        actor_identity="human",
+        text="Synthetic message",
+        source_record_id="anthropic-message-1",
+        source_node_id="anthropic-message-1",
+    )
+    conversations_export = ParsedExport(
+        source="anthropic",
+        parser_version="anthropic-test-v1",
+        filename="conversations-000.zip",
+        original_path="synthetic://conversations-000.zip",
+        sha256="b" * 64,
+        size_bytes=1,
+        conversations=(
+            NormalizedConversation(
+                source="anthropic",
+                source_conversation_id="anthropic-conversation-1",
+                events=(message,),
+            ),
+        ),
+    )
+    metadata_export = ParsedExport(
+        source="anthropic",
+        parser_version="anthropic-test-v1",
+        filename="light_metadata-000.zip",
+        original_path="synthetic://light_metadata-000.zip",
+        sha256="c" * 64,
+        size_bytes=1,
+        events=(
+            NormalizedEvent(
+                occurred_at=datetime(2026, 9, 5, tzinfo=UTC),
+                source="anthropic",
+                event_type="account_login",
+                source_record_id="login:synthetic",
+            ),
+        ),
+    )
+
+    results = import_parsed_exports(
+        database_engine,
+        (conversations_export, metadata_export),
+    )
+
+    assert all(result.reconciled for result in results)
+    assert _counts(database_engine) == {
+        "source_files": 2,
+        "conversations": 1,
+        "events": 2,
+        "source_file_conversations": 1,
+        "source_file_events": 2,
+    }
+    with database_engine.connect() as connection:
+        event_types = connection.execute(
+            text("SELECT event_type FROM events ORDER BY event_type"),
+            {},
+        ).scalars().all()
+    assert list(event_types) == ["account_login", "conversation_message"]
