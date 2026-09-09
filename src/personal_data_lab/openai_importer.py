@@ -94,17 +94,19 @@ def _normalize_conversation(raw: Any, index: int) -> NormalizedConversation:
     for node_id, message, parent_id in _iter_messages(raw):
         author = message.get("author") if isinstance(message.get("author"), dict) else {}
         role = author.get("role") if isinstance(author.get("role"), str) else None
-        message_id = str(message.get("id") or node_id)
+        raw_message_id = message.get("id")
+        message_id = str(raw_message_id) if raw_message_id else node_id
         content = message.get("content")
         content_type = content.get("content_type") if isinstance(content, dict) else None
         metadata = {
             "author_role": role,
             "author_name": author.get("name"),
             "content_type": content_type,
-            "parent_source_record_id": parent_id,
             "recipient": message.get("recipient"),
             "status": message.get("status"),
         }
+        if not raw_message_id:
+            metadata["source_record_id_fallback"] = "mapping_node_id"
         metadata = {key: value for key, value in metadata.items() if value is not None}
         events.append(
             NormalizedEvent(
@@ -115,6 +117,8 @@ def _normalize_conversation(raw: Any, index: int) -> NormalizedConversation:
                 text=_message_text(content),
                 metadata=metadata,
                 source_record_id=message_id,
+                source_node_id=node_id,
+                parent_source_node_id=parent_id,
             )
         )
 
@@ -194,6 +198,14 @@ def parse_openai_export(source_path: str | Path) -> ParsedExport:
             _normalize_conversation(conversation, index)
             for index, conversation in enumerate(payload)
         )
+        seen_record_ids: set[str] = set()
+        for conversation in conversations:
+            for event in conversation.events:
+                if event.source_record_id in seen_record_ids:
+                    raise OpenAIExportError(
+                        f"duplicate OpenAI message id in export: {event.source_record_id}"
+                    )
+                seen_record_ids.add(event.source_record_id)
         return ParsedExport(
             filename=filename,
             original_path=original_path,

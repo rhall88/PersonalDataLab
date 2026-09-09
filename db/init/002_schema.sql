@@ -37,6 +37,12 @@ CREATE TABLE IF NOT EXISTS conversations (
     UNIQUE (source, source_conversation_id)
 );
 
+CREATE TABLE IF NOT EXISTS source_file_conversations (
+    source_file_id BIGINT NOT NULL REFERENCES source_files(id) ON DELETE CASCADE,
+    conversation_id BIGINT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+    PRIMARY KEY (source_file_id, conversation_id)
+);
+
 CREATE TABLE IF NOT EXISTS events (
     id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     occurred_at TIMESTAMPTZ,
@@ -46,10 +52,17 @@ CREATE TABLE IF NOT EXISTS events (
     conversation_id BIGINT REFERENCES conversations(id) ON DELETE SET NULL,
     text TEXT,
     metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
-    source_file_id BIGINT NOT NULL REFERENCES source_files(id) ON DELETE RESTRICT,
     source_record_id TEXT NOT NULL,
+    source_node_id TEXT,
+    parent_source_node_id TEXT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    UNIQUE (source_file_id, source_record_id)
+    UNIQUE (source, source_record_id)
+);
+
+CREATE TABLE IF NOT EXISTS source_file_events (
+    source_file_id BIGINT NOT NULL REFERENCES source_files(id) ON DELETE CASCADE,
+    event_id BIGINT NOT NULL REFERENCES events(id) ON DELETE CASCADE,
+    PRIMARY KEY (source_file_id, event_id)
 );
 
 CREATE TABLE IF NOT EXISTS attachments (
@@ -69,3 +82,7 @@ CREATE TABLE IF NOT EXISTS attachments (
 CREATE INDEX IF NOT EXISTS events_occurred_at_idx ON events (occurred_at);
 CREATE INDEX IF NOT EXISTS events_source_type_idx ON events (source, event_type);
 CREATE INDEX IF NOT EXISTS events_conversation_idx ON events (conversation_id, occurred_at);
+CREATE INDEX IF NOT EXISTS events_source_node_idx ON events (source_node_id);
+CREATE INDEX IF NOT EXISTS source_file_conversations_conversation_idx
+    ON source_file_conversations (conversation_id);
+CREATE INDEX IF NOT EXISTS source_file_events_event_idx ON source_file_events (event_id);

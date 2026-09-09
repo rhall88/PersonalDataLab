@@ -18,6 +18,8 @@ class NormalizedEvent(BaseModel):
     text: str | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
     source_record_id: str
+    source_node_id: str | None = None
+    parent_source_node_id: str | None = None
 
 
 class NormalizedConversation(BaseModel):
@@ -55,6 +57,8 @@ class ParsedExport(BaseModel):
 
 
 class ImportResult(BaseModel):
+    """Import counts; database counts are memberships scoped to this source file."""
+
     model_config = ConfigDict(frozen=True)
 
     source_file_id: int

@@ -55,6 +55,14 @@ def test_parses_standalone_conversations_json(tmp_path: Path) -> None:
     assert parsed.conversations[0].events[0].text == "Hello"
     assert parsed.conversations[0].events[1].text == "Hi\nthere"
     assert parsed.conversations[0].events[1].actor_identity == "assistant"
+    assert parsed.conversations[0].events[0].source_record_id == "message-user"
+    assert parsed.conversations[0].events[0].source_node_id == "node-user"
+    assert parsed.conversations[0].events[1].parent_source_node_id == "node-user"
+    assert (
+        parsed.conversations[0].events[1].parent_source_node_id
+        == parsed.conversations[0].events[0].source_node_id
+    )
+    assert "parent_source_record_id" not in parsed.conversations[0].events[1].metadata
     assert len(parsed.sha256) == 64
 
 
@@ -109,4 +117,31 @@ def test_rejects_conversation_without_id(tmp_path: Path) -> None:
     source.write_text(json.dumps([conversation]), encoding="utf-8")
 
     with pytest.raises(OpenAIExportError, match="has no id"):
+        parse_openai_export(source)
+
+
+def test_uses_mapping_node_id_when_message_id_is_absent(tmp_path: Path) -> None:
+    conversation = _conversation()
+    conversation["mapping"]["node-user"]["message"].pop("id")
+    source = tmp_path / "conversations.json"
+    source.write_text(json.dumps([conversation]), encoding="utf-8")
+
+    parsed = parse_openai_export(source)
+    event = parsed.conversations[0].events[0]
+
+    assert event.source_record_id == "node-user"
+    assert event.source_node_id == "node-user"
+    assert event.metadata["source_record_id_fallback"] == "mapping_node_id"
+
+
+def test_rejects_duplicate_message_ids_within_export(tmp_path: Path) -> None:
+    conversation = _conversation()
+    conversation["mapping"]["node-assistant"]["message"]["id"] = "message-user"
+    source = tmp_path / "conversations.json"
+    source.write_text(json.dumps([conversation]), encoding="utf-8")
+
+    with pytest.raises(
+        OpenAIExportError,
+        match="duplicate OpenAI message id in export: message-user",
+    ):
         parse_openai_export(source)
