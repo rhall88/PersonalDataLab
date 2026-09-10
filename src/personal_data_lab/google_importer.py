@@ -40,13 +40,7 @@ def _normalized_name(value: str) -> str:
 
 def _is_activity_path(value: str) -> bool:
     path = PurePosixPath(value.replace("\\", "/"))
-    leaf = _normalized_name(path.name)
-    if leaf not in _ACTIVITY_NAMES:
-        return False
-    parts = {_normalized_name(part) for part in path.parts[:-1]}
-    return (
-        "myactivity" in parts or "history" in parts or leaf in {"myactivityjson", "myactivityhtml"}
-    )
+    return _normalized_name(path.name) in _ACTIVITY_NAMES
 
 
 def _takeout_identity(path: Path) -> tuple[datetime | None, str | None]:
@@ -90,8 +84,8 @@ def _text_values(value: Any) -> Iterator[str]:
         for item in value:
             yield from _text_values(item)
     elif isinstance(value, dict):
-        for item in value.values():
-            yield from _text_values(item)
+        for key in sorted(value):
+            yield from _text_values(value[key])
 
 
 def _activity_text(record: dict[str, Any]) -> str | None:
@@ -103,10 +97,7 @@ def _activity_text(record: dict[str, Any]) -> str | None:
     return "\n".join(values) or None
 
 
-def _activity_event_type(record: dict[str, Any], product_hint: str | None) -> str:
-    evidence = [product_hint or ""]
-    for key in ("header", "products", "activityControls"):
-        evidence.extend(_text_values(record.get(key)))
+def _event_type_from_evidence(evidence: Iterator[str]) -> str | None:
     combined = " ".join(evidence).casefold()
     if "youtube" in combined:
         return "youtube_activity"
@@ -122,7 +113,22 @@ def _activity_event_type(record: dict[str, Any], product_hint: str | None) -> st
         return "play_activity"
     if "ad center" in combined or "google ads" in combined or "my ad" in combined:
         return "ad_activity"
-    return "google_activity"
+    return None
+
+
+def _activity_event_type(
+    record: dict[str, Any], product_hint: str | None
+) -> tuple[str, bool]:
+    record_evidence = (
+        value
+        for key in ("header", "products", "activityControls")
+        for value in _text_values(record.get(key))
+    )
+    record_type = _event_type_from_evidence(record_evidence)
+    if record_type is not None:
+        return record_type, False
+    hint_type = _event_type_from_evidence(iter((product_hint or "",)))
+    return hint_type or "google_activity", hint_type is not None
 
 
 def _product_hint(source_name: str) -> str | None:
@@ -136,6 +142,11 @@ def _product_hint(source_name: str) -> str | None:
         lowered = part.casefold()
         if "youtube" in lowered or lowered in {"search", "maps", "chrome"}:
             return part
+    leaf = normalized[-1] if normalized else ""
+    if leaf in {"watchhistoryjson", "watchhistoryhtml"}:
+        return "YouTube"
+    if leaf in {"searchhistoryjson", "searchhistoryhtml"}:
+        return "Search"
     return None
 
 
@@ -168,16 +179,17 @@ def _normalize_activity(
     duplicate_counts[identity] = duplicate_counts.get(identity, 0) + 1
     raw_time = record.get("time")
     occurred_at = _timestamp(raw_time)
+    event_type, used_product_hint = _activity_event_type(record, product_hint)
     metadata = {"google": {key: value for key, value in record.items() if key != "time"}}
     if raw_time is not None and occurred_at is None:
         metadata["google"]["unparsed_time"] = raw_time
-    if product_hint:
+    if used_product_hint:
         metadata["google"]["takeout_product"] = product_hint
 
     return NormalizedEvent(
         occurred_at=occurred_at,
         source=SOURCE,
-        event_type=_activity_event_type(record, product_hint),
+        event_type=event_type,
         source_record_namespace="activity",
         actor_identity="account_owner",
         text=_activity_text(record),
@@ -318,7 +330,7 @@ def _normalize_html_card(
     text, links = card
     lines = [line for line in text.splitlines() if line]
     record: dict[str, Any] = {
-        "header": lines[0] if len(lines) > 1 else product_hint,
+        "header": lines[0] if len(lines) > 1 else None,
         "title": "\n".join(lines[1:]) if len(lines) > 1 else text,
     }
     if links:

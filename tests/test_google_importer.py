@@ -52,6 +52,30 @@ def test_parses_standalone_my_activity_json(tmp_path: Path) -> None:
     assert parsed.size_bytes == source.stat().st_size
 
 
+@pytest.mark.parametrize(
+    ("filename", "expected_type", "expected_category"),
+    [
+        ("watch-history.json", "youtube_activity", "my_activity/youtube/json"),
+        ("search-history.json", "search_activity", "my_activity/search/json"),
+    ],
+)
+def test_parses_standalone_history_json_names(
+    tmp_path: Path,
+    filename: str,
+    expected_type: str,
+    expected_category: str,
+) -> None:
+    source = tmp_path / filename
+    source.write_text(json.dumps([{"title": "Activity"}]), encoding="utf-8")
+
+    (parsed,) = parse_google_export(source)
+
+    assert parsed.filename == filename
+    assert parsed.category == expected_category
+    assert parsed.event_count == 1
+    assert parsed.events[0].event_type == expected_type
+
+
 def test_streams_activity_json_larger_than_the_read_buffer(tmp_path: Path) -> None:
     source = tmp_path / "MyActivity.json"
     records = [_activity(title="x" * 1_200_000), _activity(title="second")]
@@ -370,6 +394,73 @@ def test_identity_ignores_json_object_key_order(tmp_path: Path) -> None:
     first = parse_google_export(first_path)[0].events[0]
     second = parse_google_export(second_path)[0].events[0]
 
+    assert first.source_record_id == second.source_record_id
+    assert event_fingerprint(first) == event_fingerprint(second)
+
+
+def test_nested_object_key_order_does_not_change_text_or_fingerprint(
+    tmp_path: Path,
+) -> None:
+    first_record = _activity()
+    second_record = _activity()
+    first_record["subtitles"] = [
+        {"name": "Example Channel", "url": "https://youtube.com/example"}
+    ]
+    second_record["subtitles"] = [
+        {"url": "https://youtube.com/example", "name": "Example Channel"}
+    ]
+    first_path = tmp_path / "first" / "MyActivity.json"
+    second_path = tmp_path / "second" / "MyActivity.json"
+    first_path.parent.mkdir()
+    second_path.parent.mkdir()
+    first_path.write_text(json.dumps([first_record]), encoding="utf-8")
+    second_path.write_text(json.dumps([second_record]), encoding="utf-8")
+
+    first = parse_google_export(first_path)[0].events[0]
+    second = parse_google_export(second_path)[0].events[0]
+
+    assert first.source_record_id == second.source_record_id
+    assert first.text == second.text
+    assert event_fingerprint(first) == event_fingerprint(second)
+
+
+def test_provider_fields_override_path_hint_without_fingerprint_churn(
+    tmp_path: Path,
+) -> None:
+    payload = json.dumps([_activity()])
+    standalone = tmp_path / "standalone" / "MyActivity.json"
+    misleading = tmp_path / "extracted" / "My Activity" / "Maps" / "MyActivity.json"
+    standalone.parent.mkdir()
+    misleading.parent.mkdir(parents=True)
+    standalone.write_text(payload, encoding="utf-8")
+    misleading.write_text(payload, encoding="utf-8")
+
+    first = parse_google_export(standalone)[0].events[0]
+    second = parse_google_export(misleading)[0].events[0]
+
+    assert first.event_type == second.event_type == "youtube_activity"
+    assert "takeout_product" not in first.metadata["google"]
+    assert "takeout_product" not in second.metadata["google"]
+    assert first.source_record_id == second.source_record_id
+    assert event_fingerprint(first) == event_fingerprint(second)
+
+
+def test_unrecognized_path_hint_does_not_change_generic_event_content(
+    tmp_path: Path,
+) -> None:
+    payload = json.dumps([{"title": "Activity"}])
+    standalone = tmp_path / "standalone" / "MyActivity.json"
+    hinted = tmp_path / "extracted" / "My Activity" / "Future Product" / "MyActivity.json"
+    standalone.parent.mkdir()
+    hinted.parent.mkdir(parents=True)
+    standalone.write_text(payload, encoding="utf-8")
+    hinted.write_text(payload, encoding="utf-8")
+
+    first = parse_google_export(standalone)[0].events[0]
+    second = parse_google_export(hinted)[0].events[0]
+
+    assert first.event_type == second.event_type == "google_activity"
+    assert "takeout_product" not in second.metadata["google"]
     assert first.source_record_id == second.source_record_id
     assert event_fingerprint(first) == event_fingerprint(second)
 

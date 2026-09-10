@@ -61,7 +61,7 @@ Supported representations are:
 - `MyActivity.json`;
 - `MyActivity.html`;
 - YouTube `watch-history.json` or `.html`;
-- product `search-history.json` or `.html` where exported in a recognized history directory.
+- product `search-history.json` or `.html`.
 
 Filename matching is case-insensitive and ignores punctuation, spaces, underscores, and hyphens.
 
@@ -198,7 +198,7 @@ For each card:
 - preserve unique hyperlink targets in document order;
 - use the first visible line as a header when multiple lines exist;
 - use remaining visible lines as title text;
-- use the product-directory hint as a fallback header for a one-line card;
+- use the product/path hint as fallback classification evidence for a one-line card;
 - set the first link as `titleUrl` and retain the full unique link list;
 - reject a recognized HTML file containing no recognizable cards.
 
@@ -240,8 +240,9 @@ original value as `metadata.google.unparsed_time`.
 
 ### 8.2 Event classification
 
-Classification is deterministic and case-insensitive. Evidence comes from the product-directory
-hint plus `header`, `products`, and `activityControls`. Precedence is:
+Classification is deterministic and case-insensitive. Provider evidence from `header`, `products`,
+and `activityControls` is authoritative. The product-directory hint is consulted only when those
+fields do not identify a supported product. Keyword precedence within either evidence tier is:
 
 1. YouTube -> `youtube_activity`
 2. Maps -> `maps_activity`
@@ -252,14 +253,17 @@ hint plus `header`, `products`, and `activityControls`. Precedence is:
 7. Ad Center, Google Ads, or My Ad -> `ad_activity`
 8. otherwise -> `google_activity`
 
-The path-derived product hint is retained as `metadata.google.takeout_product` when present.
-Because it can affect normalization, it is also represented by the parsing category.
+The path-derived product hint is retained as `metadata.google.takeout_product` only when it is
+needed as fallback classification evidence. Because it can affect normalization in that case, it
+is also represented by the parsing category. A folder name must not override self-identifying
+provider fields or cause path-only canonical-content churn.
 
 ### 8.3 Canonical text
 
 Canonical text is built from `title`, `subtitles`, and `description`, in that order.
 
 - recursively flatten strings contained in lists and objects;
+- traverse object values in sorted-key order so key insertion order cannot change canonical text;
 - collapse internal whitespace in each string;
 - remove empty strings;
 - preserve first occurrence order;
@@ -420,6 +424,7 @@ Previously committed member runs remain inspectable in the database and safe to 
 ### Identity and reconciliation
 
 - object key order does not change identity;
+- nested object key order does not change canonical text or content fingerprints;
 - exact duplicate occurrences receive stable distinct suffixes;
 - later export with old plus new records reuses old versions and inserts only new records;
 - later absence retains earlier canonical records;
