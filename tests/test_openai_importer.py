@@ -6,6 +6,7 @@ from zipfile import ZipFile
 
 import pytest
 
+from personal_data_lab.fingerprints import conversation_fingerprint
 from personal_data_lab.openai_importer import OpenAIExportError, parse_openai_export
 
 
@@ -52,6 +53,7 @@ def test_parses_standalone_conversations_json(tmp_path: Path) -> None:
 
     assert parsed.conversation_count == 1
     assert parsed.event_count == 2
+    assert parsed.category == "conversations"
     assert parsed.conversations[0].events[0].text == "Hello"
     assert parsed.conversations[0].events[1].text == "Hi\nthere"
     assert parsed.conversations[0].events[1].actor_identity == "assistant"
@@ -148,3 +150,20 @@ def test_rejects_duplicate_message_ids_within_export(tmp_path: Path) -> None:
         match="duplicate OpenAI message id in export: message-user",
     ):
         parse_openai_export(source)
+
+
+def test_empty_conversation_update_time_does_not_change_fingerprint(
+    tmp_path: Path,
+) -> None:
+    conversation = _conversation()
+    conversation["mapping"] = {}
+    source = tmp_path / "conversations.json"
+    source.write_text(json.dumps([conversation]), encoding="utf-8")
+    first = parse_openai_export(source).conversations[0]
+
+    conversation["update_time"] += 100
+    source.write_text(json.dumps([conversation]), encoding="utf-8")
+    observed_later = parse_openai_export(source).conversations[0]
+
+    assert first.provider_updated_at != observed_later.provider_updated_at
+    assert conversation_fingerprint(first) == conversation_fingerprint(observed_later)

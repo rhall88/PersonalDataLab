@@ -138,7 +138,7 @@ def _normalize_conversation(raw: Any, index: int) -> NormalizedConversation:
         source_record_namespace="chat",
         title=raw.get("title") if isinstance(raw.get("title"), str) else None,
         started_at=min(occurred) if occurred else created_at,
-        ended_at=max(occurred) if occurred else updated_at or created_at,
+        ended_at=max(occurred) if occurred else created_at,
         metadata={
             key: raw[key]
             for key in ("is_archived", "default_model_slug", "conversation_template_id")
@@ -220,6 +220,7 @@ def parse_openai_export(source_path: str | Path) -> ParsedExport:
         return ParsedExport(
             source=SOURCE,
             parser_version=PARSER_VERSION,
+            category="conversations",
             filename=filename,
             original_path=original_path,
             sha256=sha256,

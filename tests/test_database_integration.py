@@ -841,7 +841,10 @@ def test_raw_source_identity_uses_sha_not_path(database_engine: Engine) -> None:
         events=(_synthetic_event("row-1", "value"),),
     )
     same_bytes_new_path = first.model_copy(
-        update={"original_path": "synthetic://path-b/records.json"}
+        update={
+            "filename": "renamed.json",
+            "original_path": "synthetic://path-b/renamed.json",
+        }
     )
     different_bytes_same_path = first.model_copy(
         update={"sha256": "9" * 64, "exported_at": datetime(2026, 1, 1, tzinfo=UTC)}
