@@ -175,14 +175,16 @@ def _parse_standard_conversations(payload: Any) -> tuple[NormalizedConversation,
             )
             for message_index, message in enumerate(messages)
         )
+        created_at = _timestamp(raw.get("created_at"))
+        message_times = [event.occurred_at for event in events if event.occurred_at is not None]
         conversations.append(
             NormalizedConversation(
                 source=SOURCE,
                 source_conversation_id=conversation_id,
                 source_record_namespace="chat",
                 title=raw.get("name") if isinstance(raw.get("name"), str) else None,
-                started_at=_timestamp(raw.get("created_at")),
-                ended_at=_timestamp(raw.get("updated_at")),
+                started_at=created_at,
+                ended_at=max(message_times) if message_times else created_at,
                 metadata=_anthropic_metadata(
                     conversation_uuid=conversation_id,
                     summary=raw.get("summary"),
@@ -250,13 +252,15 @@ def _parse_design_chat(raw: Any, entry_name: str) -> NormalizedConversation:
                 ),
             )
         )
+    created_at = _timestamp(raw.get("created_at"))
+    message_times = [event.occurred_at for event in events if event.occurred_at is not None]
     return NormalizedConversation(
         source=SOURCE,
         source_conversation_id=conversation_id,
         source_record_namespace="design_chat",
         title=raw.get("title") if isinstance(raw.get("title"), str) else None,
-        started_at=_timestamp(raw.get("created_at")),
-        ended_at=_timestamp(raw.get("updated_at")),
+        started_at=created_at,
+        ended_at=max(message_times) if message_times else created_at,
         metadata=_anthropic_metadata(
             design_chat_uuid=conversation_id,
             project=project,
@@ -322,7 +326,7 @@ def _parse_project_events(raw: Any, entry_name: str) -> tuple[NormalizedEvent, .
     }
     events = [
         NormalizedEvent(
-            occurred_at=_timestamp(raw.get("updated_at") or raw.get("created_at")),
+            occurred_at=_timestamp(raw.get("created_at")),
             source=SOURCE,
             event_type="project_snapshot",
             source_record_namespace="project",
@@ -428,7 +432,7 @@ def _parse_memory_events(raw: Any, entry_name: str) -> tuple[NormalizedEvent, ..
             content = memory_file.get("content")
             events.append(
                 NormalizedEvent(
-                    occurred_at=_timestamp(memory_file.get("updated_at")),
+                    occurred_at=None,
                     source=SOURCE,
                     event_type="memory_file_snapshot",
                     source_record_namespace="memory_file",
@@ -578,6 +582,7 @@ def parse_anthropic_export(manifest_path: str | Path) -> tuple[ParsedExport, ...
                 ParsedExport(
                     source=SOURCE,
                     parser_version=PARSER_VERSION,
+                    category=category,
                     filename=filename,
                     original_path=str(archive_path),
                     sha256=_sha256_file(archive_path),

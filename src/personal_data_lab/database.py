@@ -51,7 +51,7 @@ def _run_key(parsed_exports: tuple[ParsedExport, ...]) -> bytes:
         "files": sorted(
             [
                 {
-                    "category": parsed.filename,
+                    "category": parsed.category,
                     "export_id": parsed.export_id,
                     "exported_at": parsed.exported_at,
                     "parser_version": parsed.parser_version,
@@ -60,7 +60,11 @@ def _run_key(parsed_exports: tuple[ParsedExport, ...]) -> bytes:
                 }
                 for parsed in parsed_exports
             ],
-            key=lambda item: (item["sha256"], item["parser_version"], item["category"]),
+            key=lambda item: (
+                item["sha256"],
+                item["parser_version"],
+                item["category"] or "",
+            ),
         ),
     }
     return hashlib.sha256(canonical_json_bytes(payload)).digest()
@@ -242,7 +246,7 @@ def _record_run_files(
             {
                 "run_id": run_id,
                 "source_file_id": source_file_id,
-                "category": parsed.filename,
+                "category": parsed.category,
                 "ordinal": ordinal,
             },
         )

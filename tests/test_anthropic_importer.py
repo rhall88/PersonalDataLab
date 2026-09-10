@@ -11,7 +11,7 @@ from personal_data_lab.anthropic_importer import (
     AnthropicExportError,
     parse_anthropic_export,
 )
-from personal_data_lab.fingerprints import event_fingerprint
+from personal_data_lab.fingerprints import conversation_fingerprint, event_fingerprint
 
 
 def _write_zip(path: Path, entries: dict[str, object]) -> None:
@@ -177,6 +177,13 @@ def test_parses_manifest_and_every_supported_archive(tmp_path: Path) -> None:
         "memories-000.zip",
         "design_chats-000.zip",
         "conversations-000.zip",
+    ]
+    assert [item.category for item in parsed] == [
+        "light_metadata",
+        "projects",
+        "memories",
+        "design_chats",
+        "conversations",
     ]
     assert all(item.source == "anthropic" for item in parsed)
     assert all(item.parser_version == "anthropic-v1" for item in parsed)
@@ -346,3 +353,72 @@ def test_provider_update_time_does_not_change_message_fingerprint(tmp_path: Path
     assert event_fingerprint(first.model_copy(update={"text": "actually edited"})) != (
         event_fingerprint(first)
     )
+
+
+def test_provider_update_times_do_not_change_other_canonical_fingerprints(
+    tmp_path: Path,
+) -> None:
+    manifest = _write_export(tmp_path / "raw-export")
+    first = parse_anthropic_export(manifest)
+
+    conversations_path = manifest.parent / "conversations-000.zip"
+    with ZipFile(conversations_path) as archive:
+        conversations = json.loads(archive.read("conversations.json"))
+    conversations[0]["updated_at"] = "2026-09-05T01:00:00Z"
+    _write_zip(conversations_path, {"conversations.json": conversations})
+
+    design_path = manifest.parent / "design_chats-000.zip"
+    design_entry = "design_chats/design-1.json"
+    with ZipFile(design_path) as archive:
+        design_chat = json.loads(archive.read(design_entry))
+    design_chat["updated_at"] = "2026-09-05T01:00:00Z"
+    _write_zip(design_path, {design_entry: design_chat})
+
+    projects_path = manifest.parent / "projects-000.zip"
+    project_entry = "projects/project-1.json"
+    with ZipFile(projects_path) as archive:
+        project = json.loads(archive.read(project_entry))
+    project["updated_at"] = "2026-09-05T00:00:00Z"
+    _write_zip(projects_path, {project_entry: project})
+
+    memories_path = manifest.parent / "memories-000.zip"
+    with ZipFile(memories_path) as archive:
+        memories = json.loads(archive.read("memories.json"))
+    memories["memory_files"][0]["updated_at"] = "2026-09-05T00:00:00Z"
+    _write_zip(memories_path, {"memories.json": memories})
+
+    observed_later = parse_anthropic_export(manifest)
+    first_conversations = {
+        conversation.source_record_namespace: conversation
+        for item in first
+        for conversation in item.conversations
+    }
+    later_conversations = {
+        conversation.source_record_namespace: conversation
+        for item in observed_later
+        for conversation in item.conversations
+    }
+    first_events = {
+        (event.source_record_namespace, event.source_record_id): event
+        for event in _all_events(first)
+    }
+    later_events = {
+        (event.source_record_namespace, event.source_record_id): event
+        for event in _all_events(observed_later)
+    }
+
+    for namespace in ("chat", "design_chat"):
+        before = first_conversations[namespace]
+        after = later_conversations[namespace]
+        assert before.provider_updated_at != after.provider_updated_at
+        assert conversation_fingerprint(before) == conversation_fingerprint(after)
+
+    for key in (
+        ("design_message", "design-message-1"),
+        ("project", "project:project-1"),
+        ("memory_file", "memory:file:memory/notes.txt"),
+    ):
+        before = first_events[key]
+        after = later_events[key]
+        assert before.provider_updated_at != after.provider_updated_at
+        assert event_fingerprint(before) == event_fingerprint(after)

@@ -57,6 +57,7 @@ class ParsedExport(BaseModel):
 
     source: str
     parser_version: str
+    category: str | None = None
     filename: str
     original_path: str
     sha256: str
