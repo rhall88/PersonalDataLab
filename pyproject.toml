@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "personal-data-lab"
-version = "0.2.0"
+version = "0.3.0"
 description = "A provenance-first local archive and importer for personal data exports"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -23,6 +23,9 @@ personal-data-lab = "personal_data_lab.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.data-files]
+"share/personal-data-lab/migrations" = ["db/migrations/*.sql"]
 
 [tool.pytest.ini_options]
 addopts = "-q"

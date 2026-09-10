@@ -1,0 +1,327 @@
+from __future__ import annotations
+
+import os
+from collections.abc import Iterator
+
+import pytest
+from sqlalchemy import Engine, create_engine, text
+
+from personal_data_lab.fingerprints import event_fingerprint
+from personal_data_lab.migrations import (
+    _backfill_fingerprints,
+    _backfill_legacy_observations,
+    _ensure_migration_table,
+    _read_migration,
+    migrate_database,
+)
+from personal_data_lab.models import NormalizedEvent
+
+pytestmark = pytest.mark.integration
+
+PR2_SCHEMA = """
+CREATE TABLE source_files (
+    id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    source TEXT NOT NULL,
+    filename TEXT NOT NULL,
+    original_path TEXT NOT NULL,
+    sha256 TEXT NOT NULL,
+    size_bytes BIGINT NOT NULL,
+    exported_at TIMESTAMPTZ,
+    ingested_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    parser_version TEXT NOT NULL,
+    UNIQUE (source, sha256)
+);
+CREATE TABLE conversations (
+    id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    source TEXT NOT NULL,
+    source_conversation_id TEXT NOT NULL,
+    title TEXT,
+    started_at TIMESTAMPTZ,
+    ended_at TIMESTAMPTZ,
+    metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+    UNIQUE (source, source_conversation_id)
+);
+CREATE TABLE source_file_conversations (
+    source_file_id BIGINT NOT NULL REFERENCES source_files(id) ON DELETE CASCADE,
+    conversation_id BIGINT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+    PRIMARY KEY (source_file_id, conversation_id)
+);
+CREATE TABLE people (
+    id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    display_name TEXT NOT NULL
+);
+CREATE TABLE events (
+    id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    occurred_at TIMESTAMPTZ,
+    source TEXT NOT NULL,
+    event_type TEXT NOT NULL,
+    actor_person_id BIGINT REFERENCES people(id),
+    conversation_id BIGINT REFERENCES conversations(id),
+    text TEXT,
+    metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+    source_record_id TEXT NOT NULL,
+    source_node_id TEXT,
+    parent_source_node_id TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE (source, source_record_id)
+);
+CREATE TABLE source_file_events (
+    source_file_id BIGINT NOT NULL REFERENCES source_files(id) ON DELETE CASCADE,
+    event_id BIGINT NOT NULL REFERENCES events(id) ON DELETE CASCADE,
+    PRIMARY KEY (source_file_id, event_id)
+);
+CREATE TABLE attachments (
+    id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    event_id BIGINT NOT NULL REFERENCES events(id) ON DELETE CASCADE,
+    source TEXT NOT NULL,
+    mime_type TEXT,
+    path TEXT NOT NULL,
+    sha256 TEXT,
+    file_size BIGINT,
+    width INTEGER,
+    height INTEGER,
+    duration DOUBLE PRECISION,
+    metadata JSONB NOT NULL DEFAULT '{}'::jsonb
+);
+"""
+
+
+@pytest.fixture
+def pr2_engine() -> Iterator[Engine]:
+    database_url = os.getenv("TEST_DATABASE_URL")
+    if not database_url:
+        pytest.skip("TEST_DATABASE_URL is not set")
+    admin = create_engine(database_url)
+    schema = "migration_pr2"
+    with admin.begin() as connection:
+        connection.execute(text(f"DROP SCHEMA IF EXISTS {schema} CASCADE"))
+        connection.execute(text(f"CREATE SCHEMA {schema}"))
+    engine = create_engine(
+        database_url,
+        connect_args={"options": f"-csearch_path={schema},public"},
+    )
+    try:
+        with engine.begin() as connection:
+            connection.exec_driver_sql(PR2_SCHEMA)
+        yield engine
+    finally:
+        engine.dispose()
+        with admin.begin() as connection:
+            connection.execute(text(f"DROP SCHEMA IF EXISTS {schema} CASCADE"))
+        admin.dispose()
+
+
+def test_pr2_database_migrates_and_backfills_provenance(pr2_engine: Engine) -> None:
+    with pr2_engine.begin() as connection:
+        source_file_id = connection.execute(
+            text(
+                """
+                INSERT INTO source_files
+                    (source, filename, original_path, sha256, size_bytes, parser_version)
+                VALUES ('openai', 'conversations.json', 'synthetic://legacy', :sha256, 1,
+                        'openai-v1')
+                RETURNING id
+                """
+            ),
+            {"sha256": "a" * 64},
+        ).scalar_one()
+        conversation_id = connection.execute(
+            text(
+                """
+                INSERT INTO conversations
+                    (source, source_conversation_id, title, metadata)
+                VALUES ('openai', 'conversation-1', 'Legacy', '{}'::jsonb)
+                RETURNING id
+                """
+            )
+        ).scalar_one()
+        event_id = connection.execute(
+            text(
+                """
+                INSERT INTO events
+                    (source, event_type, conversation_id, text, metadata, source_record_id)
+                VALUES ('openai', 'conversation_message', :conversation_id, 'hello',
+                        '{"author_role":"user"}'::jsonb, 'message-1')
+                RETURNING id
+                """
+            ),
+            {"conversation_id": conversation_id},
+        ).scalar_one()
+        connection.execute(
+            text(
+                """
+                INSERT INTO source_file_conversations VALUES (:source_file_id, :record_id)
+                """
+            ),
+            {"source_file_id": source_file_id, "record_id": conversation_id},
+        )
+        connection.execute(
+            text("INSERT INTO source_file_events VALUES (:source_file_id, :record_id)"),
+            {"source_file_id": source_file_id, "record_id": event_id},
+        )
+
+    assert migrate_database(pr2_engine) == (3, 4, 5)
+    assert migrate_database(pr2_engine) == ()
+
+    with pr2_engine.connect() as connection:
+        versions = connection.execute(
+            text("SELECT version FROM schema_migrations ORDER BY version")
+        ).scalars().all()
+        event = connection.execute(
+            text(
+                """
+                SELECT source_record_namespace, actor_identity,
+                       octet_length(content_fingerprint), fingerprint_version
+                FROM events
+                """
+            )
+        ).one()
+        observations = connection.execute(
+            text(
+                """
+                SELECT COUNT(*), COUNT(event_version_id)
+                FROM event_observations
+                """
+            )
+        ).one()
+        event_versions = connection.execute(
+            text(
+                """
+                SELECT payload_fidelity, normalized_payload ->> 'text'
+                FROM event_versions
+                """
+            )
+        ).one()
+    assert list(versions) == [2, 3, 4, 5]
+    assert tuple(event) == ("message", "user", 32, "canonical-v1")
+    assert tuple(observations) == (1, 1)
+    assert tuple(event_versions) == ("full", "hello")
+
+    with pr2_engine.connect() as connection:
+        target_tables = (
+            "import_runs", "conversations", "events", "attachments", "conversation_versions",
+            "event_versions", "attachment_versions", "conversation_observations",
+            "event_observations", "attachment_observations",
+        )
+        columns: dict[str, set[tuple[str, str, str]]] = {}
+        for schema in ("public", "migration_pr2"):
+            rows = connection.execute(
+                text(
+                    """
+                    SELECT table_name, column_name, data_type, is_nullable
+                    FROM information_schema.columns
+                    WHERE table_schema = :schema AND table_name = ANY(:tables)
+                    """
+                ),
+                {"schema": schema, "tables": list(target_tables)},
+            ).all()
+            columns[schema] = {
+                (str(table), str(column), f"{data_type}:{nullable}")
+                for table, column, data_type, nullable in rows
+            }
+    assert columns["migration_pr2"] == columns["public"]
+
+
+def test_v5_preserves_unreconstructable_observation_as_fingerprint_only(
+    pr2_engine: Engine,
+) -> None:
+    with pr2_engine.begin() as connection:
+        source_file_id = connection.execute(
+            text(
+                """
+                INSERT INTO source_files
+                    (source, filename, original_path, sha256, size_bytes, parser_version)
+                VALUES ('openai', 'conversations.json', 'synthetic://legacy', :sha256, 1,
+                        'openai-v1')
+                RETURNING id
+                """
+            ),
+            {"sha256": "b" * 64},
+        ).scalar_one()
+        conversation_id = connection.execute(
+            text(
+                """
+                INSERT INTO conversations (source, source_conversation_id, title, metadata)
+                VALUES ('openai', 'conversation-1', 'Legacy', '{}'::jsonb)
+                RETURNING id
+                """
+            )
+        ).scalar_one()
+        event_id = connection.execute(
+            text(
+                """
+                INSERT INTO events
+                    (source, event_type, conversation_id, text, metadata, source_record_id)
+                VALUES ('openai', 'conversation_message', :conversation_id, 'old',
+                        '{"author_role":"user"}'::jsonb, 'message-1')
+                RETURNING id
+                """
+            ),
+            {"conversation_id": conversation_id},
+        ).scalar_one()
+        connection.execute(
+            text("INSERT INTO source_file_conversations VALUES (:file_id, :record_id)"),
+            {"file_id": source_file_id, "record_id": conversation_id},
+        )
+        connection.execute(
+            text("INSERT INTO source_file_events VALUES (:file_id, :record_id)"),
+            {"file_id": source_file_id, "record_id": event_id},
+        )
+        _ensure_migration_table(connection)
+        connection.exec_driver_sql(_read_migration(3))
+        _backfill_fingerprints(connection)
+        _backfill_legacy_observations(connection)
+        connection.execute(text("INSERT INTO schema_migrations (version) VALUES (3)"))
+        connection.exec_driver_sql(_read_migration(4))
+        connection.execute(text("INSERT INTO schema_migrations (version) VALUES (4)"))
+        old_fingerprint = bytes(
+            connection.execute(
+                text("SELECT content_fingerprint FROM events WHERE id = :event_id"),
+                {"event_id": event_id},
+            ).scalar_one()
+        )
+        edited = NormalizedEvent(
+            occurred_at=None,
+            source="openai",
+            event_type="conversation_message",
+            source_record_namespace="message",
+            actor_identity="user",
+            text="new",
+            metadata={"author_role": "user"},
+            source_record_id="message-1",
+        )
+        new_fingerprint = event_fingerprint(
+            edited,
+            conversation_namespace="chat",
+            conversation_source_id="conversation-1",
+        )
+        connection.execute(
+            text("UPDATE events SET text = 'new', content_fingerprint = :fingerprint"),
+            {"fingerprint": new_fingerprint},
+        )
+
+    assert migrate_database(pr2_engine) == (5,)
+
+    with pr2_engine.connect() as connection:
+        versions = connection.execute(
+            text(
+                """
+                SELECT content_fingerprint, payload_fidelity, normalized_payload ->> 'text'
+                FROM event_versions ORDER BY payload_fidelity
+                """
+            )
+        ).all()
+        observed = connection.execute(
+            text(
+                """
+                SELECT ev.content_fingerprint, ev.payload_fidelity
+                FROM event_observations eo
+                JOIN event_versions ev ON ev.id = eo.event_version_id
+                """
+            )
+        ).one()
+    assert {(bytes(fp), fidelity, value) for fp, fidelity, value in versions} == {
+        (new_fingerprint, "full", "new"),
+        (old_fingerprint, "fingerprint_only", None),
+    }
+    assert (bytes(observed[0]), observed[1]) == (old_fingerprint, "fingerprint_only")

@@ -104,6 +104,7 @@ def _parse_standard_message(
     conversation_id: str,
     message: Any,
     index: int,
+    conversation_updated_at: datetime | None,
 ) -> NormalizedEvent:
     if not isinstance(message, dict):
         raise AnthropicExportError(
@@ -119,12 +120,12 @@ def _parse_standard_message(
     content_blocks = message.get("content") if isinstance(message.get("content"), list) else []
     canonical_text = _visible_message_text(content_blocks)
     top_level_text = message.get("text") if isinstance(message.get("text"), str) else None
+    provider_updated_at = _timestamp(message.get("updated_at")) or conversation_updated_at
     provider_metadata: dict[str, Any] = {
         "conversation_uuid": conversation_id,
         "source_message_uuid": message_id,
         "source_sender": sender,
         "source_created_at": message.get("created_at"),
-        "source_updated_at": message.get("updated_at"),
         "parent_message_uuid": parent_message_id,
         "canonical_text_source": "content[type=text]",
         "content_blocks": content_blocks,
@@ -139,12 +140,18 @@ def _parse_standard_message(
         occurred_at=_timestamp(message.get("created_at")),
         source=SOURCE,
         event_type="conversation_message",
+        source_record_namespace="message",
         actor_identity=sender,
         text=canonical_text,
         metadata={"anthropic": provider_metadata},
         source_record_id=message_id,
         source_node_id=message_id,
         parent_source_node_id=parent_message_id,
+        provider_updated_at=provider_updated_at,
+        authority_at=provider_updated_at,
+        authority_kind=(
+            "provider_updated_at" if provider_updated_at is not None else "unknown"
+        ),
     )
 
 
@@ -161,25 +168,35 @@ def _parse_standard_conversations(payload: Any) -> tuple[NormalizedConversation,
             raise AnthropicExportError(
                 f"conversation {conversation_id} chat_messages must be an array"
             )
+        updated_at = _timestamp(raw.get("updated_at"))
         events = tuple(
-            _parse_standard_message(conversation_id, message, message_index)
+            _parse_standard_message(
+                conversation_id, message, message_index, updated_at
+            )
             for message_index, message in enumerate(messages)
         )
+        created_at = _timestamp(raw.get("created_at"))
+        message_times = [event.occurred_at for event in events if event.occurred_at is not None]
         conversations.append(
             NormalizedConversation(
                 source=SOURCE,
                 source_conversation_id=conversation_id,
+                source_record_namespace="chat",
                 title=raw.get("name") if isinstance(raw.get("name"), str) else None,
-                started_at=_timestamp(raw.get("created_at")),
-                ended_at=_timestamp(raw.get("updated_at")),
+                started_at=created_at,
+                ended_at=max(message_times) if message_times else created_at,
                 metadata=_anthropic_metadata(
                     conversation_uuid=conversation_id,
                     summary=raw.get("summary"),
                     account=raw.get("account"),
                     source_created_at=raw.get("created_at"),
-                    source_updated_at=raw.get("updated_at"),
                 ),
                 events=events,
+                provider_updated_at=updated_at,
+                authority_at=updated_at,
+                authority_kind=(
+                    "provider_updated_at" if updated_at is not None else "unknown"
+                ),
             )
         )
     return tuple(conversations)
@@ -193,6 +210,7 @@ def _parse_design_chat(raw: Any, entry_name: str) -> NormalizedConversation:
     messages = raw.get("messages")
     if not isinstance(messages, list):
         raise AnthropicExportError(f"design chat {conversation_id} messages must be an array")
+    conversation_updated_at = _timestamp(raw.get("updated_at"))
     events: list[NormalizedEvent] = []
     for index, message in enumerate(messages):
         if not isinstance(message, dict):
@@ -212,6 +230,7 @@ def _parse_design_chat(raw: Any, entry_name: str) -> NormalizedConversation:
                 occurred_at=_timestamp(message.get("created_at")),
                 source=SOURCE,
                 event_type="conversation_message",
+                source_record_namespace="design_message",
                 actor_identity=role,
                 text=text_value if isinstance(text_value, str) and text_value else None,
                 metadata=_anthropic_metadata(
@@ -224,21 +243,35 @@ def _parse_design_chat(raw: Any, entry_name: str) -> NormalizedConversation:
                 ),
                 source_record_id=message_id,
                 source_node_id=message_id,
+                provider_updated_at=conversation_updated_at,
+                authority_at=conversation_updated_at,
+                authority_kind=(
+                    "provider_updated_at"
+                    if conversation_updated_at is not None
+                    else "unknown"
+                ),
             )
         )
+    created_at = _timestamp(raw.get("created_at"))
+    message_times = [event.occurred_at for event in events if event.occurred_at is not None]
     return NormalizedConversation(
         source=SOURCE,
         source_conversation_id=conversation_id,
+        source_record_namespace="design_chat",
         title=raw.get("title") if isinstance(raw.get("title"), str) else None,
-        started_at=_timestamp(raw.get("created_at")),
-        ended_at=_timestamp(raw.get("updated_at")),
+        started_at=created_at,
+        ended_at=max(message_times) if message_times else created_at,
         metadata=_anthropic_metadata(
             design_chat_uuid=conversation_id,
             project=project,
             source_created_at=raw.get("created_at"),
-            source_updated_at=raw.get("updated_at"),
         ),
         events=tuple(events),
+        provider_updated_at=conversation_updated_at,
+        authority_at=conversation_updated_at,
+        authority_kind=(
+            "provider_updated_at" if conversation_updated_at is not None else "unknown"
+        ),
     )
 
 
@@ -251,6 +284,7 @@ def _parse_profile_event(user: Any, index: int) -> NormalizedEvent:
         occurred_at=None,
         source=SOURCE,
         event_type="account_profile_snapshot",
+        source_record_namespace="account_profile",
         actor_identity=account_id,
         text=display_name,
         metadata=_anthropic_metadata(
@@ -273,6 +307,7 @@ def _parse_login_event(login: Any, index: int) -> NormalizedEvent:
         occurred_at=_timestamp(login.get("timestamp")),
         source=SOURCE,
         event_type="account_login",
+        source_record_namespace="account_login",
         actor_identity=account_id,
         metadata=_anthropic_metadata(**login),
         source_record_id=f"login:{_sha256_json(login)}",
@@ -287,17 +322,23 @@ def _parse_project_events(raw: Any, entry_name: str) -> tuple[NormalizedEvent, .
     name = raw.get("name") if isinstance(raw.get("name"), str) else None
     description = raw.get("description") if isinstance(raw.get("description"), str) else None
     project_metadata = {
-        key: value for key, value in raw.items() if key not in {"docs"}
+        key: value for key, value in raw.items() if key not in {"docs", "updated_at"}
     }
     events = [
         NormalizedEvent(
-            occurred_at=_timestamp(raw.get("updated_at") or raw.get("created_at")),
+            occurred_at=_timestamp(raw.get("created_at")),
             source=SOURCE,
             event_type="project_snapshot",
+            source_record_namespace="project",
             actor_identity=creator.get("uuid"),
             text=description or None,
             metadata=_anthropic_metadata(**project_metadata),
             source_record_id=f"project:{project_id}",
+            provider_updated_at=_timestamp(raw.get("updated_at")),
+            authority_at=_timestamp(raw.get("updated_at")),
+            authority_kind=(
+                "provider_updated_at" if _timestamp(raw.get("updated_at")) else "unknown"
+            ),
         )
     ]
     docs = raw.get("docs") if isinstance(raw.get("docs"), list) else []
@@ -317,6 +358,7 @@ def _parse_project_events(raw: Any, entry_name: str) -> tuple[NormalizedEvent, .
                 occurred_at=_timestamp(document.get("created_at")),
                 source=SOURCE,
                 event_type="project_document",
+                source_record_namespace="project_document",
                 actor_identity=creator.get("uuid"),
                 text=content if isinstance(content, str) and content else None,
                 metadata=_anthropic_metadata(
@@ -346,6 +388,7 @@ def _parse_memory_events(raw: Any, entry_name: str) -> tuple[NormalizedEvent, ..
                 occurred_at=None,
                 source=SOURCE,
                 event_type="memory_snapshot",
+                source_record_namespace="memory",
                 actor_identity=account_id,
                 text=conversations_memory or None,
                 metadata=_anthropic_metadata(
@@ -363,6 +406,7 @@ def _parse_memory_events(raw: Any, entry_name: str) -> tuple[NormalizedEvent, ..
                     occurred_at=None,
                     source=SOURCE,
                     event_type="memory_snapshot",
+                    source_record_namespace="memory",
                     actor_identity=account_id,
                     text=content if isinstance(content, str) and content else None,
                     metadata=_anthropic_metadata(
@@ -388,17 +432,24 @@ def _parse_memory_events(raw: Any, entry_name: str) -> tuple[NormalizedEvent, ..
             content = memory_file.get("content")
             events.append(
                 NormalizedEvent(
-                    occurred_at=_timestamp(memory_file.get("updated_at")),
+                    occurred_at=None,
                     source=SOURCE,
                     event_type="memory_file_snapshot",
+                    source_record_namespace="memory_file",
                     actor_identity=account_id,
                     text=content if isinstance(content, str) and content else None,
                     metadata=_anthropic_metadata(
                         account_uuid=account_id,
                         path=path,
-                        updated_at=memory_file.get("updated_at"),
                     ),
                     source_record_id=f"memory:file:{path}",
+                    provider_updated_at=_timestamp(memory_file.get("updated_at")),
+                    authority_at=_timestamp(memory_file.get("updated_at")),
+                    authority_kind=(
+                        "provider_updated_at"
+                        if _timestamp(memory_file.get("updated_at"))
+                        else "unknown"
+                    ),
                 )
             )
     return tuple(events)
@@ -463,28 +514,34 @@ def _parse_category(category: str, entries: dict[str, Any]) -> tuple[
 
 
 def _validate_unique_records(parsed_exports: tuple[ParsedExport, ...]) -> None:
-    conversations: set[str] = set()
-    events: set[str] = set()
+    conversations: set[tuple[str, str]] = set()
+    events: set[tuple[str, str]] = set()
     for parsed in parsed_exports:
         for conversation in parsed.conversations:
-            if conversation.source_conversation_id in conversations:
+            conversation_key = (
+                conversation.source_record_namespace,
+                conversation.source_conversation_id,
+            )
+            if conversation_key in conversations:
                 raise AnthropicExportError(
                     "duplicate Anthropic conversation id in export: "
-                    f"{conversation.source_conversation_id}"
+                    f"{conversation_key}"
                 )
-            conversations.add(conversation.source_conversation_id)
+            conversations.add(conversation_key)
             for event in conversation.events:
-                if event.source_record_id in events:
+                event_key = (event.source_record_namespace, event.source_record_id)
+                if event_key in events:
                     raise AnthropicExportError(
-                        f"duplicate Anthropic record id in export: {event.source_record_id}"
+                        f"duplicate Anthropic record id in export: {event_key}"
                     )
-                events.add(event.source_record_id)
+                events.add(event_key)
         for event in parsed.events:
-            if event.source_record_id in events:
+            event_key = (event.source_record_namespace, event.source_record_id)
+            if event_key in events:
                 raise AnthropicExportError(
-                    f"duplicate Anthropic record id in export: {event.source_record_id}"
+                    f"duplicate Anthropic record id in export: {event_key}"
                 )
-            events.add(event.source_record_id)
+            events.add(event_key)
 
 
 def parse_anthropic_export(manifest_path: str | Path) -> tuple[ParsedExport, ...]:
@@ -525,11 +582,19 @@ def parse_anthropic_export(manifest_path: str | Path) -> tuple[ParsedExport, ...
                 ParsedExport(
                     source=SOURCE,
                     parser_version=PARSER_VERSION,
+                    category=category,
                     filename=filename,
                     original_path=str(archive_path),
                     sha256=_sha256_file(archive_path),
                     size_bytes=archive_path.stat().st_size,
                     exported_at=exported_at,
+                    export_id=(
+                        str(manifest.get("uuid"))
+                        if manifest.get("uuid") is not None
+                        else None
+                    ),
+                    snapshot_kind="complete",
+                    snapshot_scope="account",
                     conversations=conversations,
                     events=events,
                 )
