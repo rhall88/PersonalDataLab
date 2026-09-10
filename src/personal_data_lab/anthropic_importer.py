@@ -126,7 +126,6 @@ def _parse_standard_message(
         "source_message_uuid": message_id,
         "source_sender": sender,
         "source_created_at": message.get("created_at"),
-        "source_updated_at": message.get("updated_at"),
         "parent_message_uuid": parent_message_id,
         "canonical_text_source": "content[type=text]",
         "content_blocks": content_blocks,
@@ -189,7 +188,6 @@ def _parse_standard_conversations(payload: Any) -> tuple[NormalizedConversation,
                     summary=raw.get("summary"),
                     account=raw.get("account"),
                     source_created_at=raw.get("created_at"),
-                    source_updated_at=raw.get("updated_at"),
                 ),
                 events=events,
                 provider_updated_at=updated_at,
@@ -263,7 +261,6 @@ def _parse_design_chat(raw: Any, entry_name: str) -> NormalizedConversation:
             design_chat_uuid=conversation_id,
             project=project,
             source_created_at=raw.get("created_at"),
-            source_updated_at=raw.get("updated_at"),
         ),
         events=tuple(events),
         provider_updated_at=conversation_updated_at,
@@ -321,7 +318,7 @@ def _parse_project_events(raw: Any, entry_name: str) -> tuple[NormalizedEvent, .
     name = raw.get("name") if isinstance(raw.get("name"), str) else None
     description = raw.get("description") if isinstance(raw.get("description"), str) else None
     project_metadata = {
-        key: value for key, value in raw.items() if key not in {"docs"}
+        key: value for key, value in raw.items() if key not in {"docs", "updated_at"}
     }
     events = [
         NormalizedEvent(
@@ -440,7 +437,6 @@ def _parse_memory_events(raw: Any, entry_name: str) -> tuple[NormalizedEvent, ..
                     metadata=_anthropic_metadata(
                         account_uuid=account_id,
                         path=path,
-                        updated_at=memory_file.get("updated_at"),
                     ),
                     source_record_id=f"memory:file:{path}",
                     provider_updated_at=_timestamp(memory_file.get("updated_at")),
@@ -514,28 +510,34 @@ def _parse_category(category: str, entries: dict[str, Any]) -> tuple[
 
 
 def _validate_unique_records(parsed_exports: tuple[ParsedExport, ...]) -> None:
-    conversations: set[str] = set()
-    events: set[str] = set()
+    conversations: set[tuple[str, str]] = set()
+    events: set[tuple[str, str]] = set()
     for parsed in parsed_exports:
         for conversation in parsed.conversations:
-            if conversation.source_conversation_id in conversations:
+            conversation_key = (
+                conversation.source_record_namespace,
+                conversation.source_conversation_id,
+            )
+            if conversation_key in conversations:
                 raise AnthropicExportError(
                     "duplicate Anthropic conversation id in export: "
-                    f"{conversation.source_conversation_id}"
+                    f"{conversation_key}"
                 )
-            conversations.add(conversation.source_conversation_id)
+            conversations.add(conversation_key)
             for event in conversation.events:
-                if event.source_record_id in events:
+                event_key = (event.source_record_namespace, event.source_record_id)
+                if event_key in events:
                     raise AnthropicExportError(
-                        f"duplicate Anthropic record id in export: {event.source_record_id}"
+                        f"duplicate Anthropic record id in export: {event_key}"
                     )
-                events.add(event.source_record_id)
+                events.add(event_key)
         for event in parsed.events:
-            if event.source_record_id in events:
+            event_key = (event.source_record_namespace, event.source_record_id)
+            if event_key in events:
                 raise AnthropicExportError(
-                    f"duplicate Anthropic record id in export: {event.source_record_id}"
+                    f"duplicate Anthropic record id in export: {event_key}"
                 )
-            events.add(event.source_record_id)
+            events.add(event_key)
 
 
 def parse_anthropic_export(manifest_path: str | Path) -> tuple[ParsedExport, ...]:

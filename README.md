@@ -207,6 +207,11 @@ representation. The corresponding observation points to that exact version. An u
 observation may advance the authority watermark, but it never increments `canonical_revision` or
 changes `canonical_updated_at`.
 
+Provider update times are authority evidence, not content. A timestamp-only observation reuses
+the existing content version. Fingerprints produced by different algorithm versions are never
+compared; the importer requires an explicit database migration before accepting a new fingerprint
+version.
+
 The database keeps both compatibility joins and run-scoped observations:
 
 ```text

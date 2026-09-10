@@ -11,6 +11,7 @@ from personal_data_lab.anthropic_importer import (
     AnthropicExportError,
     parse_anthropic_export,
 )
+from personal_data_lab.fingerprints import event_fingerprint
 
 
 def _write_zip(path: Path, entries: dict[str, object]) -> None:
@@ -250,14 +251,14 @@ def test_rejects_manifest_path_traversal(tmp_path: Path) -> None:
         parse_anthropic_export(manifest)
 
 
-def test_rejects_duplicate_record_ids_across_archives(tmp_path: Path) -> None:
+def test_accepts_same_ids_in_different_namespaces(tmp_path: Path) -> None:
     manifest = _write_export(tmp_path / "raw-export")
     design_archive = manifest.parent / "design_chats-000.zip"
     _write_zip(
         design_archive,
         {
             "design.json": {
-                "uuid": "design-1",
+                "uuid": "conversation-1",
                 "messages": [
                     {
                         "uuid": "message-1",
@@ -269,5 +270,79 @@ def test_rejects_duplicate_record_ids_across_archives(tmp_path: Path) -> None:
         },
     )
 
+    parsed = parse_anthropic_export(manifest)
+    conversations = [
+        conversation
+        for item in parsed
+        for conversation in item.conversations
+        if conversation.source_conversation_id == "conversation-1"
+    ]
+    events = [
+        event
+        for event in _all_events(parsed)
+        if event.source_record_id == "message-1"
+    ]
+
+    assert {conversation.source_record_namespace for conversation in conversations} == {
+        "chat",
+        "design_chat",
+    }
+    assert {event.source_record_namespace for event in events} == {
+        "message",
+        "design_message",
+    }
+
+
+def test_rejects_duplicate_event_ids_in_the_same_namespace(tmp_path: Path) -> None:
+    manifest = _write_export(tmp_path / "raw-export")
+    archive_path = manifest.parent / "conversations-000.zip"
+    with ZipFile(archive_path) as archive:
+        conversations = json.loads(archive.read("conversations.json"))
+    duplicate = dict(conversations[0]["chat_messages"][0])
+    duplicate["created_at"] = "2026-09-04T00:03:00Z"
+    conversations[0]["chat_messages"].append(duplicate)
+    _write_zip(archive_path, {"conversations.json": conversations})
+
     with pytest.raises(AnthropicExportError, match="duplicate Anthropic record id"):
         parse_anthropic_export(manifest)
+
+
+def test_rejects_duplicate_conversation_ids_in_the_same_namespace(tmp_path: Path) -> None:
+    manifest = _write_export(tmp_path / "raw-export")
+    archive_path = manifest.parent / "conversations-000.zip"
+    with ZipFile(archive_path) as archive:
+        conversations = json.loads(archive.read("conversations.json"))
+    duplicate = dict(conversations[0])
+    duplicate["chat_messages"] = []
+    conversations.append(duplicate)
+    _write_zip(archive_path, {"conversations.json": conversations})
+
+    with pytest.raises(AnthropicExportError, match="duplicate Anthropic conversation id"):
+        parse_anthropic_export(manifest)
+
+
+def test_provider_update_time_does_not_change_message_fingerprint(tmp_path: Path) -> None:
+    manifest = _write_export(tmp_path / "raw-export")
+    first = next(
+        event
+        for event in _all_events(parse_anthropic_export(manifest))
+        if event.source_record_id == "message-1"
+    )
+    archive_path = manifest.parent / "conversations-000.zip"
+    with ZipFile(archive_path) as archive:
+        conversations = json.loads(archive.read("conversations.json"))
+    conversations[0]["chat_messages"][0]["updated_at"] = "2026-09-05T00:02:00Z"
+    _write_zip(archive_path, {"conversations.json": conversations})
+
+    observed_later = next(
+        event
+        for event in _all_events(parse_anthropic_export(manifest))
+        if event.source_record_id == "message-1"
+    )
+
+    assert first.provider_updated_at != observed_later.provider_updated_at
+    assert "source_updated_at" not in first.metadata["anthropic"]
+    assert event_fingerprint(first) == event_fingerprint(observed_later)
+    assert event_fingerprint(first.model_copy(update={"text": "actually edited"})) != (
+        event_fingerprint(first)
+    )

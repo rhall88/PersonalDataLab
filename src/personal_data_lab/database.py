@@ -260,6 +260,17 @@ def _incoming_authority(record: Any, parsed: ParsedExport) -> Authority:
     return Authority(None, "unknown")
 
 
+def _require_matching_fingerprint_version(
+    *, entity: str, logical_id: str, stored_version: str
+) -> None:
+    if stored_version != FINGERPRINT_VERSION:
+        raise ReconciliationError(
+            f"cannot reconcile {entity} {logical_id}: database fingerprints use "
+            f"{stored_version}; importer uses {FINGERPRINT_VERSION}; run the required "
+            "database migration"
+        )
+
+
 def _persist_version(
     connection: Connection,
     *,
@@ -416,6 +427,14 @@ def _reconcile_conversation(
         )
         return conversation_id, "inserted", version_id, version_created
     conversation_id = int(existing.id)
+    _require_matching_fingerprint_version(
+        entity="conversation",
+        logical_id=(
+            f"{conversation.source}/{conversation.source_record_namespace}/"
+            f"{conversation.source_conversation_id}"
+        ),
+        stored_version=str(existing.fingerprint_version),
+    )
     version_id, version_created = _persist_version(
         connection,
         table="conversation_versions",
@@ -610,6 +629,13 @@ def _reconcile_event(
         outcome: Outcome = "inserted"
     else:
         event_id = int(existing.id)
+        _require_matching_fingerprint_version(
+            entity="event",
+            logical_id=(
+                f"{event.source}/{event.source_record_namespace}/{event.source_record_id}"
+            ),
+            stored_version=str(existing.fingerprint_version),
+        )
         version_id, version_created = _persist_version(
             connection,
             table="event_versions",

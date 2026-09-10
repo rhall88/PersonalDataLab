@@ -10,6 +10,7 @@ from typing import Any
 import pytest
 from sqlalchemy import Engine, text
 
+from personal_data_lab.anthropic_importer import _parse_standard_message
 from personal_data_lab.database import (
     ReconciliationError,
     create_database_engine,
@@ -619,6 +620,99 @@ def test_same_content_newer_authority_blocks_later_stale_change(
     assert list(history) == ["A", "B"]
 
 
+def test_anthropic_timestamp_only_observation_reuses_version(
+    database_engine: Engine,
+) -> None:
+    first_event = _parse_standard_message(
+        "conversation-1",
+        {
+            "uuid": "message-1",
+            "sender": "human",
+            "created_at": "2026-01-01T00:00:00Z",
+            "updated_at": "2026-01-02T00:00:00Z",
+            "content": [{"type": "text", "text": "same content"}],
+        },
+        0,
+        None,
+    )
+    observed_later = _parse_standard_message(
+        "conversation-1",
+        {
+            "uuid": "message-1",
+            "sender": "human",
+            "created_at": "2026-01-01T00:00:00Z",
+            "updated_at": "2026-02-02T00:00:00Z",
+            "content": [{"type": "text", "text": "same content"}],
+        },
+        0,
+        None,
+    )
+
+    def parsed_export(sha256: str, event: NormalizedEvent) -> ParsedExport:
+        return ParsedExport(
+            source="anthropic",
+            parser_version="anthropic-v1",
+            filename=f"{sha256[0]}.zip",
+            original_path=f"synthetic://{sha256[0]}.zip",
+            sha256=sha256,
+            size_bytes=1,
+            snapshot_kind="partial",
+            snapshot_scope="account",
+            conversations=(
+                NormalizedConversation(
+                    source="anthropic",
+                    source_conversation_id="conversation-1",
+                    source_record_namespace="chat",
+                    title="Stable conversation",
+                    events=(event,),
+                ),
+            ),
+        )
+
+    first = import_parsed_exports(database_engine, (parsed_export("1" * 64, first_event),))[0]
+    with database_engine.connect() as connection:
+        initial_canonical_updated_at = connection.execute(
+            text("SELECT canonical_updated_at FROM events WHERE source_record_id = 'message-1'")
+        ).scalar_one()
+    second = import_parsed_exports(
+        database_engine, (parsed_export("2" * 64, observed_later),)
+    )[0]
+
+    with database_engine.connect() as connection:
+        canonical = connection.execute(
+            text(
+                """
+                SELECT canonical_revision, authority_at, canonical_run_id,
+                       last_observed_run_id, canonical_updated_at
+                FROM events WHERE source_record_id = 'message-1'
+                """
+            )
+        ).one()
+        version_count = connection.execute(text("SELECT COUNT(*) FROM event_versions")).scalar_one()
+        observations = connection.execute(
+            text(
+                """
+                SELECT COUNT(*), COUNT(DISTINCT event_version_id)
+                FROM event_observations
+                """
+            )
+        ).one()
+
+    assert first.inserted_events == 1
+    assert second.unchanged_events == 1
+    assert second.new_event_versions == 0
+    assert second.reused_event_versions == 1
+    assert tuple(canonical) == (
+        1,
+        observed_later.authority_at,
+        second.run_id,
+        second.run_id,
+        initial_canonical_updated_at,
+    )
+    assert version_count == 1
+    assert tuple(observations) == (2, 1)
+
+
 def test_conversation_change_preserves_both_normalized_versions(
     database_engine: Engine,
     tmp_path: Path,
@@ -852,6 +946,96 @@ def test_parent_node_relationship_resolves_within_conversation(
         ).one()
 
     assert tuple(relationship) == ("message-assistant", "message-user")
+
+
+def test_event_fingerprint_version_mismatch_rolls_back_import(
+    database_engine: Engine,
+) -> None:
+    initial = _synthetic_export(
+        sha256="8" * 64,
+        original_path="synthetic://initial",
+        exported_at=datetime(2025, 1, 1, tzinfo=UTC),
+        events=(_synthetic_event("row-1", "value"),),
+    )
+    incoming = _synthetic_export(
+        sha256="9" * 64,
+        original_path="synthetic://incoming",
+        exported_at=datetime(2026, 1, 1, tzinfo=UTC),
+        events=(_synthetic_event("row-1", "value"),),
+    )
+    import_parsed_exports(database_engine, (initial,))
+    with database_engine.begin() as connection:
+        connection.execute(text("UPDATE events SET fingerprint_version = 'canonical-v0'"))
+    tables = (
+        "source_files",
+        "source_file_locations",
+        "import_runs",
+        "import_run_source_files",
+        "events",
+        "event_versions",
+        "event_observations",
+    )
+    with database_engine.connect() as connection:
+        before = {
+            table: connection.execute(text(f"SELECT COUNT(*) FROM {table}")).scalar_one()
+            for table in tables
+        }
+
+    with pytest.raises(ReconciliationError, match="database fingerprints use canonical-v0"):
+        import_parsed_exports(database_engine, (incoming,))
+
+    with database_engine.connect() as connection:
+        after = {
+            table: connection.execute(text(f"SELECT COUNT(*) FROM {table}")).scalar_one()
+            for table in tables
+        }
+        stored_version = connection.execute(
+            text("SELECT fingerprint_version FROM events")
+        ).scalar_one()
+    assert after == before
+    assert stored_version == "canonical-v0"
+
+
+def test_conversation_fingerprint_version_mismatch_rolls_back_import(
+    database_engine: Engine,
+) -> None:
+    def parsed_export(sha256: str, title: str) -> ParsedExport:
+        return ParsedExport(
+            source="synthetic",
+            parser_version="synthetic-v1",
+            filename=f"{sha256[0]}.json",
+            original_path=f"synthetic://{sha256[0]}.json",
+            sha256=sha256,
+            size_bytes=1,
+            exported_at=datetime(2026, 1, 1, tzinfo=UTC),
+            snapshot_kind="complete",
+            snapshot_scope="account",
+            conversations=(
+                NormalizedConversation(
+                    source="synthetic",
+                    source_conversation_id="conversation-1",
+                    source_record_namespace="chat",
+                    title=title,
+                ),
+            ),
+        )
+
+    import_parsed_exports(database_engine, (parsed_export("a" * 64, "title"),))
+    with database_engine.begin() as connection:
+        connection.execute(
+            text("UPDATE conversations SET fingerprint_version = 'canonical-v0'")
+        )
+    with database_engine.connect() as connection:
+        before = connection.execute(text("SELECT COUNT(*) FROM import_runs")).scalar_one()
+
+    with pytest.raises(ReconciliationError, match="database fingerprints use canonical-v0"):
+        import_parsed_exports(database_engine, (parsed_export("b" * 64, "title"),))
+
+    with database_engine.connect() as connection:
+        assert connection.execute(text("SELECT COUNT(*) FROM import_runs")).scalar_one() == before
+        assert connection.execute(
+            text("SELECT fingerprint_version FROM conversations")
+        ).scalar_one() == "canonical-v0"
 
 
 def test_reconciliation_failure_rolls_back_every_table(database_engine: Engine) -> None:
