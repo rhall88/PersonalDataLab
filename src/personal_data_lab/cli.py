@@ -35,7 +35,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         engine = create_database_engine(database_url(args.database_url))
         result = import_openai_export(engine, parsed)
         print(json.dumps(result.model_dump() | {"reconciled": result.reconciled}, indent=2))
-        return 0
+        return 2 if result.has_conflicts else 0
     if args.command == "import-anthropic":
         parsed_exports = parse_anthropic_export(args.manifest)
         engine = create_database_engine(database_url(args.database_url))
@@ -73,6 +73,9 @@ def main(argv: Sequence[str] | None = None) -> int:
                     "stale_conversations": sum(
                         result.stale_conversations for result in results
                     ),
+                    "conflicted_conversations": sum(
+                        result.conflicted_conversations for result in results
+                    ),
                     "tombstoned_conversations": sum(
                         result.tombstoned_conversations for result in results
                     ),
@@ -80,8 +83,19 @@ def main(argv: Sequence[str] | None = None) -> int:
                     "updated_events": sum(result.updated_events for result in results),
                     "unchanged_events": sum(result.unchanged_events for result in results),
                     "stale_events": sum(result.stale_events for result in results),
+                    "conflicted_events": sum(
+                        result.conflicted_events for result in results
+                    ),
                     "tombstoned_events": sum(
                         result.tombstoned_events for result in results
+                    ),
+                    "new_distinct_versions": sum(
+                        result.new_conversation_versions + result.new_event_versions
+                        for result in results
+                    ),
+                    "reused_versions": sum(
+                        result.reused_conversation_versions + result.reused_event_versions
+                        for result in results
                     ),
                     "short_circuited": all(result.short_circuited for result in results),
                     "reconciled": all(result.reconciled for result in results),
@@ -89,7 +103,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 indent=2,
             )
         )
-        return 0
+        return 2 if any(result.has_conflicts for result in results) else 0
     if args.command == "migrate":
         engine = create_database_engine(database_url(args.database_url))
         applied = migrate_database(engine)

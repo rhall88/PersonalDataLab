@@ -10,13 +10,16 @@ from sqlalchemy.engine import Connection, Engine
 
 from .fingerprints import (
     FINGERPRINT_VERSION,
+    canonical_json_value,
+    conversation_canonical_payload,
     conversation_fingerprint,
+    event_canonical_payload,
     event_fingerprint,
     fingerprint_value,
 )
 from .models import NormalizedConversation, NormalizedEvent
 
-LATEST_SCHEMA_VERSION = 4
+LATEST_SCHEMA_VERSION = 5
 MIGRATIONS_DIRECTORIES = (
     Path(__file__).resolve().parents[2] / "db" / "migrations",
     Path(sysconfig.get_path("data")) / "share" / "personal-data-lab" / "migrations",
@@ -278,6 +281,259 @@ def _backfill_legacy_observations(connection: Connection) -> None:
         )
 
 
+def _payload_json(payload: dict[str, object]) -> str:
+    return json.dumps(canonical_json_value(payload), ensure_ascii=False, separators=(",", ":"))
+
+
+def _backfill_lossless_versions(connection: Connection) -> None:
+    conversations = connection.execute(
+        text(
+            """
+            SELECT c.*, MIN(o.import_run_id) AS first_run_id,
+                   MAX(o.import_run_id) AS last_run_id
+            FROM conversations c
+            LEFT JOIN conversation_observations o
+              ON o.conversation_id = c.id
+             AND o.observed_content_fingerprint = c.content_fingerprint
+            GROUP BY c.id
+            ORDER BY c.id
+            """
+        )
+    ).mappings()
+    for row in conversations:
+        normalized = NormalizedConversation(
+            source=row["source"],
+            source_record_namespace=row["source_record_namespace"],
+            source_conversation_id=row["source_conversation_id"],
+            title=row["title"],
+            started_at=row["started_at"],
+            ended_at=row["ended_at"],
+            metadata=dict(row["metadata"]),
+            lifecycle_state=row["lifecycle_state"],
+        )
+        if conversation_fingerprint(normalized) != bytes(row["content_fingerprint"]):
+            raise MigrationError(
+                f"conversation {row['id']} fingerprint does not match its canonical payload"
+            )
+        connection.execute(
+            text(
+                """
+                INSERT INTO conversation_versions
+                    (conversation_id, content_fingerprint, fingerprint_version,
+                     normalized_payload, payload_fidelity, first_observed_run_id,
+                     last_observed_run_id, provider_updated_at, authority_at,
+                     authority_kind, lifecycle_state)
+                VALUES
+                    (:record_id, :fingerprint, :version, CAST(:payload AS jsonb), 'full',
+                     :first_run_id, :last_run_id, :provider_updated_at, :authority_at,
+                     :authority_kind, :lifecycle_state)
+                """
+            ),
+            {
+                "record_id": row["id"],
+                "fingerprint": row["content_fingerprint"],
+                "version": row["fingerprint_version"],
+                "payload": _payload_json(conversation_canonical_payload(normalized)),
+                "first_run_id": row["first_run_id"],
+                "last_run_id": row["last_run_id"],
+                "provider_updated_at": row["provider_updated_at"],
+                "authority_at": row["authority_at"],
+                "authority_kind": row["authority_kind"],
+                "lifecycle_state": row["lifecycle_state"],
+            },
+        )
+
+    events = connection.execute(
+        text(
+            """
+            SELECT e.*, c.source_record_namespace AS conversation_namespace,
+                   c.source_conversation_id, MIN(o.import_run_id) AS first_run_id,
+                   MAX(o.import_run_id) AS last_run_id
+            FROM events e
+            LEFT JOIN conversations c ON c.id = e.conversation_id
+            LEFT JOIN event_observations o
+              ON o.event_id = e.id
+             AND o.observed_content_fingerprint = e.content_fingerprint
+            GROUP BY e.id, c.source_record_namespace, c.source_conversation_id
+            ORDER BY e.id
+            """
+        )
+    ).mappings()
+    for row in events:
+        normalized = NormalizedEvent(
+            occurred_at=row["occurred_at"],
+            source=row["source"],
+            event_type=row["event_type"],
+            source_record_namespace=row["source_record_namespace"],
+            actor_identity=row["actor_identity"],
+            text=row["text"],
+            metadata=dict(row["metadata"]),
+            source_record_id=row["source_record_id"],
+            source_node_id=row["source_node_id"],
+            parent_source_node_id=row["parent_source_node_id"],
+            lifecycle_state=row["lifecycle_state"],
+        )
+        payload = event_canonical_payload(
+            normalized,
+            conversation_namespace=row["conversation_namespace"],
+            conversation_source_id=row["source_conversation_id"],
+        )
+        if fingerprint_value(payload) != bytes(row["content_fingerprint"]):
+            raise MigrationError(
+                f"event {row['id']} fingerprint does not match its canonical payload"
+            )
+        connection.execute(
+            text(
+                """
+                INSERT INTO event_versions
+                    (event_id, content_fingerprint, fingerprint_version, normalized_payload,
+                     payload_fidelity, first_observed_run_id, last_observed_run_id,
+                     provider_updated_at, authority_at, authority_kind, lifecycle_state)
+                VALUES
+                    (:record_id, :fingerprint, :version, CAST(:payload AS jsonb), 'full',
+                     :first_run_id, :last_run_id, :provider_updated_at, :authority_at,
+                     :authority_kind, :lifecycle_state)
+                """
+            ),
+            {
+                "record_id": row["id"],
+                "fingerprint": row["content_fingerprint"],
+                "version": row["fingerprint_version"],
+                "payload": _payload_json(payload),
+                "first_run_id": row["first_run_id"],
+                "last_run_id": row["last_run_id"],
+                "provider_updated_at": row["provider_updated_at"],
+                "authority_at": row["authority_at"],
+                "authority_kind": row["authority_kind"],
+                "lifecycle_state": row["lifecycle_state"],
+            },
+        )
+
+    attachments = connection.execute(
+        text(
+            """
+            SELECT a.*, MIN(o.import_run_id) AS first_run_id,
+                   MAX(o.import_run_id) AS last_run_id
+            FROM attachments a
+            LEFT JOIN attachment_observations o
+              ON o.attachment_id = a.id
+             AND o.observed_content_fingerprint = a.content_fingerprint
+            GROUP BY a.id
+            ORDER BY a.id
+            """
+        )
+    ).mappings()
+    for row in attachments:
+        payload = {
+            key: row[key]
+            for key in (
+                "event_id", "mime_type", "path", "sha256", "file_size", "width",
+                "height", "duration", "metadata", "lifecycle_state",
+            )
+        }
+        if fingerprint_value(payload) != bytes(row["content_fingerprint"]):
+            raise MigrationError(
+                f"attachment {row['id']} fingerprint does not match its canonical payload"
+            )
+        connection.execute(
+            text(
+                """
+                INSERT INTO attachment_versions
+                    (attachment_id, content_fingerprint, fingerprint_version,
+                     normalized_payload, payload_fidelity, first_observed_run_id,
+                     last_observed_run_id, provider_updated_at, authority_at,
+                     authority_kind, lifecycle_state)
+                VALUES
+                    (:record_id, :fingerprint, :version, CAST(:payload AS jsonb), 'full',
+                     :first_run_id, :last_run_id, :provider_updated_at, :authority_at,
+                     :authority_kind, :lifecycle_state)
+                """
+            ),
+            {
+                "record_id": row["id"],
+                "fingerprint": row["content_fingerprint"],
+                "version": row["fingerprint_version"],
+                "payload": _payload_json(payload),
+                "first_run_id": row["first_run_id"],
+                "last_run_id": row["last_run_id"],
+                "provider_updated_at": row["provider_updated_at"],
+                "authority_at": row["authority_at"],
+                "authority_kind": row["authority_kind"],
+                "lifecycle_state": row["lifecycle_state"],
+            },
+        )
+
+    for entity, canonical_table, observation_table, version_table in (
+        ("conversation", "conversations", "conversation_observations", "conversation_versions"),
+        ("event", "events", "event_observations", "event_versions"),
+        ("attachment", "attachments", "attachment_observations", "attachment_versions"),
+    ):
+        record_id = f"{entity}_id"
+        version_id = f"{entity}_version_id"
+        connection.exec_driver_sql(
+            f"""
+            INSERT INTO {version_table}
+                ({record_id}, content_fingerprint, fingerprint_version,
+                 normalized_payload, payload_fidelity, first_observed_run_id,
+                 last_observed_run_id, provider_updated_at, authority_kind)
+            SELECT o.{record_id}, o.observed_content_fingerprint, c.fingerprint_version,
+                   NULL, 'fingerprint_only', MIN(o.import_run_id), MAX(o.import_run_id),
+                   MAX(o.provider_updated_at), 'unknown'
+            FROM {observation_table} o
+            JOIN {canonical_table} c ON c.id = o.{record_id}
+            LEFT JOIN {version_table} v
+              ON v.{record_id} = o.{record_id}
+             AND v.fingerprint_version = c.fingerprint_version
+             AND v.content_fingerprint = o.observed_content_fingerprint
+            WHERE v.id IS NULL
+            GROUP BY o.{record_id}, o.observed_content_fingerprint, c.fingerprint_version;
+
+            UPDATE {observation_table} o
+            SET {version_id} = v.id
+            FROM {version_table} v, {canonical_table} c
+            WHERE c.id = o.{record_id}
+              AND v.{record_id} = o.{record_id}
+              AND v.fingerprint_version = c.fingerprint_version
+              AND v.content_fingerprint = o.observed_content_fingerprint;
+
+            UPDATE {canonical_table} c
+            SET first_observed_run_id = history.first_run_id,
+                last_observed_run_id = history.last_run_id,
+                canonical_run_id = COALESCE(c.canonical_run_id, history.last_run_id)
+            FROM (
+                SELECT {record_id}, MIN(import_run_id) AS first_run_id,
+                       MAX(import_run_id) AS last_run_id
+                FROM {observation_table}
+                GROUP BY {record_id}
+            ) history
+            WHERE c.id = history.{record_id};
+            """
+        )
+
+    connection.exec_driver_sql(
+        """
+        ALTER TABLE conversation_observations
+            ALTER COLUMN conversation_version_id SET NOT NULL,
+            DROP COLUMN observed_content_fingerprint,
+            DROP COLUMN provider_updated_at;
+        ALTER TABLE event_observations
+            ALTER COLUMN event_version_id SET NOT NULL,
+            DROP COLUMN observed_content_fingerprint,
+            DROP COLUMN provider_updated_at;
+        ALTER TABLE attachment_observations
+            ALTER COLUMN attachment_version_id SET NOT NULL,
+            DROP COLUMN observed_content_fingerprint,
+            DROP COLUMN provider_updated_at;
+        ALTER TABLE conversations
+            ALTER COLUMN first_observed_run_id SET NOT NULL,
+            ALTER COLUMN last_observed_run_id SET NOT NULL;
+        ALTER TABLE events
+            ALTER COLUMN first_observed_run_id SET NOT NULL,
+            ALTER COLUMN last_observed_run_id SET NOT NULL;
+        """
+    )
+
+
 def migrate_database(engine: Engine) -> tuple[int, ...]:
     """Upgrade a PR2 database to the latest cumulative-canonical schema."""
 
@@ -296,6 +552,8 @@ def migrate_database(engine: Engine) -> tuple[int, ...]:
             if version == 3:
                 _backfill_fingerprints(connection)
                 _backfill_legacy_observations(connection)
+            if version == 5:
+                _backfill_lossless_versions(connection)
             connection.execute(
                 text("INSERT INTO schema_migrations (version) VALUES (:version)"),
                 {"version": version},

@@ -18,7 +18,9 @@ class FingerprintError(ValueError):
     """Raised when a normalized value cannot be serialized deterministically."""
 
 
-def _normalized_json_value(value: Any) -> Any:
+def canonical_json_value(value: Any) -> Any:
+    """Return the JSON-safe value used by both hashes and stored version payloads."""
+
     if value is None or isinstance(value, (str, bool, int)):
         return value
     if isinstance(value, float):
@@ -36,11 +38,11 @@ def _normalized_json_value(value: Any) -> Any:
         if not all(isinstance(key, str) for key in value):
             raise FingerprintError("JSON object keys must be strings")
         return {
-            key: _normalized_json_value(item)
+            key: canonical_json_value(item)
             for key, item in sorted(value.items())
         }
     if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
-        return [_normalized_json_value(item) for item in value]
+        return [canonical_json_value(item) for item in value]
     raise FingerprintError(f"unsupported fingerprint value: {type(value).__name__}")
 
 
@@ -49,7 +51,7 @@ def canonical_json_bytes(value: Any) -> bytes:
 
     try:
         return json.dumps(
-            _normalized_json_value(value),
+            canonical_json_value(value),
             ensure_ascii=False,
             allow_nan=False,
             separators=(",", ":"),
@@ -65,18 +67,42 @@ def fingerprint_value(value: Any) -> bytes:
     return hashlib.sha256(canonical_json_bytes(value)).digest()
 
 
-def conversation_fingerprint(conversation: NormalizedConversation) -> bytes:
-    """Fingerprint only fields persisted on the canonical conversation row."""
+def conversation_canonical_payload(conversation: NormalizedConversation) -> dict[str, Any]:
+    """Define the complete normalized content of a canonical conversation."""
 
-    return fingerprint_value(
-        {
-            "title": conversation.title,
-            "started_at": conversation.started_at,
-            "ended_at": conversation.ended_at,
-            "metadata": conversation.metadata,
-            "lifecycle_state": conversation.lifecycle_state,
-        }
-    )
+    return {
+        "title": conversation.title,
+        "started_at": conversation.started_at,
+        "ended_at": conversation.ended_at,
+        "metadata": conversation.metadata,
+        "lifecycle_state": conversation.lifecycle_state,
+    }
+
+
+def conversation_fingerprint(conversation: NormalizedConversation) -> bytes:
+    return fingerprint_value(conversation_canonical_payload(conversation))
+
+
+def event_canonical_payload(
+    event: NormalizedEvent,
+    *,
+    conversation_namespace: str | None = None,
+    conversation_source_id: str | None = None,
+) -> dict[str, Any]:
+    """Define the complete normalized content of a canonical event."""
+
+    return {
+        "occurred_at": event.occurred_at,
+        "event_type": event.event_type,
+        "actor_identity": event.actor_identity,
+        "conversation_namespace": conversation_namespace,
+        "conversation_source_id": conversation_source_id,
+        "text": event.text,
+        "metadata": event.metadata,
+        "source_node_id": event.source_node_id,
+        "parent_source_node_id": event.parent_source_node_id,
+        "lifecycle_state": event.lifecycle_state,
+    }
 
 
 def event_fingerprint(
@@ -85,20 +111,10 @@ def event_fingerprint(
     conversation_namespace: str | None = None,
     conversation_source_id: str | None = None,
 ) -> bytes:
-    """Fingerprint only fields persisted on the canonical event row."""
-
     return fingerprint_value(
-        {
-            "occurred_at": event.occurred_at,
-            "event_type": event.event_type,
-            "actor_identity": event.actor_identity,
-            "conversation_namespace": conversation_namespace,
-            "conversation_source_id": conversation_source_id,
-            "text": event.text,
-            "metadata": event.metadata,
-            "source_node_id": event.source_node_id,
-            "parent_source_node_id": event.parent_source_node_id,
-            "lifecycle_state": event.lifecycle_state,
-        }
+        event_canonical_payload(
+            event,
+            conversation_namespace=conversation_namespace,
+            conversation_source_id=conversation_source_id,
+        )
     )
-

@@ -35,6 +35,7 @@ CREATE TABLE IF NOT EXISTS import_runs (
     exported_at TIMESTAMPTZ,
     parser_version TEXT NOT NULL,
     fingerprint_version TEXT NOT NULL,
+    policy_version TEXT NOT NULL,
     status TEXT NOT NULL CHECK (
         status IN ('staging', 'finalizing', 'partial', 'completed', 'failed', 'conflicted')
     ),
@@ -85,6 +86,8 @@ CREATE TABLE IF NOT EXISTS conversations (
         authority_kind IN ('provider_revision', 'provider_updated_at', 'exported_at', 'unknown')
     ),
     canonical_run_id BIGINT REFERENCES import_runs(id) ON DELETE RESTRICT,
+    first_observed_run_id BIGINT NOT NULL REFERENCES import_runs(id) ON DELETE RESTRICT,
+    last_observed_run_id BIGINT NOT NULL REFERENCES import_runs(id) ON DELETE RESTRICT,
     canonical_revision BIGINT NOT NULL DEFAULT 1 CHECK (canonical_revision > 0),
     canonical_updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     lifecycle_state TEXT NOT NULL DEFAULT 'active' CHECK (
@@ -124,6 +127,8 @@ CREATE TABLE IF NOT EXISTS events (
         authority_kind IN ('provider_revision', 'provider_updated_at', 'exported_at', 'unknown')
     ),
     canonical_run_id BIGINT REFERENCES import_runs(id) ON DELETE RESTRICT,
+    first_observed_run_id BIGINT NOT NULL REFERENCES import_runs(id) ON DELETE RESTRICT,
+    last_observed_run_id BIGINT NOT NULL REFERENCES import_runs(id) ON DELETE RESTRICT,
     canonical_revision BIGINT NOT NULL DEFAULT 1 CHECK (canonical_revision > 0),
     canonical_updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     lifecycle_state TEXT NOT NULL DEFAULT 'active' CHECK (
@@ -162,6 +167,8 @@ CREATE TABLE IF NOT EXISTS attachments (
         authority_kind IN ('provider_revision', 'provider_updated_at', 'exported_at', 'unknown')
     ),
     canonical_run_id BIGINT REFERENCES import_runs(id) ON DELETE RESTRICT,
+    first_observed_run_id BIGINT REFERENCES import_runs(id) ON DELETE RESTRICT,
+    last_observed_run_id BIGINT REFERENCES import_runs(id) ON DELETE RESTRICT,
     canonical_revision BIGINT NOT NULL DEFAULT 1 CHECK (canonical_revision > 0),
     canonical_updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     lifecycle_state TEXT NOT NULL DEFAULT 'active' CHECK (
@@ -172,19 +179,76 @@ CREATE TABLE IF NOT EXISTS attachments (
     UNIQUE (source, source_record_namespace, source_attachment_id)
 );
 
+CREATE TABLE IF NOT EXISTS conversation_versions (
+    id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    conversation_id BIGINT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+    content_fingerprint BYTEA NOT NULL CHECK (octet_length(content_fingerprint) = 32),
+    fingerprint_version TEXT NOT NULL,
+    normalized_payload JSONB,
+    payload_fidelity TEXT NOT NULL CHECK (payload_fidelity IN ('full', 'fingerprint_only')),
+    first_observed_run_id BIGINT REFERENCES import_runs(id) ON DELETE RESTRICT,
+    last_observed_run_id BIGINT REFERENCES import_runs(id) ON DELETE RESTRICT,
+    provider_updated_at TIMESTAMPTZ,
+    authority_at TIMESTAMPTZ,
+    authority_kind TEXT NOT NULL CHECK (
+        authority_kind IN ('provider_revision', 'provider_updated_at', 'exported_at', 'unknown')
+    ),
+    lifecycle_state TEXT CHECK (lifecycle_state IN ('active', 'provider_deleted')),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE (conversation_id, fingerprint_version, content_fingerprint),
+    CHECK (payload_fidelity = 'fingerprint_only' OR normalized_payload IS NOT NULL)
+);
+
+CREATE TABLE IF NOT EXISTS event_versions (
+    id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    event_id BIGINT NOT NULL REFERENCES events(id) ON DELETE CASCADE,
+    content_fingerprint BYTEA NOT NULL CHECK (octet_length(content_fingerprint) = 32),
+    fingerprint_version TEXT NOT NULL,
+    normalized_payload JSONB,
+    payload_fidelity TEXT NOT NULL CHECK (payload_fidelity IN ('full', 'fingerprint_only')),
+    first_observed_run_id BIGINT REFERENCES import_runs(id) ON DELETE RESTRICT,
+    last_observed_run_id BIGINT REFERENCES import_runs(id) ON DELETE RESTRICT,
+    provider_updated_at TIMESTAMPTZ,
+    authority_at TIMESTAMPTZ,
+    authority_kind TEXT NOT NULL CHECK (
+        authority_kind IN ('provider_revision', 'provider_updated_at', 'exported_at', 'unknown')
+    ),
+    lifecycle_state TEXT CHECK (lifecycle_state IN ('active', 'provider_deleted')),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE (event_id, fingerprint_version, content_fingerprint),
+    CHECK (payload_fidelity = 'fingerprint_only' OR normalized_payload IS NOT NULL)
+);
+
+CREATE TABLE IF NOT EXISTS attachment_versions (
+    id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    attachment_id BIGINT NOT NULL REFERENCES attachments(id) ON DELETE CASCADE,
+    content_fingerprint BYTEA NOT NULL CHECK (octet_length(content_fingerprint) = 32),
+    fingerprint_version TEXT NOT NULL,
+    normalized_payload JSONB,
+    payload_fidelity TEXT NOT NULL CHECK (payload_fidelity IN ('full', 'fingerprint_only')),
+    first_observed_run_id BIGINT REFERENCES import_runs(id) ON DELETE RESTRICT,
+    last_observed_run_id BIGINT REFERENCES import_runs(id) ON DELETE RESTRICT,
+    provider_updated_at TIMESTAMPTZ,
+    authority_at TIMESTAMPTZ,
+    authority_kind TEXT NOT NULL CHECK (
+        authority_kind IN ('provider_revision', 'provider_updated_at', 'exported_at', 'unknown')
+    ),
+    lifecycle_state TEXT CHECK (lifecycle_state IN ('active', 'provider_deleted')),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE (attachment_id, fingerprint_version, content_fingerprint),
+    CHECK (payload_fidelity = 'fingerprint_only' OR normalized_payload IS NOT NULL)
+);
+
 CREATE TABLE IF NOT EXISTS conversation_observations (
     import_run_id BIGINT NOT NULL REFERENCES import_runs(id) ON DELETE CASCADE,
     source_file_id BIGINT NOT NULL REFERENCES source_files(id) ON DELETE RESTRICT,
     conversation_id BIGINT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
-    observed_content_fingerprint BYTEA NOT NULL CHECK (
-        octet_length(observed_content_fingerprint) = 32
-    ),
+    conversation_version_id BIGINT NOT NULL REFERENCES conversation_versions(id) ON DELETE RESTRICT,
     raw_record_fingerprint BYTEA CHECK (
         raw_record_fingerprint IS NULL OR octet_length(raw_record_fingerprint) = 32
     ),
-    provider_updated_at TIMESTAMPTZ,
     outcome TEXT NOT NULL CHECK (
-        outcome IN ('inserted', 'updated', 'unchanged', 'stale', 'tombstoned')
+        outcome IN ('inserted', 'updated', 'unchanged', 'stale', 'conflicted', 'tombstoned')
     ),
     PRIMARY KEY (import_run_id, source_file_id, conversation_id)
 );
@@ -193,15 +257,12 @@ CREATE TABLE IF NOT EXISTS event_observations (
     import_run_id BIGINT NOT NULL REFERENCES import_runs(id) ON DELETE CASCADE,
     source_file_id BIGINT NOT NULL REFERENCES source_files(id) ON DELETE RESTRICT,
     event_id BIGINT NOT NULL REFERENCES events(id) ON DELETE CASCADE,
-    observed_content_fingerprint BYTEA NOT NULL CHECK (
-        octet_length(observed_content_fingerprint) = 32
-    ),
+    event_version_id BIGINT NOT NULL REFERENCES event_versions(id) ON DELETE RESTRICT,
     raw_record_fingerprint BYTEA CHECK (
         raw_record_fingerprint IS NULL OR octet_length(raw_record_fingerprint) = 32
     ),
-    provider_updated_at TIMESTAMPTZ,
     outcome TEXT NOT NULL CHECK (
-        outcome IN ('inserted', 'updated', 'unchanged', 'stale', 'tombstoned')
+        outcome IN ('inserted', 'updated', 'unchanged', 'stale', 'conflicted', 'tombstoned')
     ),
     PRIMARY KEY (import_run_id, source_file_id, event_id)
 );
@@ -210,15 +271,12 @@ CREATE TABLE IF NOT EXISTS attachment_observations (
     import_run_id BIGINT NOT NULL REFERENCES import_runs(id) ON DELETE CASCADE,
     source_file_id BIGINT NOT NULL REFERENCES source_files(id) ON DELETE RESTRICT,
     attachment_id BIGINT NOT NULL REFERENCES attachments(id) ON DELETE CASCADE,
-    observed_content_fingerprint BYTEA NOT NULL CHECK (
-        octet_length(observed_content_fingerprint) = 32
-    ),
+    attachment_version_id BIGINT NOT NULL REFERENCES attachment_versions(id) ON DELETE RESTRICT,
     raw_record_fingerprint BYTEA CHECK (
         raw_record_fingerprint IS NULL OR octet_length(raw_record_fingerprint) = 32
     ),
-    provider_updated_at TIMESTAMPTZ,
     outcome TEXT NOT NULL CHECK (
-        outcome IN ('inserted', 'updated', 'unchanged', 'stale', 'tombstoned')
+        outcome IN ('inserted', 'updated', 'unchanged', 'stale', 'conflicted', 'tombstoned')
     ),
     PRIMARY KEY (import_run_id, source_file_id, attachment_id)
 );
@@ -236,5 +294,11 @@ CREATE INDEX IF NOT EXISTS event_observations_event_idx
     ON event_observations (event_id, import_run_id);
 CREATE INDEX IF NOT EXISTS attachment_observations_attachment_idx
     ON attachment_observations (attachment_id, import_run_id);
+CREATE INDEX IF NOT EXISTS conversation_versions_history_idx
+    ON conversation_versions (conversation_id, created_at);
+CREATE INDEX IF NOT EXISTS event_versions_history_idx
+    ON event_versions (event_id, created_at);
+CREATE INDEX IF NOT EXISTS attachment_versions_history_idx
+    ON attachment_versions (attachment_id, created_at);
 
-INSERT INTO schema_migrations (version) VALUES (2), (3), (4) ON CONFLICT DO NOTHING;
+INSERT INTO schema_migrations (version) VALUES (2), (3), (4), (5) ON CONFLICT DO NOTHING;

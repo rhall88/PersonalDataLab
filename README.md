@@ -8,8 +8,9 @@ This repository contains the completed foundation and its first two source impor
 - PostgreSQL 18 plus pgvector
 - canonical records (`people`, `identities`, `conversations`, `events`, and `attachments`)
 - source-file provenance (`source_files`, `source_file_conversations`, and `source_file_events`)
-- import-run and per-observation provenance with deterministic canonical fingerprints
-- cumulative reconciliation for inserts, genuine updates, unchanged overlap, and stale data
+- lossless distinct-version history plus narrow import-run/observation provenance
+- cumulative reconciliation for inserts, genuine updates, unchanged overlap, stale data,
+  conflicts, explicit deletion, and reactivation
 - OpenAI data-export importer
 - Anthropic data-export importer
 - reconciliation tests
@@ -76,10 +77,12 @@ existing database, install the new importer, and apply the tracked migrations ex
 personal-data-lab migrate
 ```
 
-The command is idempotent. It backfills provider namespaces and canonical fingerprints and
-converts existing source-file memberships into compact legacy observations. Those migrated
-observations are marked as membership-only provenance because the old schema did not retain the
-content fingerprint seen in each historical export.
+The command is idempotent. It backfills provider namespaces, canonical fingerprints, distinct
+version rows, and compact version-backed observations. PR2 memberships become full versions of
+the currently available canonical payload. If upgrading an intermediate PR3 database whose
+observations contain an older fingerprint but not its reconstructable payload, the migration
+retains that evidence as a `fingerprint_only` version instead of pretending the old payload is
+known or discarding the fact that it existed.
 
 ## 5. Store untouched exports
 
@@ -117,7 +120,7 @@ canonical upserts, records source-file membership, and reconciles parsed counts 
 membership rows for that particular export. A count mismatch raises an error and rolls
 the entire transaction back.
 
-Successful output resembles:
+Successful output includes per-entity reconciliation and version-deduplication metrics:
 
 ```json
 {
@@ -126,6 +129,13 @@ Successful output resembles:
   "database_conversations": 100,
   "source_events": 2500,
   "database_events": 2500,
+  "inserted_events": 25,
+  "updated_events": 4,
+  "unchanged_events": 2471,
+  "stale_events": 0,
+  "conflicted_events": 0,
+  "new_event_versions": 29,
+  "reused_event_versions": 2471,
   "reconciled": true
 }
 ```
@@ -162,30 +172,78 @@ Previously generated normalized ZIPs are useful as independent reconciliation or
 but they are derived data and are not importer inputs. The untouched manifest and
 `*-000.zip` archives remain the source of truth.
 
-## Canonical records and export provenance
+## Permanent cumulative and lossless contract
+
+PersonalDataLab is cumulative and lossless. Raw exports are immutable evidence. Every distinct
+normalized payload ever observed is retained exactly once, while repeated identical payloads
+reuse the existing version. Normal AI and application queries use the canonical tables, which
+contain the best-known authoritative representation of each logical record.
+
+The layers have separate jobs:
+
+```text
+raw source files
+    → distinct normalized versions
+        → one canonical representation per logical identity
+            → narrow run/file/version observations
+```
+
+When ordering evidence cannot safely select between different payloads, both versions and the
+conflicted observation are committed while canonical content remains unchanged. The CLI reports
+the conflict and exits non-zero. Uncertainty is never resolved by throwing unique information
+away or by treating local import order as provider chronology.
+
+### Canonical identity and history
 
 A logical provider record is canonical by `(source, source_record_namespace,
 source_record_id)`. Conversations retain their provider conversation ID under the same
 namespaced rule. Namespaces prevent IDs reused by different provider products or record types
 from colliding.
 
-Each canonical row stores a deterministic content fingerprint, the authority timestamp that
-selected its current representation, and a revision counter. Imports classify observations as
-new, updated, unchanged, or stale. Unchanged overlap does not update the canonical row, and an
-older export imported later cannot overwrite a newer authoritative representation. Differing
-content with equal or incomparable authority fails closed instead of using invocation order.
+Each canonical row stores a deterministic content fingerprint, first/last observation pointers,
+the authority watermark selecting its current representation, and a content revision counter.
+`conversation_versions` and `event_versions` store one full payload for every distinct normalized
+representation. The corresponding observation points to that exact version. An unchanged newer
+observation may advance the authority watermark, but it never increments `canonical_revision` or
+changes `canonical_updated_at`.
 
 The database keeps both compatibility joins and run-scoped observations:
 
 ```text
 source_files ── source_file_conversations ── conversations
 source_files ── source_file_events ───────── events
-import_runs ─── event_observations ───────── events
+import_runs ─── event_observations ───────── event_versions ── events
 ```
 
-Observation rows store keys and fingerprints, not another copy of canonical text or JSON. A later
-export that omits an older record does not delete or deactivate it: absence is not a provider
-deletion signal.
+Observation rows store small keys and version pointers, not another copy of canonical text or
+JSON. Only an explicit provider deletion signal creates a `provider_deleted` version and may
+change canonical lifecycle state. Historical active versions remain queryable, and a newer
+authoritative reappearance may reactivate the canonical row.
+
+### Absence is never deletion: 100 → 75
+
+If a 2025 spreadsheet contains 100 stable logical records and a 2027 export contains only 75,
+the canonical corpus still contains all 100. The 2025 observation has 100 memberships; the 2027
+observation has 75. The missing 25 retain their payload, lifecycle, revision, and 2025
+`last_observed_run_id`. No tombstone or synthetic deletion is created. For the repeated 75,
+`last_observed_run_id` advances to the 2027 run without creating duplicate versions.
+
+These concepts are intentionally different:
+
+- `canonical_run_id`: run that selected or authoritatively confirmed the current representation
+- `last_observed_run_id`: latest ingestion run in which the record appeared, even if stale or
+  conflicted
+- snapshot membership: records linked by observations to one particular run/file
+- historical existence: any retained logical record/version ever validly observed
+- provider deletion: an explicit retained lifecycle fact, never inferred from absence
+
+### Query layers for future AI and MCP use
+
+Ordinary questions query `people`, `identities`, `conversations`, `events`, and `attachments`.
+Historical-change questions query the corresponding version tables. Provenance or forensic
+questions additionally query observations, import runs, source files, and source-file locations.
+Agents should not compare raw exports or scan every provenance layer to answer normal questions;
+canonical data is the default fast query surface.
 
 For OpenAI messages, `source_record_id` contains `message.id`, `source_node_id` contains
 the mapping-node ID, and `parent_source_node_id` contains the structural parent-node ID.
@@ -237,8 +295,12 @@ non-sensitive CI-only password.
   canonical records while retaining complete provenance.
 - Exact completed imports are short-circuited, and unchanged records in distinct overlapping
   exports do not rewrite canonical payloads.
-- Older exports cannot regress newer canonical content; ambiguous equal-authority changes fail.
+- Older exports cannot regress newer canonical content; ambiguous changes are preserved as
+  conflicted versions while canonical content remains unchanged.
 - Records missing from later exports remain part of the cumulative historical corpus.
+- Explicit provider deletion and later reactivation preserve every historical version.
+- Raw-file identity is `(source, sha256)`: a second path for the same bytes adds location
+  provenance, while different bytes at a reused path create a new retained source-file row.
 - Attachments remain filesystem-backed; PostgreSQL stores metadata and paths only.
 - The database is exposed only on the local machine.
 
@@ -291,8 +353,6 @@ Review the pull request before merging.
 
 ## Deferred roadmap
 
-After the Anthropic importer is reviewed and merged, the intended order is: iMessage,
-Meta, Google, Apple, corpus-wide reconciliation, identity resolution,
-ordinary search and analytics, a read-only AI database account, generic PostgreSQL
-MCP, custom personal-data MCP, embeddings, Parquet/DuckDB, then evidence-backed
-derived analysis. None of those features belong in the Anthropic-importer slice.
+After this cumulative/lossless storage contract is reviewed and merged, Google ingestion can be
+built against it. Google parsing, embeddings, semantic search, MCP servers, agent workflows,
+generic filesystem deduplication, and binary delta chains do not belong in PR3.

@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any, Literal, Self
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, computed_field, model_validator
 
 
 class NormalizedEvent(BaseModel):
@@ -105,13 +105,33 @@ class ImportResult(BaseModel):
     updated_conversations: int = 0
     unchanged_conversations: int = 0
     stale_conversations: int = 0
+    conflicted_conversations: int = 0
     tombstoned_conversations: int = 0
+    new_conversation_versions: int = 0
+    reused_conversation_versions: int = 0
     inserted_events: int = 0
     updated_events: int = 0
     unchanged_events: int = 0
     stale_events: int = 0
+    conflicted_events: int = 0
     tombstoned_events: int = 0
+    new_event_versions: int = 0
+    reused_event_versions: int = 0
     short_circuited: bool = False
+
+    @property
+    def has_conflicts(self) -> bool:
+        return bool(self.conflicted_conversations or self.conflicted_events)
+
+    @computed_field
+    @property
+    def new_distinct_versions(self) -> int:
+        return self.new_conversation_versions + self.new_event_versions
+
+    @computed_field
+    @property
+    def reused_versions(self) -> int:
+        return self.reused_conversation_versions + self.reused_event_versions
 
     @property
     def reconciled(self) -> bool:

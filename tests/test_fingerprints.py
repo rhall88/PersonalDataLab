@@ -7,6 +7,7 @@ import pytest
 from personal_data_lab.fingerprints import (
     FingerprintError,
     canonical_json_bytes,
+    event_canonical_payload,
     event_fingerprint,
     fingerprint_value,
 )
@@ -58,3 +59,26 @@ def test_provenance_fields_do_not_affect_event_fingerprint() -> None:
     assert event_fingerprint(base.model_copy(update={"text": "edited"})) != event_fingerprint(
         base
     )
+
+
+def test_event_fingerprint_uses_the_stored_canonical_payload_definition() -> None:
+    event = NormalizedEvent(
+        occurred_at=datetime(2026, 9, 9, tzinfo=UTC),
+        source="openai",
+        event_type="conversation_message",
+        source_record_namespace="message",
+        source_record_id="message-1",
+        text="shared definition",
+        metadata={"nested": {"answer": 42}},
+    )
+    payload = event_canonical_payload(
+        event,
+        conversation_namespace="chat",
+        conversation_source_id="conversation-1",
+    )
+
+    assert event_fingerprint(
+        event,
+        conversation_namespace="chat",
+        conversation_source_id="conversation-1",
+    ) == fingerprint_value(payload)
