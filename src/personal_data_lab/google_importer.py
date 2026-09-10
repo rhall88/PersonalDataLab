@@ -13,7 +13,7 @@ from zipfile import BadZipFile, ZipFile
 
 from pydantic import ValidationError
 
-from .fingerprints import canonical_json_bytes
+from .fingerprints import FingerprintError, canonical_json_bytes
 from .models import NormalizedEvent, ParsedExport
 
 SOURCE = "google"
@@ -57,7 +57,7 @@ def _takeout_identity(path: Path) -> tuple[datetime | None, str | None]:
     try:
         return datetime.strptime(value, "%Y%m%dT%H%M%SZ").replace(tzinfo=UTC), value
     except ValueError:
-        return None, value
+        return None, None
 
 
 def _timestamp(value: Any) -> datetime | None:
@@ -78,7 +78,7 @@ def _timestamp(value: Any) -> datetime | None:
         parsed = datetime.fromisoformat(raw[:-1] + "+00:00" if raw.endswith("Z") else raw)
     except ValueError:
         return None
-    return parsed.replace(tzinfo=UTC) if parsed.tzinfo is None else parsed
+    return parsed.replace(tzinfo=UTC) if parsed.tzinfo is None else parsed.astimezone(UTC)
 
 
 def _text_values(value: Any) -> Iterator[str]:
@@ -137,6 +137,12 @@ def _product_hint(source_name: str) -> str | None:
         if "youtube" in lowered or lowered in {"search", "maps", "chrome"}:
             return part
     return None
+
+
+def _activity_category(source_name: str, product_hint: str | None) -> str:
+    product = _normalized_name(product_hint or "") or "generic"
+    source_format = "json" if source_name.casefold().endswith(".json") else "html"
+    return f"my_activity/{product}/{source_format}"
 
 
 def _record_id(record: dict[str, Any], duplicate_number: int) -> str:
@@ -364,6 +370,7 @@ def _parse_activity_stream(
         return ParsedExport(
             source=SOURCE,
             parser_version=PARSER_VERSION,
+            category=_activity_category(source_name, product_hint),
             filename=source_name,
             original_path=original_path,
             sha256=digest.hexdigest(),
@@ -374,7 +381,7 @@ def _parse_activity_stream(
             snapshot_scope="account/activity",
             events=events,
         )
-    except (UnicodeDecodeError, ValidationError) as error:
+    except (FingerprintError, UnicodeDecodeError, ValidationError) as error:
         raise GoogleExportError(
             f"could not normalize Google activity file {source_name}"
         ) from error

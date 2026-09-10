@@ -6,10 +6,12 @@ from collections.abc import Iterator
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
+from zipfile import ZipFile
 
 import pytest
 from sqlalchemy import Engine, text
 
+from personal_data_lab import cli
 from personal_data_lab.anthropic_importer import _parse_standard_message
 from personal_data_lab.database import (
     ReconciliationError,
@@ -17,7 +19,7 @@ from personal_data_lab.database import (
     import_openai_export,
     import_parsed_exports,
 )
-from personal_data_lab.google_importer import parse_google_export
+from personal_data_lab.google_importer import GoogleExportError, parse_google_export
 from personal_data_lab.models import NormalizedConversation, NormalizedEvent, ParsedExport
 from personal_data_lab.openai_importer import parse_openai_export
 
@@ -1178,3 +1180,142 @@ def test_google_activity_reexport_reuses_existing_events(
         versions = connection.execute(text("SELECT COUNT(*) FROM event_versions")).scalar_one()
     assert list(event_types) == ["maps_activity", "search_activity"]
     assert versions == 2
+
+
+def test_google_export_authority_reuses_version_and_advances_watermark(
+    database_engine: Engine,
+    tmp_path: Path,
+) -> None:
+    payload = json.dumps(
+        [
+            {
+                "header": "Search",
+                "title": "Searched for deterministic ingestion",
+                "time": "2026-09-01T00:00:00Z",
+            }
+        ]
+    )
+    member = "Takeout/My Activity/Search/MyActivity.json"
+    paths = (
+        tmp_path / "takeout-20260901T000000Z-001.zip",
+        tmp_path / "takeout-20260902T000000Z-001.zip",
+    )
+    for path in paths:
+        with ZipFile(path, "w") as archive:
+            archive.writestr(member, payload)
+
+    first = import_parsed_exports(database_engine, parse_google_export(paths[0]))[0]
+    second = import_parsed_exports(database_engine, parse_google_export(paths[1]))[0]
+
+    assert first.inserted_events == 1
+    assert second.unchanged_events == 1
+    assert second.reused_event_versions == 1
+    with database_engine.connect() as connection:
+        version_count = connection.execute(
+            text("SELECT COUNT(*) FROM event_versions")
+        ).scalar_one()
+        authority_at = connection.execute(
+            text("SELECT authority_at FROM events")
+        ).scalar_one()
+        run_count = connection.execute(text("SELECT COUNT(*) FROM import_runs")).scalar_one()
+    assert version_count == 1
+    assert authority_at == datetime(2026, 9, 2, tzinfo=UTC)
+    assert run_count == 2
+
+
+def test_google_parsing_category_prevents_false_run_short_circuit(
+    database_engine: Engine,
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "MyActivity.json"
+    source.write_text(
+        json.dumps([{"title": "Activity", "time": "2026-09-01T00:00:00Z"}]),
+        encoding="utf-8",
+    )
+    (generic,) = parse_google_export(source)
+    search_context = generic.model_copy(
+        update={
+            "category": "my_activity/search/json",
+            "filename": "My_Activity.json",
+            "original_path": str(tmp_path / "Search" / "My_Activity.json"),
+        }
+    )
+
+    first = import_parsed_exports(database_engine, (generic,))[0]
+    second = import_parsed_exports(database_engine, (search_context,))[0]
+
+    assert first.source_file_id == second.source_file_id
+    assert not second.short_circuited
+    assert second.unchanged_events == 1
+    with database_engine.connect() as connection:
+        run_count = connection.execute(text("SELECT COUNT(*) FROM import_runs")).scalar_one()
+        categories = connection.execute(
+            text("SELECT category FROM import_run_source_files ORDER BY import_run_id")
+        ).scalars().all()
+    assert run_count == 2
+    assert list(categories) == [
+        "my_activity/generic/json",
+        "my_activity/search/json",
+    ]
+
+
+def test_google_later_absence_keeps_prior_activity(
+    database_engine: Engine,
+    tmp_path: Path,
+) -> None:
+    older_records = [
+        {"header": "Search", "title": "First", "time": "2026-09-01T00:00:00Z"},
+        {"header": "Maps", "title": "Second", "time": "2026-09-02T00:00:00Z"},
+    ]
+    newer_records = [older_records[1]]
+    first_path = tmp_path / "first" / "MyActivity.json"
+    second_path = tmp_path / "second" / "MyActivity.json"
+    first_path.parent.mkdir()
+    second_path.parent.mkdir()
+    first_path.write_text(json.dumps(older_records), encoding="utf-8")
+    second_path.write_text(json.dumps(newer_records), encoding="utf-8")
+
+    import_parsed_exports(database_engine, parse_google_export(first_path))
+    import_parsed_exports(database_engine, parse_google_export(second_path))
+
+    with database_engine.connect() as connection:
+        canonical_count = connection.execute(text("SELECT COUNT(*) FROM events")).scalar_one()
+        version_count = connection.execute(
+            text("SELECT COUNT(*) FROM event_versions")
+        ).scalar_one()
+    assert canonical_count == version_count == 2
+
+
+def test_google_cli_keeps_completed_members_when_a_later_member_is_invalid(
+    database_engine: Engine,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = tmp_path / "takeout-20260901T000000Z-001.zip"
+    with ZipFile(source, "w") as archive:
+        archive.writestr(
+            "Takeout/My Activity/Search/MyActivity.json",
+            json.dumps(
+                [
+                    {
+                        "header": "Search",
+                        "title": "Committed activity",
+                        "time": "2026-09-01T00:00:00Z",
+                    }
+                ]
+            ),
+        )
+        archive.writestr(
+            "Takeout/My Activity/YouTube/MyActivity.json",
+            '[{"title":"truncated"}',
+        )
+    monkeypatch.setattr(cli, "create_database_engine", lambda url: database_engine)
+    monkeypatch.setattr(cli, "database_url", lambda override: "ignored")
+
+    with pytest.raises(GoogleExportError, match="ended unexpectedly"):
+        cli.main(["import-google", str(source)])
+
+    with database_engine.connect() as connection:
+        event_count = connection.execute(text("SELECT COUNT(*) FROM events")).scalar_one()
+        run_count = connection.execute(text("SELECT COUNT(*) FROM import_runs")).scalar_one()
+    assert event_count == run_count == 1

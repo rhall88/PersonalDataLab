@@ -186,6 +186,9 @@ extracted Takeout directory, or a standalone `MyActivity.json`/`MyActivity.html`
 personal-data-lab import-google data\raw\google\2026-09-10
 ```
 
+The normative behavior, identity rules, failure model, and acceptance matrix are documented in
+[`GOOGLE_INGESTION_SPEC.md`](GOOGLE_INGESTION_SPEC.md).
+
 This first Google slice imports the common My Activity records used by Search, YouTube,
 Maps, Chrome, Play, Shopping, and Ads. JSON is preferred because its timestamps are
 machine-readable; the HTML fallback preserves activity-card text and links, but leaves
@@ -193,10 +196,15 @@ localized dates unset when they cannot be interpreted safely.
 
 The importer scans ZIP central directories and opens only supported activity members. It
 does not extract or read photo, video, Drive, or other binary payloads. Each supported member
-is hashed while it is parsed and becomes a separate `source_files` row whose location names
-both the immutable ZIP and member. Split archives are processed in filename order, and each
-member commits independently so a later malformed member can be corrected and the command
-rerun without duplicating completed work.
+is hashed while it is parsed and is recorded by immutable byte identity; identical bytes at a
+new location reuse the source row and add location provenance. Split archives are processed in
+filename order, and each member commits independently so a later malformed member can be
+corrected and the command rerun without duplicating completed work.
+
+JSON decoding is incremental and Takeout members are processed serially. The current database
+contract still materializes the normalized events for one supported member before reconciling
+it, so peak memory is bounded by the largest supported member rather than a single record. True
+record-at-a-time database ingestion requires a separate staged-import design.
 
 Google does not provide a durable record ID for My Activity rows. The adapter therefore uses
 a deterministic digest of the complete provider record, with stable occurrence suffixes for

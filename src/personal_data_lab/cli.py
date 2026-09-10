@@ -40,7 +40,19 @@ def _parser() -> argparse.ArgumentParser:
 
 def _batch_summary(parsed_exports: Sequence, results: Sequence) -> dict:
     files = [
-        parsed.model_dump(include={"filename", "sha256", "size_bytes", "parser_version"})
+        parsed.model_dump(
+            mode="json",
+            include={
+                "category",
+                "filename",
+                "original_path",
+                "sha256",
+                "size_bytes",
+                "exported_at",
+                "export_id",
+                "parser_version",
+            },
+        )
         | result.model_dump()
         | {"reconciled": result.reconciled}
         for parsed, result in zip(parsed_exports, results, strict=True)
