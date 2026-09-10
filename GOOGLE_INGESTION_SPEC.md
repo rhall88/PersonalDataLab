@@ -99,8 +99,10 @@ The CLI accepts exactly one `source` argument with one of these shapes:
 Discovery requirements:
 
 - resolve the supplied path strictly before parsing;
+- accept a deliberately selected standalone file by its supported basename;
 - never extract ZIP contents to disk;
 - inspect only the ZIP central directory, then open recognized members as streams;
+- require ZIP members to appear under a recognized `My Activity` or product `history` hierarchy;
 - ignore directories and unsupported members;
 - process archive files and members in deterministic case-insensitive filename order;
 - prefer standard split archives when a directory contains them;
@@ -138,7 +140,7 @@ but the database source-file row represents the supported member actually parsed
 ### 5.2 Parsing category
 
 The PR3 run key deliberately excludes filenames because names are location provenance. Google
-normalization can nevertheless depend on the member format and product-directory hint. The
+normalization can nevertheless depend on the member format and semantic product context. The
 adapter must therefore populate an explicit category:
 
 ```text
@@ -153,22 +155,30 @@ my_activity/maps/html
 my_activity/generic/json
 ```
 
-This category is included in run identity and stored in `import_run_source_files.category`.
-Renaming identical bytes without changing parsing context must short-circuit. Reusing identical
-bytes under a different semantic product context must be parsed as a distinct run rather than
-incorrectly reusing the earlier result.
+Product context is one of the canonical keys `youtube`, `maps`, `search`, `chrome`, `shopping`,
+`play`, or `ads`; unrecognized context becomes `generic`. This category is included in run
+identity and stored in `import_run_source_files.category`. Renaming identical bytes without
+changing semantic context must short-circuit. Equivalent labels such as `Maps` and `Google Maps`
+must produce the same category. Reusing identical bytes under a genuinely different semantic
+product context must be parsed as a distinct run rather than incorrectly reusing the earlier
+result. Selecting a file directly or discovering that same file from an ancestor directory must
+produce identical category and canonical event semantics.
 
 ### 5.3 Takeout export identity
 
-Infer export authority only from a path component matching:
+Infer export authority only from an entire path component matching one of:
 
 ```text
 takeout-YYYYMMDDTHHMMSSZ
+takeout-YYYYMMDDTHHMMSSZ-NNN
+takeout-YYYYMMDDTHHMMSSZ.zip
+takeout-YYYYMMDDTHHMMSSZ-NNN.zip
 ```
 
 The timestamp is UTC. Split suffixes such as `-001.zip` do not affect the export ID. If no valid
 timestamp is present, both `exported_at` and `export_id` are null. Filesystem modification times
-must never be used as authority.
+must never be used as authority. Incidental substrings inside components such as
+`backup-of-takeout-YYYYMMDDTHHMMSSZ-old` must not confer authority.
 
 ## 6. JSON parsing contract
 
@@ -236,13 +246,15 @@ Accept:
 Every timezone-aware result must be converted to UTC. A timezone-naive ISO value is interpreted as
 UTC. Booleans, empty strings, non-finite numbers, invalid dates, and out-of-range values are not
 timestamps. If a non-null raw `time` cannot be parsed, set `occurred_at` to null and preserve the
-original value as `metadata.google.unparsed_time`.
+original value as `metadata._pdl.unparsed_time`.
 
 ### 8.2 Event classification
 
 Classification is deterministic and case-insensitive. Provider evidence from `header`, `products`,
-and `activityControls` is authoritative. The product-directory hint is consulted only when those
-fields do not identify a supported product. Keyword precedence within either evidence tier is:
+and `activityControls` is authoritative. Canonical product context derived from a recognized path
+structure or history filename is consulted only when those fields do not identify a supported
+product. Matching uses normalized words and explicit phrases, not arbitrary substrings. Keyword
+precedence within either evidence tier is:
 
 1. YouTube -> `youtube_activity`
 2. Maps -> `maps_activity`
@@ -253,9 +265,10 @@ fields do not identify a supported product. Keyword precedence within either evi
 7. Ad Center, Google Ads, or My Ad -> `ad_activity`
 8. otherwise -> `google_activity`
 
-The path-derived product hint is retained as `metadata.google.takeout_product` only when it is
-needed as fallback classification evidence. Because it can affect normalization in that case, it
-is also represented by the parsing category. A folder name must not override self-identifying
+When canonical path context is needed as fallback classification evidence, its semantic key is
+retained as `metadata._pdl.takeout_product`. Raw folder labels remain only in `original_path` and
+`filename`; they never enter canonical metadata. Because semantic context can affect normalization,
+it is also represented by the parsing category. A folder name must not override self-identifying
 provider fields or cause path-only canonical-content churn.
 
 ### 8.3 Canonical text
@@ -273,10 +286,12 @@ Canonical text is built from `title`, `subtitles`, and `description`, in that or
 
 ### 8.4 Provider metadata
 
-Copy every JSON provider field to `metadata.google` except a successfully parsed `time`, which is
-represented by `occurred_at`. If `time` is unparseable, preserve it as `unparsed_time`. URLs,
-subtitles, products, activity controls, and unrecognized fields remain available. The adapter
-must never dereference URLs.
+Copy every JSON provider field to `metadata.google` except `time`, which is represented by
+`occurred_at` when valid. If `time` is unparseable, preserve its original value as
+`metadata._pdl.unparsed_time`. Adapter-owned metadata lives under the reserved top-level `_pdl`
+namespace, never among provider-owned keys under `metadata.google`. URLs, subtitles, products,
+activity controls, and unrecognized fields remain available unchanged. The adapter must never
+dereference URLs.
 
 ## 9. Logical identity and duplicates
 
@@ -374,7 +389,9 @@ Previously committed member runs remain inspectable in the database and safe to 
 - Never execute HTML or JavaScript.
 - Never fetch provider URLs or linked media.
 - Never use filesystem timestamps as provider authority.
+- Never infer authority from a partial path-component match.
 - Never accept an unsupported product as successfully imported.
+- Never allow invocation path shape or raw directory labels to alter canonical event content.
 - Never silently drop an invalid record from a recognized member.
 - Never infer deletion from absence.
 - Never include Takeout export time in canonical content fingerprints.
@@ -391,10 +408,14 @@ Previously committed member runs remain inspectable in the database and safe to 
 - extracted Takeout tree;
 - directly selected activity/history directory;
 - unsupported tree rejection;
+- supported basenames outside recognized ZIP activity hierarchies are ignored;
 - invalid ZIP rejection;
 - exact member SHA and uncompressed size;
 - inferred Takeout export timestamp and ID;
 - category distinguishes format/product context but not filename/path changes.
+- exact-file and ancestor-directory invocation produce identical category, identity, and content;
+- equivalent product folder labels normalize to one semantic context key;
+- incidental Takeout-like path substrings do not confer export authority.
 
 ### JSON and normalization
 
@@ -409,8 +430,9 @@ Previously committed member runs remain inspectable in the database and safe to 
 - ISO `Z`, explicit-offset, numeric seconds, and numeric milliseconds timestamps;
 - invalid timestamp preservation;
 - classification for every supported product and generic fallback;
+- adversarial product words do not produce substring-based misclassification;
 - recursive text flattening, whitespace normalization, and deduplication;
-- provider-field retention and parsed-time removal.
+- provider-field retention, parsed-time removal, and collision-proof adapter metadata.
 
 ### HTML
 

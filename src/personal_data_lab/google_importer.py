@@ -4,7 +4,7 @@ import codecs
 import hashlib
 import json
 import re
-from collections.abc import Iterator
+from collections.abc import Iterable, Iterator
 from datetime import UTC, datetime
 from html.parser import HTMLParser
 from pathlib import Path, PurePosixPath
@@ -19,7 +19,10 @@ from .models import NormalizedEvent, ParsedExport
 SOURCE = "google"
 PARSER_VERSION = "google-my-activity-v1"
 _READ_SIZE = 1024 * 1024
-_TAKEOUT_TIMESTAMP = re.compile(r"takeout-(\d{8}T\d{6}Z)", re.IGNORECASE)
+_TAKEOUT_COMPONENT = re.compile(
+    r"takeout-(\d{8}T\d{6}Z)(?:-\d{3})?(?:\.zip)?",
+    re.IGNORECASE,
+)
 _ACTIVITY_NAMES = {
     "myactivityjson",
     "myactivityhtml",
@@ -38,20 +41,22 @@ def _normalized_name(value: str) -> str:
     return re.sub(r"[^a-z0-9]", "", value.casefold())
 
 
-def _is_activity_path(value: str) -> bool:
+def _is_activity_filename(value: str) -> bool:
     path = PurePosixPath(value.replace("\\", "/"))
     return _normalized_name(path.name) in _ACTIVITY_NAMES
 
 
 def _takeout_identity(path: Path) -> tuple[datetime | None, str | None]:
-    match = _TAKEOUT_TIMESTAMP.search(str(path))
-    if match is None:
-        return None, None
-    value = match.group(1).upper()
-    try:
-        return datetime.strptime(value, "%Y%m%dT%H%M%SZ").replace(tzinfo=UTC), value
-    except ValueError:
-        return None, None
+    for part in reversed(path.parts):
+        match = _TAKEOUT_COMPONENT.fullmatch(part)
+        if match is None:
+            continue
+        value = match.group(1).upper()
+        try:
+            return datetime.strptime(value, "%Y%m%dT%H%M%SZ").replace(tzinfo=UTC), value
+        except ValueError:
+            return None, None
+    return None, None
 
 
 def _timestamp(value: Any) -> datetime | None:
@@ -97,61 +102,109 @@ def _activity_text(record: dict[str, Any]) -> str | None:
     return "\n".join(values) or None
 
 
-def _event_type_from_evidence(evidence: Iterator[str]) -> str | None:
-    combined = " ".join(evidence).casefold()
-    if "youtube" in combined:
-        return "youtube_activity"
-    if "maps" in combined:
-        return "maps_activity"
-    if "search" in combined:
-        return "search_activity"
-    if "chrome" in combined:
-        return "browser_activity"
-    if "shopping" in combined:
-        return "shopping_activity"
-    if "play" in combined:
-        return "play_activity"
-    if "ad center" in combined or "google ads" in combined or "my ad" in combined:
-        return "ad_activity"
+def _contains_phrase(tokens: tuple[str, ...], phrase: tuple[str, ...]) -> bool:
+    width = len(phrase)
+    return any(tokens[index : index + width] == phrase for index in range(len(tokens) - width + 1))
+
+
+def _product_key_from_evidence(evidence: Iterable[str]) -> str | None:
+    token_groups = tuple(
+        tuple(re.findall(r"[a-z0-9]+", value.casefold()))
+        for value in evidence
+        if value.strip()
+    )
+    if any("youtube" in tokens for tokens in token_groups):
+        return "youtube"
+    if any("maps" in tokens for tokens in token_groups):
+        return "maps"
+    if any("search" in tokens for tokens in token_groups):
+        return "search"
+    if any("chrome" in tokens for tokens in token_groups):
+        return "chrome"
+    if any("shopping" in tokens for tokens in token_groups):
+        return "shopping"
+    if any("play" in tokens for tokens in token_groups):
+        return "play"
+    if any(
+        _contains_phrase(tokens, ("ad", "center"))
+        or _contains_phrase(tokens, ("my", "ad"))
+        or ("google" in tokens and "ads" in tokens)
+        for tokens in token_groups
+    ):
+        return "ads"
     return None
 
 
+_PRODUCT_EVENT_TYPES = {
+    "youtube": "youtube_activity",
+    "maps": "maps_activity",
+    "search": "search_activity",
+    "chrome": "browser_activity",
+    "shopping": "shopping_activity",
+    "play": "play_activity",
+    "ads": "ad_activity",
+}
+
+
 def _activity_event_type(
-    record: dict[str, Any], product_hint: str | None
+    record: dict[str, Any], path_product: str | None
 ) -> tuple[str, bool]:
     record_evidence = (
         value
         for key in ("header", "products", "activityControls")
         for value in _text_values(record.get(key))
     )
-    record_type = _event_type_from_evidence(record_evidence)
-    if record_type is not None:
-        return record_type, False
-    hint_type = _event_type_from_evidence(iter((product_hint or "",)))
-    return hint_type or "google_activity", hint_type is not None
+    record_product = _product_key_from_evidence(record_evidence)
+    if record_product is not None:
+        return _PRODUCT_EVENT_TYPES[record_product], False
+    if path_product is not None:
+        return _PRODUCT_EVENT_TYPES[path_product], True
+    return "google_activity", False
 
 
-def _product_hint(source_name: str) -> str | None:
+def _path_product(source_name: str) -> str | None:
     parts = list(PurePosixPath(source_name.replace("\\", "/")).parts)
     normalized = [_normalized_name(part) for part in parts]
-    if "myactivity" in normalized:
-        index = normalized.index("myactivity")
+    directory_parts = normalized[:-1]
+    if "myactivity" in directory_parts:
+        index = len(directory_parts) - 1 - directory_parts[::-1].index("myactivity")
         if index + 1 < len(parts) - 1:
-            return parts[index + 1]
-    for part in parts:
-        lowered = part.casefold()
-        if "youtube" in lowered or lowered in {"search", "maps", "chrome"}:
-            return part
+            product = _product_key_from_evidence((parts[index + 1],))
+            if product is not None:
+                return product
+    if "history" in directory_parts:
+        index = len(directory_parts) - 1 - directory_parts[::-1].index("history")
+        if index > 0:
+            product = _product_key_from_evidence((parts[index - 1],))
+            if product is not None:
+                return product
     leaf = normalized[-1] if normalized else ""
     if leaf in {"watchhistoryjson", "watchhistoryhtml"}:
-        return "YouTube"
+        return "youtube"
     if leaf in {"searchhistoryjson", "searchhistoryhtml"}:
-        return "Search"
+        return "search"
     return None
 
 
-def _activity_category(source_name: str, product_hint: str | None) -> str:
-    product = _normalized_name(product_hint or "") or "generic"
+def _is_archive_activity_path(value: str) -> bool:
+    path = PurePosixPath(value.replace("\\", "/"))
+    leaf = _normalized_name(path.name)
+    if leaf not in _ACTIVITY_NAMES:
+        return False
+    directories = [_normalized_name(part) for part in path.parts[:-1]]
+    if "myactivity" in directories:
+        return True
+    if leaf in {"watchhistoryjson", "watchhistoryhtml", "searchhistoryjson", "searchhistoryhtml"}:
+        for index, part in enumerate(directories):
+            if part != "history" or index == 0:
+                continue
+            if _product_key_from_evidence((path.parts[index - 1],)) is not None:
+                return True
+    return False
+
+
+def _activity_category(source_name: str, path_product: str | None) -> str:
+    product = path_product or "generic"
     source_format = "json" if source_name.casefold().endswith(".json") else "html"
     return f"my_activity/{product}/{source_format}"
 
@@ -166,7 +219,7 @@ def _normalize_activity(
     record: Any,
     *,
     index: int,
-    product_hint: str | None,
+    path_product: str | None,
     exported_at: datetime | None,
     duplicate_counts: dict[bytes, int],
 ) -> NormalizedEvent:
@@ -179,12 +232,15 @@ def _normalize_activity(
     duplicate_counts[identity] = duplicate_counts.get(identity, 0) + 1
     raw_time = record.get("time")
     occurred_at = _timestamp(raw_time)
-    event_type, used_product_hint = _activity_event_type(record, product_hint)
+    event_type, used_path_product = _activity_event_type(record, path_product)
     metadata = {"google": {key: value for key, value in record.items() if key != "time"}}
+    adapter_metadata: dict[str, Any] = {}
     if raw_time is not None and occurred_at is None:
-        metadata["google"]["unparsed_time"] = raw_time
-    if used_product_hint:
-        metadata["google"]["takeout_product"] = product_hint
+        adapter_metadata["unparsed_time"] = raw_time
+    if used_path_product:
+        adapter_metadata["takeout_product"] = path_product
+    if adapter_metadata:
+        metadata["_pdl"] = adapter_metadata
 
     return NormalizedEvent(
         occurred_at=occurred_at,
@@ -323,7 +379,7 @@ def _parse_html_cards(stream: BinaryIO, digest: Any) -> tuple[tuple[str, tuple[s
 def _normalize_html_card(
     card: tuple[str, tuple[str, ...]],
     *,
-    product_hint: str | None,
+    path_product: str | None,
     exported_at: datetime | None,
     duplicate_counts: dict[bytes, int],
 ) -> NormalizedEvent:
@@ -339,7 +395,7 @@ def _normalize_html_card(
     return _normalize_activity(
         record,
         index=0,
-        product_hint=product_hint,
+        path_product=path_product,
         exported_at=exported_at,
         duplicate_counts=duplicate_counts,
     )
@@ -353,9 +409,9 @@ def _parse_activity_stream(
     size_bytes: int,
     exported_at: datetime | None,
     export_id: str | None,
+    path_product: str | None,
 ) -> ParsedExport:
     digest = hashlib.sha256()
-    product_hint = _product_hint(source_name)
     duplicate_counts: dict[bytes, int] = {}
     try:
         if source_name.casefold().endswith(".json"):
@@ -363,7 +419,7 @@ def _parse_activity_stream(
                 _normalize_activity(
                     record,
                     index=index,
-                    product_hint=product_hint,
+                    path_product=path_product,
                     exported_at=exported_at,
                     duplicate_counts=duplicate_counts,
                 )
@@ -373,7 +429,7 @@ def _parse_activity_stream(
             events = tuple(
                 _normalize_html_card(
                     card,
-                    product_hint=product_hint,
+                    path_product=path_product,
                     exported_at=exported_at,
                     duplicate_counts=duplicate_counts,
                 )
@@ -382,7 +438,7 @@ def _parse_activity_stream(
         return ParsedExport(
             source=SOURCE,
             parser_version=PARSER_VERSION,
-            category=_activity_category(source_name, product_hint),
+            category=_activity_category(source_name, path_product),
             filename=source_name,
             original_path=original_path,
             sha256=digest.hexdigest(),
@@ -407,7 +463,7 @@ def _iter_zip_exports(
     try:
         with ZipFile(path) as archive:
             for info in sorted(archive.infolist(), key=lambda item: item.filename.casefold()):
-                if info.is_dir() or not _is_activity_path(info.filename):
+                if info.is_dir() or not _is_archive_activity_path(info.filename):
                     continue
                 found = True
                 original_path = f"{path}!/{info.filename}"
@@ -420,6 +476,7 @@ def _iter_zip_exports(
                             size_bytes=info.file_size,
                             exported_at=exported_at,
                             export_id=export_id,
+                            path_product=_path_product(info.filename),
                         )
                 except RuntimeError as error:
                     raise GoogleExportError(
@@ -433,7 +490,7 @@ def _iter_zip_exports(
 
 def _candidate_activity_files(path: Path) -> tuple[Path, ...]:
     if path.is_file():
-        return (path,) if _is_activity_path(path.name) else ()
+        return (path,) if _is_activity_filename(path.name) else ()
 
     bases = [path]
     takeout = path / "Takeout"
@@ -447,7 +504,7 @@ def _candidate_activity_files(path: Path) -> tuple[Path, ...]:
                 candidates.update(
                     item
                     for item in child.rglob("*")
-                    if item.is_file() and _is_activity_path(str(item))
+                    if item.is_file() and _is_activity_filename(str(item))
                 )
             if child.is_dir() and "youtube" in normalized:
                 history = child / "history"
@@ -455,11 +512,13 @@ def _candidate_activity_files(path: Path) -> tuple[Path, ...]:
                     candidates.update(
                         item
                         for item in history.iterdir()
-                        if item.is_file() and _is_activity_path(str(item))
+                        if item.is_file() and _is_activity_filename(str(item))
                     )
     if _normalized_name(path.name) in {"myactivity", "history"}:
         candidates.update(
-            item for item in path.rglob("*") if item.is_file() and _is_activity_path(str(item))
+            item
+            for item in path.rglob("*")
+            if item.is_file() and _is_activity_filename(str(item))
         )
     return tuple(sorted(candidates, key=lambda item: str(item).casefold()))
 
@@ -481,6 +540,7 @@ def _iter_file_exports(path: Path) -> Iterator[ParsedExport]:
                 size_bytes=candidate.stat().st_size,
                 exported_at=candidate_exported_at or exported_at,
                 export_id=candidate_export_id or export_id,
+                path_product=_path_product(candidate.as_posix()),
             )
 
 

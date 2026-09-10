@@ -219,14 +219,14 @@ def test_identical_duplicate_records_get_deterministic_distinct_ids(tmp_path: Pa
     assert first[1].source_record_id.endswith(":2")
 
 
-def test_preserves_unparsed_time_in_provider_metadata(tmp_path: Path) -> None:
+def test_preserves_unparsed_time_in_adapter_metadata(tmp_path: Path) -> None:
     source = tmp_path / "MyActivity.json"
     source.write_text(json.dumps([_activity(time="sometime-ish")]), encoding="utf-8")
 
     event = parse_google_export(source)[0].events[0]
 
     assert event.occurred_at is None
-    assert event.metadata["google"]["unparsed_time"] == "sometime-ish"
+    assert event.metadata["_pdl"]["unparsed_time"] == "sometime-ish"
 
 
 def test_rejects_invalid_or_unsupported_sources(tmp_path: Path) -> None:
@@ -269,6 +269,45 @@ def test_filename_and_path_changes_do_not_change_parsing_category(tmp_path: Path
 
     assert first_parsed.sha256 == second_parsed.sha256
     assert first_parsed.category == second_parsed.category == "my_activity/search/json"
+
+
+def test_exact_file_and_root_invocations_have_identical_semantics(tmp_path: Path) -> None:
+    source = tmp_path / "Takeout" / "My Activity" / "Search" / "MyActivity.json"
+    source.parent.mkdir(parents=True)
+    source.write_text(json.dumps([{"title": "Sparse activity"}]), encoding="utf-8")
+
+    exact = parse_google_export(source)[0]
+    discovered = parse_google_export(tmp_path)[0]
+    exact_event = exact.events[0]
+    discovered_event = discovered.events[0]
+
+    assert exact.category == discovered.category == "my_activity/search/json"
+    assert exact_event.event_type == discovered_event.event_type == "search_activity"
+    assert exact_event.source_record_id == discovered_event.source_record_id
+    assert event_fingerprint(exact_event) == event_fingerprint(discovered_event)
+
+
+def test_equivalent_product_folder_labels_use_canonical_context(tmp_path: Path) -> None:
+    payload = json.dumps([{"title": "Sparse activity"}])
+    maps = tmp_path / "first" / "My Activity" / "Maps" / "MyActivity.json"
+    google_maps = (
+        tmp_path / "second" / "My Activity" / "Google Maps" / "MyActivity.json"
+    )
+    maps.parent.mkdir(parents=True)
+    google_maps.parent.mkdir(parents=True)
+    maps.write_text(payload, encoding="utf-8")
+    google_maps.write_text(payload, encoding="utf-8")
+
+    first = parse_google_export(maps)[0]
+    second = parse_google_export(google_maps)[0]
+    first_event = first.events[0]
+    second_event = second.events[0]
+
+    assert first.category == second.category == "my_activity/maps/json"
+    assert first_event.metadata["_pdl"]["takeout_product"] == "maps"
+    assert second_event.metadata["_pdl"]["takeout_product"] == "maps"
+    assert first_event.source_record_id == second_event.source_record_id
+    assert event_fingerprint(first_event) == event_fingerprint(second_event)
 
 
 @pytest.mark.parametrize(
@@ -330,6 +369,10 @@ def test_rejects_malformed_json_without_skipping_records(
         ("Shopping", "shopping_activity"),
         ("Google Play", "play_activity"),
         ("My Ad Center", "ad_activity"),
+        ("Google Display Ads", "ad_activity"),
+        ("Played", "google_activity"),
+        ("Research", "google_activity"),
+        ("Display", "google_activity"),
         ("Unclassified Product", "google_activity"),
     ],
 )
@@ -375,6 +418,31 @@ def test_flattens_text_and_retains_unrecognized_provider_fields(tmp_path: Path) 
     )
     assert event.metadata["google"]["futureProviderField"] == {"kept": True}
     assert "time" not in event.metadata["google"]
+
+
+def test_adapter_metadata_cannot_overwrite_provider_fields(tmp_path: Path) -> None:
+    source = tmp_path / "My Activity" / "Maps" / "MyActivity.json"
+    source.parent.mkdir(parents=True)
+    source.write_text(
+        json.dumps(
+            [
+                {
+                    "title": "Activity",
+                    "time": "not-a-time",
+                    "unparsed_time": "provider-owned",
+                    "takeout_product": "provider-owned",
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    event = parse_google_export(source)[0].events[0]
+
+    assert event.metadata["google"]["unparsed_time"] == "provider-owned"
+    assert event.metadata["google"]["takeout_product"] == "provider-owned"
+    assert event.metadata["_pdl"]["unparsed_time"] == "not-a-time"
+    assert event.metadata["_pdl"]["takeout_product"] == "maps"
 
 
 def test_identity_ignores_json_object_key_order(tmp_path: Path) -> None:
@@ -439,8 +507,8 @@ def test_provider_fields_override_path_hint_without_fingerprint_churn(
     second = parse_google_export(misleading)[0].events[0]
 
     assert first.event_type == second.event_type == "youtube_activity"
-    assert "takeout_product" not in first.metadata["google"]
-    assert "takeout_product" not in second.metadata["google"]
+    assert "_pdl" not in first.metadata
+    assert "_pdl" not in second.metadata
     assert first.source_record_id == second.source_record_id
     assert event_fingerprint(first) == event_fingerprint(second)
 
@@ -460,7 +528,7 @@ def test_unrecognized_path_hint_does_not_change_generic_event_content(
     second = parse_google_export(hinted)[0].events[0]
 
     assert first.event_type == second.event_type == "google_activity"
-    assert "takeout_product" not in second.metadata["google"]
+    assert "_pdl" not in second.metadata
     assert first.source_record_id == second.source_record_id
     assert event_fingerprint(first) == event_fingerprint(second)
 
@@ -527,7 +595,44 @@ def test_html_one_line_card_uses_product_directory_fallback(tmp_path: Path) -> N
     assert parsed.category == "my_activity/maps/html"
     assert event.event_type == "maps_activity"
     assert event.text == "Opened a saved place"
-    assert event.metadata["google"]["takeout_product"] == "Maps"
+    assert event.metadata["_pdl"]["takeout_product"] == "maps"
+
+
+def test_zip_discovery_rejects_supported_basenames_outside_activity_hierarchies(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "takeout-20260901T000000Z.zip"
+    with ZipFile(source, "w") as archive:
+        archive.writestr(
+            "Takeout/Google Photos/MyActivity.json",
+            json.dumps([{"title": "Not My Activity"}]),
+        )
+        archive.writestr(
+            "Takeout/My Activity/Search/MyActivity.json",
+            json.dumps([{"title": "Supported activity"}]),
+        )
+
+    (parsed,) = parse_google_export(source)
+
+    assert parsed.filename == "Takeout/My Activity/Search/MyActivity.json"
+
+
+def test_takeout_authority_requires_an_exact_path_component(tmp_path: Path) -> None:
+    incidental = (
+        tmp_path
+        / "backup-of-takeout-20260910T120000Z-old"
+        / "Takeout"
+        / "My Activity"
+        / "Search"
+        / "MyActivity.json"
+    )
+    incidental.parent.mkdir(parents=True)
+    incidental.write_text(json.dumps([{"title": "Activity"}]), encoding="utf-8")
+
+    (parsed,) = parse_google_export(incidental)
+
+    assert parsed.exported_at is None
+    assert parsed.export_id is None
 
 
 def test_rejects_invalid_zip_and_invalid_takeout_timestamp(tmp_path: Path) -> None:

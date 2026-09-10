@@ -1259,6 +1259,33 @@ def test_google_parsing_category_prevents_false_run_short_circuit(
     ]
 
 
+def test_google_exact_file_and_root_imports_share_one_run_and_version(
+    database_engine: Engine,
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "Takeout" / "My Activity" / "Search" / "MyActivity.json"
+    source.parent.mkdir(parents=True)
+    source.write_text(json.dumps([{"title": "Sparse activity"}]), encoding="utf-8")
+
+    first = import_parsed_exports(database_engine, parse_google_export(source))[0]
+    second = import_parsed_exports(database_engine, parse_google_export(tmp_path))[0]
+
+    assert first.inserted_events == 1
+    assert second.short_circuited
+    assert second.source_file_id == first.source_file_id
+    with database_engine.connect() as connection:
+        event = connection.execute(
+            text("SELECT event_type, canonical_revision FROM events")
+        ).one()
+        version_count = connection.execute(
+            text("SELECT COUNT(*) FROM event_versions")
+        ).scalar_one()
+        run_count = connection.execute(text("SELECT COUNT(*) FROM import_runs")).scalar_one()
+    assert tuple(event) == ("search_activity", 1)
+    assert version_count == 1
+    assert run_count == 1
+
+
 def test_google_later_absence_keeps_prior_activity(
     database_engine: Engine,
     tmp_path: Path,
