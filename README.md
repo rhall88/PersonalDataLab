@@ -2,7 +2,7 @@
 
 A local, provenance-first foundation for importing personal data into PostgreSQL.
 
-This repository contains the completed foundation and its first two source importers:
+This repository contains the completed foundation and its first three source importers:
 
 - Docker Compose
 - PostgreSQL 18 plus pgvector
@@ -13,6 +13,7 @@ This repository contains the completed foundation and its first two source impor
   conflicts, explicit deletion, and reactivation
 - OpenAI data-export importer
 - Anthropic data-export importer
+- Google Takeout My Activity importer
 - reconciliation tests
 - Windows/PowerShell setup instructions
 
@@ -98,14 +99,18 @@ data/raw/
 │       ├── light_metadata-000.zip
 │       ├── memories-000.zip
 │       └── projects-000.zip
-└── openai/
-    └── 2026-09-08/
-        └── openai-export.zip
+├── openai/
+│   └── 2026-09-08/
+│       └── openai-export.zip
+└── google/
+    └── 2026-09-10/
+        ├── takeout-20260910T120000Z-001.zip
+        └── takeout-20260910T120000Z-002.zip
 ```
 
 Everything below `data/raw/` is ignored by Git. Do not edit, replace, or unpack over
-the original files. The importers read ZIP archives directly and record each source
-archive's SHA-256, path, size, parser version, export time when supplied, and ingestion
+the original files. The importers read ZIP archives directly and record the immutable
+source bytes' SHA-256, path, size, parser version, export time when supplied, and ingestion
 time.
 
 ## 6. Import OpenAI and reconcile
@@ -171,6 +176,38 @@ perform automatic person/identity resolution.
 Previously generated normalized ZIPs are useful as independent reconciliation oracles,
 but they are derived data and are not importer inputs. The untouched manifest and
 `*-000.zip` archives remain the source of truth.
+
+## 8. Import Google My Activity and reconcile
+
+Point the command at one Takeout ZIP, a directory containing all split Takeout ZIPs, an
+extracted Takeout directory, or a standalone `MyActivity.json`/`MyActivity.html` file:
+
+```powershell
+personal-data-lab import-google data\raw\google\2026-09-10
+```
+
+This first Google slice imports the common My Activity records used by Search, YouTube,
+Maps, Chrome, Play, Shopping, and Ads. JSON is preferred because its timestamps are
+machine-readable; the HTML fallback preserves activity-card text and links, but leaves
+localized dates unset when they cannot be interpreted safely.
+
+The importer scans ZIP central directories and opens only supported activity members. It
+does not extract or read photo, video, Drive, or other binary payloads. Each supported member
+is hashed while it is parsed and becomes a separate `source_files` row whose location names
+both the immutable ZIP and member. Split archives are processed in filename order, and each
+member commits independently so a later malformed member can be corrected and the command
+rerun without duplicating completed work.
+
+Google does not provide a durable record ID for My Activity rows. The adapter therefore uses
+a deterministic digest of the complete provider record, with stable occurrence suffixes for
+identical duplicates. The same unchanged activity receives the same logical identity in a
+later export. All provider fields remain available under `metadata.google`; the normalized
+`time` is stored as `occurred_at` instead of being duplicated in fingerprinted metadata.
+
+Gmail MBOX content, Calendar, Contacts, Drive document extraction, Google Photos sidecars and
+binaries, and raw Location History tracks are deliberately deferred to product-specific
+parsers. Unsupported products are left untouched in the retained Takeout rather than being
+silently represented as successfully imported.
 
 ## Permanent cumulative and lossless contract
 
@@ -256,7 +293,7 @@ This keeps the message and graph identifier namespaces distinct. If a message la
 ID, the importer explicitly falls back to its mapping-node ID and marks that fallback in
 event metadata.
 
-## 8. Run tests
+## 9. Run tests
 
 Unit tests do not require a database:
 
@@ -358,6 +395,5 @@ Review the pull request before merging.
 
 ## Deferred roadmap
 
-After this cumulative/lossless storage contract is reviewed and merged, Google ingestion can be
-built against it. Google parsing, embeddings, semantic search, MCP servers, agent workflows,
-generic filesystem deduplication, and binary delta chains do not belong in PR3.
+Product-specific Google parsers, embeddings, semantic search, MCP servers, agent workflows,
+generic filesystem deduplication, and binary delta chains remain future work.

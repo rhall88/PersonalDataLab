@@ -17,6 +17,7 @@ from personal_data_lab.database import (
     import_openai_export,
     import_parsed_exports,
 )
+from personal_data_lab.google_importer import parse_google_export
 from personal_data_lab.models import NormalizedConversation, NormalizedEvent, ParsedExport
 from personal_data_lab.openai_importer import parse_openai_export
 
@@ -1136,3 +1137,41 @@ def test_batch_import_supports_conversations_and_standalone_events(
             {},
         ).scalars().all()
     assert list(event_types) == ["account_login", "conversation_message"]
+
+
+def test_google_activity_reexport_reuses_existing_events(
+    database_engine: Engine,
+    tmp_path: Path,
+) -> None:
+    original = {
+        "header": "Search",
+        "title": "Searched for streaming JSON",
+        "time": "2026-09-01T00:00:00Z",
+        "products": ["Search"],
+    }
+    added = {
+        "header": "Maps",
+        "title": "Searched for coffee",
+        "time": "2026-09-02T00:00:00Z",
+        "products": ["Maps"],
+    }
+    first_path = tmp_path / "first" / "MyActivity.json"
+    second_path = tmp_path / "second" / "MyActivity.json"
+    first_path.parent.mkdir()
+    second_path.parent.mkdir()
+    first_path.write_text(json.dumps([original]), encoding="utf-8")
+    second_path.write_text(json.dumps([original, added]), encoding="utf-8")
+
+    first = import_parsed_exports(database_engine, parse_google_export(first_path))[0]
+    second = import_parsed_exports(database_engine, parse_google_export(second_path))[0]
+
+    assert first.inserted_events == 1
+    assert second.unchanged_events == 1
+    assert second.inserted_events == 1
+    with database_engine.connect() as connection:
+        event_types = connection.execute(
+            text("SELECT event_type FROM events ORDER BY event_type")
+        ).scalars().all()
+        versions = connection.execute(text("SELECT COUNT(*) FROM event_versions")).scalar_one()
+    assert list(event_types) == ["maps_activity", "search_activity"]
+    assert versions == 2
