@@ -4,7 +4,7 @@ import codecs
 import hashlib
 import json
 import re
-from collections.abc import Iterable, Iterator
+from collections.abc import Callable, Iterable, Iterator
 from datetime import UTC, datetime
 from html.parser import HTMLParser
 from pathlib import Path, PurePosixPath
@@ -20,7 +20,7 @@ SOURCE = "google"
 PARSER_VERSION = "google-my-activity-v1"
 _READ_SIZE = 1024 * 1024
 _TAKEOUT_COMPONENT = re.compile(
-    r"takeout-(\d{8}T\d{6}Z)(?:-\d{3})?(?:\.zip)?",
+    r"takeout-(\d{8}T\d{6}Z)(?:-\d+)*(?: \([1-9]\d*\))?(?:\.zip)?",
     re.IGNORECASE,
 )
 _ACTIVITY_NAMES = {
@@ -144,9 +144,11 @@ _PRODUCT_EVENT_TYPES = {
     "play": "play_activity",
     "ads": "ad_activity",
 }
+_GENERIC_PRODUCT = "generic"
+MemberStartCallback = Callable[[str, str, int], None]
 
 
-def _activity_event_type(
+def _resolved_activity_product(
     record: dict[str, Any], path_product: str | None
 ) -> tuple[str, bool]:
     record_evidence = (
@@ -156,10 +158,10 @@ def _activity_event_type(
     )
     record_product = _product_key_from_evidence(record_evidence)
     if record_product is not None:
-        return _PRODUCT_EVENT_TYPES[record_product], False
+        return record_product, False
     if path_product is not None:
-        return _PRODUCT_EVENT_TYPES[path_product], True
-    return "google_activity", False
+        return path_product, True
+    return _GENERIC_PRODUCT, False
 
 
 def _path_product(source_name: str) -> str | None:
@@ -205,14 +207,32 @@ def _is_archive_activity_path(value: str) -> bool:
 
 def _activity_category(source_name: str, path_product: str | None) -> str:
     product = path_product or "generic"
-    source_format = "json" if source_name.casefold().endswith(".json") else "html"
-    return f"my_activity/{product}/{source_format}"
+    return f"my_activity/{product}/{_activity_format(source_name)}"
 
 
-def _record_id(record: dict[str, Any], duplicate_number: int) -> str:
-    digest = hashlib.sha256(canonical_json_bytes(record)).hexdigest()
+def _activity_format(source_name: str) -> str:
+    return "json" if source_name.casefold().endswith(".json") else "html"
+
+
+def _notify_member_start(
+    callback: MemberStartCallback | None,
+    *,
+    original_path: str,
+    source_name: str,
+    path_product: str | None,
+    size_bytes: int,
+) -> None:
+    if callback is not None:
+        callback(
+            original_path,
+            _activity_category(source_name, path_product),
+            size_bytes,
+        )
+
+
+def _record_id(digest: bytes, duplicate_number: int) -> str:
     suffix = "" if duplicate_number == 1 else f":{duplicate_number}"
-    return f"activity:{digest}{suffix}"
+    return f"activity:{digest.hex()}{suffix}"
 
 
 def _normalize_activity(
@@ -220,19 +240,22 @@ def _normalize_activity(
     *,
     index: int,
     path_product: str | None,
+    representation: str,
     exported_at: datetime | None,
-    duplicate_counts: dict[bytes, int],
+    duplicate_counts: dict[tuple[str, bytes], int],
 ) -> NormalizedEvent:
     if not isinstance(record, dict):
         raise GoogleExportError(f"activity record at index {index} must be an object")
     if not any(key in record for key in ("title", "time", "header", "products")):
         raise GoogleExportError(f"activity record at index {index} has no recognized fields")
 
-    identity = hashlib.sha256(canonical_json_bytes(record)).digest()
-    duplicate_counts[identity] = duplicate_counts.get(identity, 0) + 1
+    record_digest = hashlib.sha256(canonical_json_bytes(record)).digest()
+    resolved_product, used_path_product = _resolved_activity_product(record, path_product)
+    namespace = f"activity/{resolved_product}/{representation}"
+    duplicate_key = (namespace, record_digest)
+    duplicate_counts[duplicate_key] = duplicate_counts.get(duplicate_key, 0) + 1
     raw_time = record.get("time")
     occurred_at = _timestamp(raw_time)
-    event_type, used_path_product = _activity_event_type(record, path_product)
     metadata = {"google": {key: value for key, value in record.items() if key != "time"}}
     adapter_metadata: dict[str, Any] = {}
     if raw_time is not None and occurred_at is None:
@@ -245,12 +268,12 @@ def _normalize_activity(
     return NormalizedEvent(
         occurred_at=occurred_at,
         source=SOURCE,
-        event_type=event_type,
-        source_record_namespace="activity",
+        event_type=_PRODUCT_EVENT_TYPES.get(resolved_product, "google_activity"),
+        source_record_namespace=namespace,
         actor_identity="account_owner",
         text=_activity_text(record),
         metadata=metadata,
-        source_record_id=_record_id(record, duplicate_counts[identity]),
+        source_record_id=_record_id(record_digest, duplicate_counts[duplicate_key]),
         authority_at=exported_at,
         authority_kind="exported_at" if exported_at is not None else "unknown",
     )
@@ -381,7 +404,7 @@ def _normalize_html_card(
     *,
     path_product: str | None,
     exported_at: datetime | None,
-    duplicate_counts: dict[bytes, int],
+    duplicate_counts: dict[tuple[str, bytes], int],
 ) -> NormalizedEvent:
     text, links = card
     lines = [line for line in text.splitlines() if line]
@@ -396,6 +419,7 @@ def _normalize_html_card(
         record,
         index=0,
         path_product=path_product,
+        representation="html",
         exported_at=exported_at,
         duplicate_counts=duplicate_counts,
     )
@@ -412,7 +436,7 @@ def _parse_activity_stream(
     path_product: str | None,
 ) -> ParsedExport:
     digest = hashlib.sha256()
-    duplicate_counts: dict[bytes, int] = {}
+    duplicate_counts: dict[tuple[str, bytes], int] = {}
     try:
         if source_name.casefold().endswith(".json"):
             events = tuple(
@@ -420,6 +444,7 @@ def _parse_activity_stream(
                     record,
                     index=index,
                     path_product=path_product,
+                    representation="json",
                     exported_at=exported_at,
                     duplicate_counts=duplicate_counts,
                 )
@@ -456,7 +481,10 @@ def _parse_activity_stream(
 
 
 def _iter_zip_exports(
-    path: Path, *, require_supported_member: bool = True
+    path: Path,
+    *,
+    require_supported_member: bool = True,
+    on_member_start: MemberStartCallback | None = None,
 ) -> Iterator[ParsedExport]:
     exported_at, export_id = _takeout_identity(path)
     found = False
@@ -467,6 +495,14 @@ def _iter_zip_exports(
                     continue
                 found = True
                 original_path = f"{path}!/{info.filename}"
+                path_product = _path_product(info.filename)
+                _notify_member_start(
+                    on_member_start,
+                    original_path=original_path,
+                    source_name=info.filename,
+                    path_product=path_product,
+                    size_bytes=info.file_size,
+                )
                 try:
                     with archive.open(info) as stream:
                         yield _parse_activity_stream(
@@ -476,7 +512,7 @@ def _iter_zip_exports(
                             size_bytes=info.file_size,
                             exported_at=exported_at,
                             export_id=export_id,
-                            path_product=_path_product(info.filename),
+                            path_product=path_product,
                         )
                 except RuntimeError as error:
                     raise GoogleExportError(
@@ -523,33 +559,52 @@ def _candidate_activity_files(path: Path) -> tuple[Path, ...]:
     return tuple(sorted(candidates, key=lambda item: str(item).casefold()))
 
 
-def _iter_file_exports(path: Path) -> Iterator[ParsedExport]:
+def _iter_file_exports(
+    path: Path,
+    *,
+    on_member_start: MemberStartCallback | None = None,
+) -> Iterator[ParsedExport]:
     candidates = _candidate_activity_files(path)
     if not candidates:
         raise GoogleExportError(f"no supported Google activity files found under {path}")
     exported_at, export_id = _takeout_identity(path)
     for candidate in candidates:
         candidate_exported_at, candidate_export_id = _takeout_identity(candidate)
+        source_name = (
+            candidate.relative_to(path).as_posix() if path.is_dir() else candidate.name
+        )
+        original_path = str(candidate)
+        size_bytes = candidate.stat().st_size
+        path_product = _path_product(candidate.as_posix())
+        _notify_member_start(
+            on_member_start,
+            original_path=original_path,
+            source_name=source_name,
+            path_product=path_product,
+            size_bytes=size_bytes,
+        )
         with candidate.open("rb") as stream:
             yield _parse_activity_stream(
                 stream,
-                source_name=(
-                    candidate.relative_to(path).as_posix() if path.is_dir() else candidate.name
-                ),
-                original_path=str(candidate),
-                size_bytes=candidate.stat().st_size,
+                source_name=source_name,
+                original_path=original_path,
+                size_bytes=size_bytes,
                 exported_at=candidate_exported_at or exported_at,
                 export_id=candidate_export_id or export_id,
-                path_product=_path_product(candidate.as_posix()),
+                path_product=path_product,
             )
 
 
-def iter_google_exports(source_path: str | Path) -> Iterator[ParsedExport]:
+def iter_google_exports(
+    source_path: str | Path,
+    *,
+    on_member_start: MemberStartCallback | None = None,
+) -> Iterator[ParsedExport]:
     """Yield supported Google activity files without loading the whole Takeout at once."""
 
     path = Path(source_path).expanduser().resolve(strict=True)
     if path.is_file() and path.suffix.casefold() == ".zip":
-        yield from _iter_zip_exports(path)
+        yield from _iter_zip_exports(path, on_member_start=on_member_start)
         return
     if path.is_dir():
         archives = tuple(
@@ -567,7 +622,11 @@ def iter_google_exports(source_path: str | Path) -> Iterator[ParsedExport]:
         if archives:
             found = False
             for archive in archives:
-                for parsed in _iter_zip_exports(archive, require_supported_member=False):
+                for parsed in _iter_zip_exports(
+                    archive,
+                    require_supported_member=False,
+                    on_member_start=on_member_start,
+                ):
                     found = True
                     yield parsed
             if not found:
@@ -575,7 +634,7 @@ def iter_google_exports(source_path: str | Path) -> Iterator[ParsedExport]:
                     f"no supported Google activity files found in Takeout archives under {path}"
                 )
             return
-    yield from _iter_file_exports(path)
+    yield from _iter_file_exports(path, on_member_start=on_member_start)
 
 
 def parse_google_export(source_path: str | Path) -> tuple[ParsedExport, ...]:

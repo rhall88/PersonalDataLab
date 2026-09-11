@@ -41,7 +41,7 @@ def test_parses_standalone_my_activity_json(tmp_path: Path) -> None:
     assert parsed.snapshot_scope == "account/activity"
     assert parsed.event_count == 1
     assert event.event_type == "youtube_activity"
-    assert event.source_record_namespace == "activity"
+    assert event.source_record_namespace == "activity/youtube/json"
     assert event.actor_identity == "account_owner"
     assert event.occurred_at.isoformat() == "2026-09-01T12:34:56.789000+00:00"
     assert event.text == "Watched A useful video\nExample Channel\nhttps://youtube.com/example"
@@ -155,6 +155,31 @@ def test_parses_directory_of_split_takeout_archives(tmp_path: Path) -> None:
         "maps_activity",
         "youtube_activity",
     ]
+
+
+def test_split_archives_with_multi_component_suffixes_share_export_identity(
+    tmp_path: Path,
+) -> None:
+    timestamp = "20260909T012526Z"
+    names = (
+        f"takeout-{timestamp}-2-001.zip",
+        f"takeout-{timestamp}-4-001.zip",
+        f"takeout-{timestamp}-6-001.zip",
+    )
+    for index, name in enumerate(names):
+        with ZipFile(tmp_path / name, "w") as archive:
+            archive.writestr(
+                "Takeout/My Activity/Search/MyActivity.json",
+                json.dumps([{"title": f"Activity {index}"}]),
+            )
+
+    parsed = parse_google_export(tmp_path)
+
+    assert len(parsed) == len(names)
+    assert {item.export_id for item in parsed} == {timestamp}
+    assert {item.exported_at for item in parsed} == {
+        datetime(2026, 9, 9, 1, 25, 26, tzinfo=UTC)
+    }
 
 
 def test_parses_extracted_takeout_tree(tmp_path: Path) -> None:
@@ -283,6 +308,8 @@ def test_exact_file_and_root_invocations_have_identical_semantics(tmp_path: Path
 
     assert exact.category == discovered.category == "my_activity/search/json"
     assert exact_event.event_type == discovered_event.event_type == "search_activity"
+    assert exact_event.source_record_namespace == "activity/search/json"
+    assert discovered_event.source_record_namespace == "activity/search/json"
     assert exact_event.source_record_id == discovered_event.source_record_id
     assert event_fingerprint(exact_event) == event_fingerprint(discovered_event)
 
@@ -304,6 +331,8 @@ def test_equivalent_product_folder_labels_use_canonical_context(tmp_path: Path) 
     second_event = second.events[0]
 
     assert first.category == second.category == "my_activity/maps/json"
+    assert first_event.source_record_namespace == "activity/maps/json"
+    assert second_event.source_record_namespace == "activity/maps/json"
     assert first_event.metadata["_pdl"]["takeout_product"] == "maps"
     assert second_event.metadata["_pdl"]["takeout_product"] == "maps"
     assert first_event.source_record_id == second_event.source_record_id
@@ -507,6 +536,8 @@ def test_provider_fields_override_path_hint_without_fingerprint_churn(
     second = parse_google_export(misleading)[0].events[0]
 
     assert first.event_type == second.event_type == "youtube_activity"
+    assert first.source_record_namespace == "activity/youtube/json"
+    assert second.source_record_namespace == "activity/youtube/json"
     assert "_pdl" not in first.metadata
     assert "_pdl" not in second.metadata
     assert first.source_record_id == second.source_record_id
@@ -549,6 +580,35 @@ def test_export_authority_does_not_change_event_content(tmp_path: Path) -> None:
     assert second.authority_at == datetime(2026, 9, 2, tzinfo=UTC)
     assert first.source_record_id == second.source_record_id
     assert event_fingerprint(first) == event_fingerprint(second)
+
+
+def test_json_and_html_use_distinct_logical_identity_namespaces(tmp_path: Path) -> None:
+    json_source = tmp_path / "json" / "MyActivity.json"
+    html_source = tmp_path / "html" / "MyActivity.html"
+    json_source.parent.mkdir()
+    html_source.parent.mkdir()
+    json_source.write_text(
+        json.dumps([{"header": None, "title": "Activity"}]),
+        encoding="utf-8",
+    )
+    html_source.write_text(
+        '<div class="outer-cell">Activity</div>',
+        encoding="utf-8",
+    )
+
+    json_event = parse_google_export(json_source)[0].events[0]
+    html_event = parse_google_export(html_source)[0].events[0]
+
+    assert json_event.source_record_id == html_event.source_record_id
+    assert json_event.source_record_namespace == "activity/generic/json"
+    assert html_event.source_record_namespace == "activity/generic/html"
+    assert (
+        json_event.source_record_namespace,
+        json_event.source_record_id,
+    ) != (
+        html_event.source_record_namespace,
+        html_event.source_record_id,
+    )
 
 
 def test_html_multiple_cards_deduplicates_links_and_rejects_empty_cards(
@@ -633,6 +693,80 @@ def test_takeout_authority_requires_an_exact_path_component(tmp_path: Path) -> N
 
     assert parsed.exported_at is None
     assert parsed.export_id is None
+
+
+@pytest.mark.parametrize(
+    "component",
+    [
+        "takeout-20260909T012526Z",
+        "takeout-20260909T012526Z.zip",
+        "takeout-20260909T012526Z-001.zip",
+        "takeout-20260909T012526Z-2-001.zip",
+        "takeout-20260909T012526Z-4-001-2.zip",
+        "takeout-20260909T012526Z-6-001-1.zip",
+        "takeout-20260909T012526Z-001 (1).zip",
+    ],
+)
+def test_accepts_safe_takeout_filename_grammar(
+    tmp_path: Path,
+    component: str,
+) -> None:
+    if component.casefold().endswith(".zip"):
+        source = tmp_path / component
+        with ZipFile(source, "w") as archive:
+            archive.writestr(
+                "Takeout/My Activity/Search/MyActivity.json",
+                json.dumps([{"title": "Activity"}]),
+            )
+    else:
+        root = tmp_path / component
+        source = root / "Takeout" / "My Activity" / "Search" / "MyActivity.json"
+        source.parent.mkdir(parents=True)
+        source.write_text(json.dumps([{"title": "Activity"}]), encoding="utf-8")
+        source = root
+
+    (parsed,) = parse_google_export(source)
+
+    assert parsed.export_id == "20260909T012526Z"
+    assert parsed.exported_at == datetime(2026, 9, 9, 1, 25, 26, tzinfo=UTC)
+
+
+@pytest.mark.parametrize(
+    "component",
+    [
+        "backup-of-takeout-20260909T012526Z-old",
+        "takeout-20260909T012526Z-foo-001.zip",
+        "random-takeout-20260909T012526Z.zip",
+        "takeout-20269999T999999Z-001.zip",
+    ],
+)
+def test_rejects_unsafe_or_invalid_takeout_authority_components(
+    tmp_path: Path,
+    component: str,
+) -> None:
+    if component.casefold().endswith(".zip"):
+        source = tmp_path / component
+        with ZipFile(source, "w") as archive:
+            archive.writestr(
+                "Takeout/My Activity/Search/MyActivity.json",
+                json.dumps([{"title": "Activity"}]),
+            )
+    else:
+        source = (
+            tmp_path
+            / component
+            / "Takeout"
+            / "My Activity"
+            / "Search"
+            / "MyActivity.json"
+        )
+        source.parent.mkdir(parents=True)
+        source.write_text(json.dumps([{"title": "Activity"}]), encoding="utf-8")
+
+    (parsed,) = parse_google_export(source)
+
+    assert parsed.export_id is None
+    assert parsed.exported_at is None
 
 
 def test_rejects_invalid_zip_and_invalid_takeout_timestamp(tmp_path: Path) -> None:

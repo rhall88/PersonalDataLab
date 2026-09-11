@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 from collections.abc import Sequence
 
 from .anthropic_importer import parse_anthropic_export
@@ -87,6 +88,36 @@ def _batch_summary(parsed_exports: Sequence, results: Sequence) -> dict:
     }
 
 
+def _google_member_started(original_path: str, category: str, size_bytes: int) -> None:
+    print(
+        f"[google] parsing member={json.dumps(original_path)} "
+        f"category={category} size_bytes={size_bytes}",
+        file=sys.stderr,
+        flush=True,
+    )
+
+
+def _google_member_parsed(parsed) -> None:
+    print(
+        f"[google] parsed member={json.dumps(parsed.original_path)} "
+        f"category={parsed.category} size_bytes={parsed.size_bytes} "
+        f"source_events={parsed.event_count}",
+        file=sys.stderr,
+        flush=True,
+    )
+
+
+def _google_member_imported(parsed, result) -> None:
+    print(
+        f"[google] imported member={json.dumps(parsed.original_path)} "
+        f"category={parsed.category} source_events={result.source_events} "
+        f"inserted={result.inserted_events} unchanged={result.unchanged_events} "
+        f"conflicted={result.conflicted_events}",
+        file=sys.stderr,
+        flush=True,
+    )
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     if args.command == "import-openai":
@@ -105,8 +136,13 @@ def main(argv: Sequence[str] | None = None) -> int:
         engine = create_database_engine(database_url(args.database_url))
         parsed_exports = []
         results = []
-        for parsed in iter_google_exports(args.source):
+        for parsed in iter_google_exports(
+            args.source,
+            on_member_start=_google_member_started,
+        ):
+            _google_member_parsed(parsed)
             result = import_parsed_exports(engine, (parsed,))[0]
+            _google_member_imported(parsed, result)
             parsed_exports.append(parsed.model_copy(update={"events": (), "conversations": ()}))
             results.append(result)
         print(json.dumps(_batch_summary(parsed_exports, results), indent=2))

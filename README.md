@@ -201,6 +201,9 @@ new location reuse the source row and add location provenance. Split archives ar
 filename order, and each member commits independently so a later malformed member can be
 corrected and the command rerun without duplicating completed work.
 
+Member-level parsing and reconciliation progress is written to stderr without event text or
+provider payloads. Stdout remains reserved for the final machine-readable JSON summary.
+
 JSON decoding is incremental and Takeout members are processed serially. The current database
 contract still materializes the normalized events for one supported member before reconciling
 it, so peak memory is bounded by the largest supported member rather than a single record. True
@@ -208,9 +211,12 @@ record-at-a-time database ingestion requires a separate staged-import design.
 
 Google does not provide a durable record ID for My Activity rows. The adapter therefore uses
 a deterministic digest of the complete provider record, with stable occurrence suffixes for
-identical duplicates. The same unchanged activity receives the same logical identity in a
-later export. All provider fields remain available under `metadata.google`; the normalized
-`time` is stored as `occurred_at` instead of being duplicated in fingerprinted metadata.
+identical duplicates. Logical identity is scoped by the resolved product and JSON/HTML format;
+provider fields determine product when possible, with canonical path context used only as a
+fallback. The same unchanged activity receives the same logical identity in a later export.
+All provider fields remain available under `metadata.google`; adapter-owned context is isolated
+under `metadata._pdl`, and normalized `time` is stored as `occurred_at` instead of being duplicated
+in fingerprinted metadata.
 
 Gmail MBOX content, Calendar, Contacts, Drive document extraction, Google Photos sidecars and
 binaries, and raw Location History tracks are deliberately deferred to product-specific

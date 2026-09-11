@@ -166,18 +166,21 @@ produce identical category and canonical event semantics.
 
 ### 5.3 Takeout export identity
 
-Infer export authority only from an entire path component matching one of:
+Infer export authority only from an entire path component matching this grammar:
 
 ```text
-takeout-YYYYMMDDTHHMMSSZ
-takeout-YYYYMMDDTHHMMSSZ-NNN
-takeout-YYYYMMDDTHHMMSSZ.zip
-takeout-YYYYMMDDTHHMMSSZ-NNN.zip
+(?i)^takeout-(\d{8}T\d{6}Z)(?:-\d+)*(?: \([1-9]\d*\))?(?:\.zip)?$
 ```
 
-The timestamp is UTC. Split suffixes such as `-001.zip` do not affect the export ID. If no valid
-timestamp is present, both `exported_at` and `export_id` are null. Filesystem modification times
-must never be used as authority. Incidental substrings inside components such as
+The captured timestamp must also parse as a real UTC calendar time. There may be any number of
+hyphen-delimited numeric archive suffixes. An optional browser duplicate-download suffix such as
+` (1)` is accepted before the optional `.zip` extension. Thus
+`takeout-20260909T012526Z-4-001-2.zip` and
+`takeout-20260909T012526Z-001 (1).zip` both have export ID `20260909T012526Z`. Numeric suffixes do
+not become part of the export ID. Real split names such as `-2-001`, `-4-001`, and `-6-001` are
+therefore treated as members of the same export. Non-numeric archive suffixes are rejected. If no
+valid timestamp is present, both `exported_at` and `export_id` are null. Filesystem modification
+times must never be used as authority. Incidental substrings inside components such as
 `backup-of-takeout-YYYYMMDDTHHMMSSZ-old` must not confer authority.
 
 ## 6. JSON parsing contract
@@ -218,12 +221,16 @@ expected to match identities from JSON exports of the same human activity.
 
 ## 8. Normalized event contract
 
-Every accepted activity record becomes one `NormalizedEvent`:
+Every accepted activity record first resolves one product context. Provider evidence from
+`header`, `products`, and `activityControls` wins; canonical supported path context is the
+fallback; otherwise the product is `generic`. That single resolved product is used consistently
+for event classification and logical identity. Every accepted record becomes one
+`NormalizedEvent`:
 
 | Field | Rule |
 | --- | --- |
 | `source` | `google` |
-| `source_record_namespace` | `activity` |
+| `source_record_namespace` | `activity/<resolved-product>/<json-or-html>` |
 | `source_record_id` | deterministic digest identity from section 9 |
 | `actor_identity` | `account_owner` |
 | `occurred_at` | parsed provider `time`, normalized to UTC, or null |
@@ -295,24 +302,35 @@ dereference URLs.
 
 ## 9. Logical identity and duplicates
 
-Google My Activity does not expose a durable record identifier. V1 defines identity as:
+Google My Activity does not expose a durable record identifier. V1 defines the complete logical
+identity as:
 
 ```text
-activity:<sha256(canonical-json(provider-record))>[:occurrence]
+(google, activity/<resolved-product>/<format>, activity:<sha256(canonical-json(provider-record))>[:occurrence])
 ```
 
 Rules:
 
+- resolved product is one of `youtube`, `maps`, `search`, `chrome`, `shopping`, `play`, `ads`, or
+  `generic`;
+- format is `json` or `html`, so representations cannot cross-deduplicate accidentally;
+- provider evidence determines the identity product whenever it identifies a supported product;
+- path product is used in identity only when provider evidence does not resolve the product;
+- moving a self-identifying record between product directories does not change logical identity;
+- the same sparse provider record under different supported product contexts intentionally has
+  distinct logical identities;
 - JSON object-key ordering must not affect the digest;
 - all provider fields, including raw `time`, participate in identity;
 - the first exact record occurrence has no suffix;
 - later identical occurrences in the same source member use `:2`, `:3`, and so on;
+- duplicate occurrence counters are scoped by namespace plus provider-record digest;
 - occurrence numbering follows source order and is deterministic;
 - unchanged records in later exports receive the same identity;
 - a changed provider record receives a new identity because Google supplies no safe revision key;
 - missing records in a later export remain in the cumulative corpus;
 - semantically similar but byte-distinct records are not heuristically merged;
-- JSON and HTML records are not cross-deduplicated.
+- JSON and HTML records are not cross-deduplicated, even if their synthesized provider records
+  happen to produce the same digest.
 
 The digest identifies an immutable provider observation, not a mutable Google entity. This is a
 deliberate conservative choice: false duplicates are preferable to merging unrelated activities
@@ -373,7 +391,12 @@ The command must:
 
 - use the standard database URL resolution used by other adapters;
 - parse and import members serially;
+- write concise member-level progress to stderr before parsing, after parsing, and after import;
+- include member path, category, uncompressed size, source event count, and available
+  inserted/unchanged/conflicted counts in progress output;
+- never write event text or provider metadata to progress output;
 - print one final JSON summary after complete success;
+- reserve stdout exclusively for that machine-readable final JSON result;
 - include compact per-file provenance and reconciliation statistics;
 - include aggregate source/database counts, version counts, conflict counts, and short-circuit state;
 - return `0` when all members reconcile without conflicts;
@@ -412,6 +435,9 @@ Previously committed member runs remain inspectable in the database and safe to 
 - invalid ZIP rejection;
 - exact member SHA and uncompressed size;
 - inferred Takeout export timestamp and ID;
+- multi-component numeric split suffixes share one export timestamp and ID;
+- browser duplicate-download suffixes retain the provider export timestamp;
+- non-numeric suffixes and invalid timestamp components provide no authority;
 - category distinguishes format/product context but not filename/path changes.
 - exact-file and ancestor-directory invocation produce identical category, identity, and content;
 - equivalent product folder labels normalize to one semantic context key;
@@ -455,6 +481,15 @@ Previously committed member runs remain inspectable in the database and safe to 
 - same bytes under different parsing category do not false-short-circuit;
 - integration counts and observation/version pointers reconcile exactly;
 - conflicts produce exit code `2`.
+- sparse identical records in Search and Maps produce independent namespaces without conflicts;
+- provider-self-identifying records retain one identity when moved between product paths;
+- equivalent JSON and HTML projections remain logically isolated by namespace;
+
+### CLI progress
+
+- member progress is written to stderr;
+- stdout remains standalone valid JSON after successful completion;
+- progress includes no event text or provider payload.
 
 ## 15. Implementation checklist
 

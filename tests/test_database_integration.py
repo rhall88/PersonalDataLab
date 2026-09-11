@@ -1286,6 +1286,90 @@ def test_google_exact_file_and_root_imports_share_one_run_and_version(
     assert run_count == 1
 
 
+def test_google_sparse_records_in_different_products_are_distinct_events(
+    database_engine: Engine,
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "takeout-20260909T012526Z-001.zip"
+    payload = json.dumps([{"title": "Activity"}])
+    with ZipFile(source, "w") as archive:
+        archive.writestr("Takeout/My Activity/Search/MyActivity.json", payload)
+        archive.writestr("Takeout/My Activity/Maps/MyActivity.json", payload)
+
+    parsed_exports = parse_google_export(source)
+    results = tuple(
+        import_parsed_exports(database_engine, (parsed,))[0]
+        for parsed in parsed_exports
+    )
+
+    assert sum(result.conflicted_events for result in results) == 0
+    with database_engine.connect() as connection:
+        events = connection.execute(
+            text(
+                """
+                SELECT event_type, source_record_namespace
+                FROM events
+                ORDER BY event_type
+                """
+            )
+        ).all()
+        event_count = connection.execute(text("SELECT COUNT(*) FROM events")).scalar_one()
+        version_count = connection.execute(
+            text("SELECT COUNT(*) FROM event_versions")
+        ).scalar_one()
+    assert [tuple(event) for event in events] == [
+        ("maps_activity", "activity/maps/json"),
+        ("search_activity", "activity/search/json"),
+    ]
+    assert event_count == version_count == 2
+
+
+def test_google_provider_product_identity_is_stable_across_path_moves(
+    database_engine: Engine,
+    tmp_path: Path,
+) -> None:
+    export_root = tmp_path / "takeout-20260909T012526Z"
+    maps_path = export_root / "first" / "My Activity" / "Maps" / "MyActivity.json"
+    youtube_path = (
+        export_root / "second" / "My Activity" / "YouTube" / "MyActivity.json"
+    )
+    maps_path.parent.mkdir(parents=True)
+    youtube_path.parent.mkdir(parents=True)
+    payload = json.dumps(
+        [
+            {
+                "header": "YouTube",
+                "title": "Watched a video",
+                "products": ["YouTube"],
+            }
+        ]
+    )
+    maps_path.write_text(payload, encoding="utf-8")
+    youtube_path.write_text(payload, encoding="utf-8")
+
+    first = import_parsed_exports(database_engine, parse_google_export(maps_path))[0]
+    second = import_parsed_exports(database_engine, parse_google_export(youtube_path))[0]
+
+    assert first.inserted_events == 1
+    assert second.unchanged_events == 1
+    assert second.reused_event_versions == 1
+    assert second.conflicted_events == 0
+    with database_engine.connect() as connection:
+        event = connection.execute(
+            text(
+                """
+                SELECT event_type, source_record_namespace, canonical_revision
+                FROM events
+                """
+            )
+        ).one()
+        version_count = connection.execute(
+            text("SELECT COUNT(*) FROM event_versions")
+        ).scalar_one()
+    assert tuple(event) == ("youtube_activity", "activity/youtube/json", 1)
+    assert version_count == 1
+
+
 def test_google_later_absence_keeps_prior_activity(
     database_engine: Engine,
     tmp_path: Path,

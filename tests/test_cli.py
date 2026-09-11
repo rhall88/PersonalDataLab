@@ -2,8 +2,13 @@ from __future__ import annotations
 
 import json
 from datetime import UTC, datetime
+from pathlib import Path
+from zipfile import ZipFile
+
+import pytest
 
 from personal_data_lab import cli
+from personal_data_lab.google_importer import GoogleExportError
 from personal_data_lab.models import ImportResult, NormalizedEvent, ParsedExport
 
 
@@ -15,8 +20,10 @@ def test_google_cli_reports_provenance_and_returns_two_for_conflicts(
         occurred_at=datetime(2026, 9, 1, tzinfo=UTC),
         source="google",
         event_type="search_activity",
-        source_record_namespace="activity",
+        source_record_namespace="activity/search/json",
         source_record_id="activity:example",
+        text="PRIVATE ACTIVITY TEXT",
+        metadata={"google": {"private": "PROVIDER PAYLOAD"}},
     )
     parsed = ParsedExport(
         source="google",
@@ -44,11 +51,16 @@ def test_google_cli_reports_provenance_and_returns_two_for_conflicts(
     )
     monkeypatch.setattr(cli, "database_url", lambda override: "ignored")
     monkeypatch.setattr(cli, "create_database_engine", lambda url: object())
-    monkeypatch.setattr(cli, "iter_google_exports", lambda source: iter((parsed,)))
+    def fake_google_exports(source, *, on_member_start):
+        on_member_start(parsed.original_path, parsed.category, parsed.size_bytes)
+        yield parsed
+
+    monkeypatch.setattr(cli, "iter_google_exports", fake_google_exports)
     monkeypatch.setattr(cli, "import_parsed_exports", lambda engine, batch: (result,))
 
     exit_code = cli.main(["import-google", "takeout"])
-    summary = json.loads(capsys.readouterr().out)
+    captured = capsys.readouterr()
+    summary = json.loads(captured.out)
 
     assert exit_code == 2
     assert summary["source_files"] == 1
@@ -90,3 +102,35 @@ def test_google_cli_reports_provenance_and_returns_two_for_conflicts(
         "reused_versions": 0,
         "reconciled": True,
     }
+    assert "[google] parsing" in captured.err
+    assert "[google] parsed" in captured.err
+    assert "[google] imported" in captured.err
+    assert "category=my_activity/search/json" in captured.err
+    assert "size_bytes=123" in captured.err
+    assert "source_events=1" in captured.err
+    assert "inserted=0 unchanged=0 conflicted=1" in captured.err
+    assert "PRIVATE ACTIVITY TEXT" not in captured.err
+    assert "PROVIDER PAYLOAD" not in captured.err
+
+
+def test_google_cli_parse_failure_identifies_member_without_payload(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    source = tmp_path / "takeout-20260909T012526Z-001.zip"
+    member = "Takeout/My Activity/Search/MyActivity.json"
+    with ZipFile(source, "w") as archive:
+        archive.writestr(member, '[{"title":"PRIVATE FAILURE TEXT"}')
+    monkeypatch.setattr(cli, "database_url", lambda override: "ignored")
+    monkeypatch.setattr(cli, "create_database_engine", lambda url: object())
+
+    with pytest.raises(GoogleExportError, match="ended unexpectedly"):
+        cli.main(["import-google", str(source)])
+
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "[google] parsing" in captured.err
+    assert member in captured.err
+    assert "category=my_activity/search/json" in captured.err
+    assert "PRIVATE FAILURE TEXT" not in captured.err
