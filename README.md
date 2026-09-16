@@ -21,6 +21,7 @@ This repository contains the completed foundation and its first three source imp
 - Google Photos/Drive/Recorder rich metadata, document text, and external-asset graph adapters
 - Gemini/Flow/NotebookLM/Keep/Journal AI, knowledge, note, and generated-work adapters
 - Google account/commerce/device/home adapters, including Play Store and Nest JSONL handling
+- Google long-tail semantic adapters, YouTube/Chrome product data, and external My Activity assets
 - reconciliation tests
 - Windows/PowerShell setup instructions
 
@@ -483,7 +484,11 @@ gh pr create --base main --title "Add the Anthropic data importer"
 
 Review the pull request before merging.
 
-## Deferred roadmap
+## Roadmap
 
-Product-specific Google parsers, embeddings, semantic search, MCP servers, agent workflows,
-generic filesystem deduplication, and binary delta chains remain future work.
+The Google adapter program is implemented through PR11. The next gate is a complete real-corpus
+import and identical second import, including restart and count reconciliation. Apple privacy
+exports and independently acquired iMessages remain separate future source families. Full-text
+and semantic search, identity resolution, derived claims, MCP, and agents follow only after the
+source corpus is operationally proven. See [`ROADMAP.md`](ROADMAP.md) for the ordered program and
+completion gates.
