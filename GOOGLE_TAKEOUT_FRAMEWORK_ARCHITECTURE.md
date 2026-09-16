@@ -1,4 +1,4 @@
-# Google Takeout framework architecture (PR5–PR9)
+# Google Takeout framework architecture (PR5–PR10)
 
 The framework keeps Takeout container mechanics, product semantics, and canonical persistence
 separate:
@@ -37,6 +37,10 @@ separate:
     relationships; path-stable notebook identities connect NotebookLM metadata, source documents,
     audio, video, and other assets across split Takeout members. Keep microsecond timestamps and
     Journal seconds/nanoseconds are normalized without dropping provider-native values.
+11. PR10 adds `google_takeout.account_commerce`. It preserves typed account, subscription,
+    payment, purchase, device, home, Play Store, and provider-event representations. Nest's
+    provider-specific CSV-quoted JSONL is decoded when valid; malformed rows remain explicit
+    opaque events with warnings rather than being dropped or repaired speculatively.
 
 One source member is the parsing and transaction boundary. ZIP streams are opened only for the
 selected adapter; no archive is extracted. Adding a new Google product normally requires one
