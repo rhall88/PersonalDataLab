@@ -35,6 +35,7 @@ class ProductCoverage(BaseModel):
     events_parsed: int = 0
     conversations_parsed: int = 0
     assets_indexed: int = 0
+    relationships_parsed: int = 0
     bytes_discovered: int = 0
     bytes_processed: int = 0
     parse_warnings: int = 0
@@ -113,6 +114,7 @@ def _empty_coverage(inventory: GoogleInventory) -> dict[str, dict[str, object]]:
             "events_parsed": 0,
             "conversations_parsed": 0,
             "assets_indexed": 0,
+            "relationships_parsed": 0,
             "bytes_discovered": sum(member.uncompressed_size for member in files),
             "bytes_processed": 0,
             "parse_warnings": 0,
@@ -143,6 +145,9 @@ def _apply_result(coverage: dict[str, object], parsed: ParsedExport, result: Imp
         int(coverage["conversations_parsed"]) + parsed.conversation_count
     )
     coverage["assets_indexed"] = int(coverage["assets_indexed"]) + parsed.asset_count
+    coverage["relationships_parsed"] = (
+        int(coverage["relationships_parsed"]) + parsed.relationship_count
+    )
     coverage["bytes_processed"] = int(coverage["bytes_processed"]) + parsed.size_bytes
     coverage["parse_warnings"] = int(coverage["parse_warnings"]) + len(
         parsed.parse_warnings
@@ -152,6 +157,7 @@ def _apply_result(coverage: dict[str, object], parsed: ParsedExport, result: Imp
         + result.conflicted_events
         + result.conflicted_records
         + result.conflicted_assets
+        + result.conflicted_relationships
     )
     if result.short_circuited:
         conflicts = (
@@ -159,12 +165,14 @@ def _apply_result(coverage: dict[str, object], parsed: ParsedExport, result: Imp
             + result.conflicted_events
             + result.conflicted_records
             + result.conflicted_assets
+            + result.conflicted_relationships
         )
         source_objects = (
             result.source_conversations
             + result.source_events
             + result.source_records
             + result.source_assets
+            + result.source_relationships
         )
         coverage["members_short_circuited"] = (
             int(coverage["members_short_circuited"]) + 1
@@ -177,18 +185,21 @@ def _apply_result(coverage: dict[str, object], parsed: ParsedExport, result: Imp
         + result.inserted_events
         + result.inserted_records
         + result.inserted_assets
+        + result.inserted_relationships
     )
     coverage["unchanged"] = int(coverage["unchanged"]) + (
         result.unchanged_conversations
         + result.unchanged_events
         + result.unchanged_records
         + result.unchanged_assets
+        + result.unchanged_relationships
     )
     coverage["stale"] = int(coverage["stale"]) + (
         result.stale_conversations
         + result.stale_events
         + result.stale_records
         + result.stale_assets
+        + result.stale_relationships
     )
     coverage["version_count"] = int(coverage["version_count"]) + result.new_distinct_versions
     coverage["reused_versions"] = int(coverage["reused_versions"]) + result.reused_versions

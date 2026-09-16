@@ -21,6 +21,8 @@ from .fingerprints import (
     event_fingerprint,
     record_canonical_payload,
     record_fingerprint,
+    relationship_canonical_payload,
+    relationship_fingerprint,
 )
 from .migrations import LATEST_SCHEMA_VERSION
 from .models import (
@@ -29,6 +31,7 @@ from .models import (
     NormalizedConversation,
     NormalizedEvent,
     NormalizedRecord,
+    NormalizedRelationship,
     ParsedExport,
 )
 from .reconciliation import Authority, authority_advances, classify_changed_authority
@@ -97,6 +100,7 @@ def _validate_batch(parsed_exports: tuple[ParsedExport, ...]) -> None:
     event_keys: set[tuple[str, str, str]] = set()
     record_keys: set[tuple[str, str, str]] = set()
     asset_keys: set[tuple[str, str, str]] = set()
+    relationship_keys: set[tuple[str, str, str]] = set()
     for parsed in parsed_exports:
         for conversation in parsed.conversations:
             conversation_key = (
@@ -149,6 +153,17 @@ def _validate_batch(parsed_exports: tuple[ParsedExport, ...]) -> None:
                     f"import rolled back: duplicate asset identity {asset_key}"
                 )
             asset_keys.add(asset_key)
+        for relationship in parsed.relationships:
+            relationship_key = (
+                relationship.source,
+                relationship.source_relationship_namespace,
+                relationship.source_relationship_id,
+            )
+            if relationship_key in relationship_keys:
+                raise ReconciliationError(
+                    f"import rolled back: duplicate relationship identity {relationship_key}"
+                )
+            relationship_keys.add(relationship_key)
 
 
 def _require_latest_schema(connection: Connection) -> None:
@@ -798,9 +813,9 @@ def _reconcile_resource(
     run_id: int,
     source_file_id: int,
     parsed: ParsedExport,
-    normalized: NormalizedRecord | NormalizedAsset,
+    normalized: NormalizedRecord | NormalizedAsset | NormalizedRelationship,
 ) -> tuple[Outcome, int, bool]:
-    """Reconcile records and assets through the same cumulative/versioned contract."""
+    """Reconcile records, assets, and relationships through one lossless contract."""
 
     if isinstance(normalized, NormalizedRecord):
         entity = "record"
@@ -829,7 +844,7 @@ def _reconcile_resource(
         field_values: dict[str, Any] = {
             column: payload[column] for column in canonical_columns
         }
-    else:
+    elif isinstance(normalized, NormalizedAsset):
         entity = "asset"
         table = "assets"
         version_table = "asset_versions"
@@ -871,6 +886,33 @@ def _reconcile_resource(
             "duration_ms": normalized.duration_ms,
             "metadata": normalized.metadata,
         }
+    else:
+        entity = "relationship"
+        table = "relationships"
+        version_table = "relationship_versions"
+        observation_table = "relationship_observations"
+        source_link_table = "source_file_relationships"
+        id_column = "relationship_id"
+        version_id_column = "relationship_version_id"
+        namespace_column = "source_relationship_namespace"
+        source_id_column = "source_relationship_id"
+        namespace = normalized.source_relationship_namespace
+        source_id = normalized.source_relationship_id
+        payload = relationship_canonical_payload(normalized)
+        fingerprint = relationship_fingerprint(normalized)
+        canonical_columns = (
+            "relationship_type",
+            "subject_kind",
+            "subject_source",
+            "subject_namespace",
+            "subject_source_id",
+            "object_kind",
+            "object_source",
+            "object_namespace",
+            "object_source_id",
+            "metadata",
+        )
+        field_values = {column: payload[column] for column in canonical_columns}
 
     authority = _incoming_authority(normalized, parsed)
     existing = connection.execute(
@@ -1097,6 +1139,9 @@ def _import_parsed_export(
     reused_record_versions = 0
     new_asset_versions = 0
     reused_asset_versions = 0
+    relationship_counts = _empty_counts()
+    new_relationship_versions = 0
+    reused_relationship_versions = 0
     for conversation in parsed.conversations:
         conversation_id, outcome, version_id, version_created = _reconcile_conversation(
             connection, run_id, parsed, conversation
@@ -1171,6 +1216,14 @@ def _import_parsed_export(
         new_asset_versions += int(version_created)
         reused_asset_versions += int(not version_created)
 
+    for relationship in parsed.relationships:
+        relationship_outcome, _, version_created = _reconcile_resource(
+            connection, run_id, source_file_id, parsed, relationship
+        )
+        relationship_counts[relationship_outcome] += 1
+        new_relationship_versions += int(version_created)
+        reused_relationship_versions += int(not version_created)
+
     database_events = int(
         connection.execute(
             text(
@@ -1215,6 +1268,17 @@ def _import_parsed_export(
             {"run_id": run_id, "source_file_id": source_file_id},
         ).scalar_one()
     )
+    database_relationships = int(
+        connection.execute(
+            text(
+                """
+                SELECT COUNT(*) FROM relationship_observations
+                WHERE import_run_id = :run_id AND source_file_id = :source_file_id
+                """
+            ),
+            {"run_id": run_id, "source_file_id": source_file_id},
+        ).scalar_one()
+    )
     result = ImportResult(
         source_file_id=source_file_id,
         run_id=run_id,
@@ -1226,6 +1290,8 @@ def _import_parsed_export(
         database_records=database_records,
         source_assets=parsed.asset_count,
         database_assets=database_assets,
+        source_relationships=parsed.relationship_count,
+        database_relationships=database_relationships,
         inserted_conversations=conversation_counts["inserted"],
         updated_conversations=conversation_counts["updated"],
         unchanged_conversations=conversation_counts["unchanged"],
@@ -1258,6 +1324,14 @@ def _import_parsed_export(
         tombstoned_assets=asset_counts["tombstoned"],
         new_asset_versions=new_asset_versions,
         reused_asset_versions=reused_asset_versions,
+        inserted_relationships=relationship_counts["inserted"],
+        updated_relationships=relationship_counts["updated"],
+        unchanged_relationships=relationship_counts["unchanged"],
+        stale_relationships=relationship_counts["stale"],
+        conflicted_relationships=relationship_counts["conflicted"],
+        tombstoned_relationships=relationship_counts["tombstoned"],
+        new_relationship_versions=new_relationship_versions,
+        reused_relationship_versions=reused_relationship_versions,
     )
     if not result.reconciled:
         raise ReconciliationError(
@@ -1266,6 +1340,7 @@ def _import_parsed_export(
             f"events {result.database_events}/{result.source_events}"
             f", records {result.database_records}/{result.source_records}"
             f", assets {result.database_assets}/{result.source_assets}"
+            f", relationships {result.database_relationships}/{result.source_relationships}"
         )
     return result
 
@@ -1330,6 +1405,7 @@ def import_parsed_exports(
             + result.conflicted_events
             + result.conflicted_records
             + result.conflicted_assets
+            + result.conflicted_relationships
             for result in results
         )
         final_status = "conflicted" if conflict_count else "completed"

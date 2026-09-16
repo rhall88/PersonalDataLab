@@ -160,7 +160,7 @@ def test_pr2_database_migrates_and_backfills_provenance(pr2_engine: Engine) -> N
             {"source_file_id": source_file_id, "record_id": event_id},
         )
 
-    assert migrate_database(pr2_engine) == (3, 4, 5, 6)
+    assert migrate_database(pr2_engine) == (3, 4, 5, 6, 7)
     assert migrate_database(pr2_engine) == ()
 
     with pr2_engine.connect() as connection:
@@ -192,7 +192,7 @@ def test_pr2_database_migrates_and_backfills_provenance(pr2_engine: Engine) -> N
                 """
             )
         ).one()
-    assert list(versions) == [2, 3, 4, 5, 6]
+    assert list(versions) == [2, 3, 4, 5, 6, 7]
     assert tuple(event) == ("message", "user", 32, "canonical-v1")
     assert tuple(observations) == (1, 1)
     assert tuple(event_versions) == ("full", "hello")
@@ -204,6 +204,7 @@ def test_pr2_database_migrates_and_backfills_provenance(pr2_engine: Engine) -> N
             "event_observations", "attachment_observations",
             "records", "record_versions", "record_observations",
             "assets", "asset_versions", "asset_observations",
+            "relationships", "relationship_versions", "relationship_observations",
         )
         columns: dict[str, set[tuple[str, str, str]]] = {}
         for schema in ("public", "migration_pr2"):
@@ -302,7 +303,7 @@ def test_v5_preserves_unreconstructable_observation_as_fingerprint_only(
             {"fingerprint": new_fingerprint},
         )
 
-    assert migrate_database(pr2_engine) == (5, 6)
+    assert migrate_database(pr2_engine) == (5, 6, 7)
 
     with pr2_engine.connect() as connection:
         versions = connection.execute(

@@ -1,4 +1,4 @@
-# Google Takeout framework architecture (PR5)
+# Google Takeout framework architecture (PR5–PR6)
 
 The framework keeps Takeout container mechanics, product semantics, and canonical persistence
 separate:
@@ -18,6 +18,12 @@ separate:
    `assets`, each with distinct versions and exact observations. Reconciliation uses the same
    authority, lifecycle, fingerprint, conflict, and no-absence-deletion rules as conversations
    and events.
+6. PR6 adds `google_takeout.semantic` for product-owned geographic, Calendar, Contacts, and Tasks
+   semantics. Provider-native fields remain under `metadata.google`; normalized annotations live
+   under `metadata._pdl`.
+7. Migration 007 adds durable `relationships`, immutable relationship versions, exact source-file
+   memberships, and per-run observations. Relationship endpoints use stable provider namespaces
+   and IDs, so evidence can be retained even when an endpoint arrives in a different member.
 
 One source member is the parsing and transaction boundary. ZIP streams are opened only for the
 selected adapter; no archive is extracted. Adding a new Google product normally requires one
@@ -33,3 +39,7 @@ The generic fallback is capped at 64 MiB per member because it performs whole-me
 or XML parsing. Larger structured members are explicitly raw-preserved until a product-specific
 incremental adapter exists. My Activity retains PR4's streaming decoder and existing one-member
 normalization boundary.
+
+Semantic adapter upgrades intentionally change the parser version and representation namespace.
+That makes source bytes previously handled by `generic_structured` eligible for semantic
+reprocessing while preserving the old generic records and observations as immutable history.

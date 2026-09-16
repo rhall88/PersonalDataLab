@@ -59,10 +59,26 @@ _PRODUCTS = (
     _product("arts_culture", "Arts & Culture", "arts_culture_adapter", "json csv html", "generic_google_record"),
     _product("assignments", "Assignments", "education_adapter", "json csv", "assignment event asset"),
     _product("blogger", "Blogger", "publishing_contribution_adapter", "atom xml json html media", "blog_post conversation asset"),
-    _product("calendar", "Calendar", "planning_adapter", "ics", "calendar calendar_event_definition"),
+    _product(
+        "calendar",
+        "Calendar",
+        "calendar_semantic",
+        "ics",
+        "calendar calendar_event_definition",
+        support="fully_structured",
+        notes="PR6 iCalendar definitions, bounded one-off event projections, and relationships.",
+    ),
     _product("chrome", "Chrome", "activity_adapter", "json html csv", "event saved_item"),
     _product("classroom", "Classroom", "education_adapter", "json csv", "classroom_course assignment event asset"),
-    _product("contacts", "Contacts", "contacts_adapter", "vcard csv", "contact"),
+    _product(
+        "contacts",
+        "Contacts",
+        "contacts_semantic",
+        "vcard csv json",
+        "contact contact_group asset",
+        support="fully_structured",
+        notes="PR6 vCard/CSV/JSON contacts with explicit group membership and photo references.",
+    ),
     _product("appeal_content", "Content returned from your appeal", "legal_export_adapter", "document archive binary", "document asset"),
     _product("discover", "Discover", "notification_feed_adapter", "json csv html", "event subscription"),
     _product("drive", "Drive", "drive_adapter", "document binary json", "document asset"),
@@ -98,8 +114,15 @@ _PRODUCTS = (
     _product("journal", "Journal", "notes_adapter", "json html media", "note asset"),
     _product("keep", "Keep", "notes_adapter", "json html media", "note asset"),
     _product("mail", "Mail", "gmail_adapter", "mbox", "conversation event asset"),
-    _product("maps", "Maps", "geo_adapter", "json csv html", "place event"),
-    _product("maps_your_places", "Maps (your places)", "geo_adapter", "json csv", "place saved_item"),
+    _product(
+        "maps", "Maps", "geo_semantic", "json csv kml kmz xml", "place event",
+        support="fully_structured", notes="PR6 semantic geographic adapter."
+    ),
+    _product(
+        "maps_your_places", "Maps (your places)", "geo_semantic", "json csv kml kmz xml",
+        "place saved_item", support="fully_structured",
+        notes="PR6 semantic geographic adapter."
+    ),
     _product(
         "my_activity",
         "My Activity",
@@ -109,7 +132,11 @@ _PRODUCTS = (
         support="fully_structured",
         notes="PR4 streaming My Activity adapter; JSON and HTML activity members are supported.",
     ),
-    _product("my_maps", "My Maps", "geo_adapter", "kml kmz csv json", "map place asset"),
+    _product(
+        "my_maps", "My Maps", "geo_semantic", "kml kmz csv json xml", "map place asset",
+        support="fully_structured",
+        notes="PR6 synthetic contract coverage; real export canary remains not present."
+    ),
     _product("nest", "Nest", "home_iot_adapter", "json csv media", "home_device event asset"),
     _product("news", "News", "notification_feed_adapter", "json csv html", "event subscription"),
     _product("notebooklm", "NotebookLM", "google_ai_adapter", "json document media", "notebook document asset"),
@@ -119,13 +146,23 @@ _PRODUCTS = (
     _product("profile", "Profile", "account_device_adapter", "json csv media", "account asset"),
     _product("purchases_reservations", "Purchases & Reservations", "commerce_adapter", "json csv", "purchase reservation"),
     _product("recorder", "Recorder", "recorder_adapter", "json audio", "audio_recording transcript asset"),
-    _product("saved", "Saved", "geo_adapter", "json csv", "saved_item place"),
+    _product(
+        "saved", "Saved", "geo_semantic", "json csv kml kmz xml", "saved_list saved_item place",
+        support="fully_structured", notes="PR6 saved-list semantics and ordered membership."
+    ),
     _product("search_contributions", "Search Contributions", "publishing_contribution_adapter", "json csv media", "contribution review asset"),
     _product("search_notifications", "Search Notifications", "notification_feed_adapter", "json csv html", "event subscription"),
     _product("street_view", "Street View", "publishing_contribution_adapter", "json image", "contribution asset"),
-    _product("tasks", "Tasks", "planning_adapter", "json csv", "task"),
+    _product(
+        "tasks", "Tasks", "tasks_semantic", "json csv", "task_list task",
+        support="fully_structured", notes="PR6 task-list, task, and parent-child semantics."
+    ),
     _product("tenor", "Tenor", "tenor_adapter", "json csv media", "event saved_item asset"),
-    _product("timeline", "Timeline", "geo_adapter", "json kml", "place event map"),
+    _product(
+        "timeline", "Timeline", "geo_semantic", "json csv kml kmz xml txt",
+        "place event map timeline_settings timeline_notice",
+        support="fully_structured", notes="PR6 provider-evidenced timeline and geographic semantics."
+    ),
     _product("voice", "Voice", "communications_adapter", "json csv html audio", "conversation event transcript asset"),
     _product("workspace_studio", "Workspace Studio", "google_ai_adapter", "json document media", "ai_project document asset"),
     _product("youtube", "YouTube and YouTube Music", "activity_adapter", "json csv html media", "event saved_item subscription asset"),

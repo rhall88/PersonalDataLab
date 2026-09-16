@@ -102,6 +102,32 @@ class NormalizedAsset(BaseModel):
     lifecycle_state: Literal["active", "provider_deleted"] = "active"
 
 
+class NormalizedRelationship(BaseModel):
+    """Explicit provider-evidenced edge between two durable normalized objects."""
+
+    model_config = ConfigDict(frozen=True)
+
+    source: str
+    relationship_type: str
+    source_relationship_namespace: str = "relationship"
+    source_relationship_id: str
+    subject_kind: Literal["conversation", "event", "record", "asset"]
+    subject_source: str
+    subject_namespace: str
+    subject_source_id: str
+    object_kind: Literal["conversation", "event", "record", "asset"]
+    object_source: str
+    object_namespace: str
+    object_source_id: str
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    provider_updated_at: datetime | None = None
+    authority_at: datetime | None = None
+    authority_kind: Literal[
+        "provider_revision", "provider_updated_at", "exported_at", "unknown"
+    ] = "unknown"
+    lifecycle_state: Literal["active", "provider_deleted"] = "active"
+
+
 class ParsedExport(BaseModel):
     """Normalized content and immutable-source provenance."""
 
@@ -123,6 +149,7 @@ class ParsedExport(BaseModel):
     events: tuple[NormalizedEvent, ...] = ()
     records: tuple[NormalizedRecord, ...] = ()
     assets: tuple[NormalizedAsset, ...] = ()
+    relationships: tuple[NormalizedRelationship, ...] = ()
 
     @model_validator(mode="after")
     def require_one_source(self) -> Self:
@@ -137,6 +164,8 @@ class ParsedExport(BaseModel):
             raise ValueError("record source must match parsed export source")
         if any(asset.source != self.source for asset in self.assets):
             raise ValueError("asset source must match parsed export source")
+        if any(relationship.source != self.source for relationship in self.relationships):
+            raise ValueError("relationship source must match parsed export source")
         return self
 
     @property
@@ -157,6 +186,10 @@ class ParsedExport(BaseModel):
     def asset_count(self) -> int:
         return len(self.assets)
 
+    @property
+    def relationship_count(self) -> int:
+        return len(self.relationships)
+
 
 class ImportResult(BaseModel):
     """Import counts; database counts are memberships scoped to this source file."""
@@ -172,6 +205,8 @@ class ImportResult(BaseModel):
     database_records: int = 0
     source_assets: int = 0
     database_assets: int = 0
+    source_relationships: int = 0
+    database_relationships: int = 0
     run_id: int | None = None
     inserted_conversations: int = 0
     updated_conversations: int = 0
@@ -205,6 +240,14 @@ class ImportResult(BaseModel):
     tombstoned_assets: int = 0
     new_asset_versions: int = 0
     reused_asset_versions: int = 0
+    inserted_relationships: int = 0
+    updated_relationships: int = 0
+    unchanged_relationships: int = 0
+    stale_relationships: int = 0
+    conflicted_relationships: int = 0
+    tombstoned_relationships: int = 0
+    new_relationship_versions: int = 0
+    reused_relationship_versions: int = 0
     short_circuited: bool = False
 
     @property
@@ -214,6 +257,7 @@ class ImportResult(BaseModel):
             or self.conflicted_events
             or self.conflicted_records
             or self.conflicted_assets
+            or self.conflicted_relationships
         )
 
     @computed_field
@@ -224,6 +268,7 @@ class ImportResult(BaseModel):
             + self.new_event_versions
             + self.new_record_versions
             + self.new_asset_versions
+            + self.new_relationship_versions
         )
 
     @computed_field
@@ -234,6 +279,7 @@ class ImportResult(BaseModel):
             + self.reused_event_versions
             + self.reused_record_versions
             + self.reused_asset_versions
+            + self.reused_relationship_versions
         )
 
     @property
@@ -243,4 +289,5 @@ class ImportResult(BaseModel):
             and self.source_events == self.database_events
             and self.source_records == self.database_records
             and self.source_assets == self.database_assets
+            and self.source_relationships == self.database_relationships
         )

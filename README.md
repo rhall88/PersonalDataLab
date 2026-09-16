@@ -6,7 +6,8 @@ This repository contains the completed foundation and its first three source imp
 
 - Docker Compose
 - PostgreSQL 18 plus pgvector
-- canonical records (`people`, `identities`, `conversations`, `events`, and `attachments`)
+- canonical records (`people`, `identities`, `conversations`, `events`, `attachments`, durable
+  records/assets, and provenance-bearing relationships)
 - source-file provenance (`source_files`, `source_file_conversations`, and `source_file_events`)
 - lossless distinct-version history plus narrow import-run/observation provenance
 - cumulative reconciliation for inserts, genuine updates, unchanged overlap, stale data,
@@ -15,6 +16,7 @@ This repository contains the completed foundation and its first three source imp
 - Anthropic data-export importer
 - Google Takeout My Activity importer
 - Google Takeout 68-product inventory, adapter registry, routing, and coverage framework
+- Google Timeline/Maps/Saved, Calendar, Contacts, and Tasks semantic adapters
 - reconciliation tests
 - Windows/PowerShell setup instructions
 
@@ -219,10 +221,10 @@ All provider fields remain available under `metadata.google`; adapter-owned cont
 under `metadata._pdl`, and normalized `time` is stored as `occurred_at` instead of being duplicated
 in fingerprinted metadata.
 
-Gmail MBOX content, Calendar, Contacts, Drive document extraction, Google Photos sidecars and
-binaries, and raw Location History tracks are deliberately deferred to product-specific
-parsers. Unsupported products are left untouched in the retained Takeout rather than being
-silently represented as successfully imported.
+Gmail MBOX content, Drive document extraction, Google Photos sidecars and binaries, and raw
+Location History track variants not present in the validated export remain assigned to later
+product-specific phases. Unsupported products are left untouched in the retained Takeout rather
+than being silently represented as successfully imported.
 
 ### Inspect a complete Google Takeout
 
@@ -254,10 +256,13 @@ personal-data-lab import-google-all data\raw\google\2026-09-10
 ```
 
 `import-google-all` inventories first, routes deterministically, and commits one logical member
-at a time. PR4 My Activity members use the existing fully structured parser. Bounded known-product
-JSON/CSV/XML members may use the conservative generic fallback and are reported as
-`partially_structured`; unimplemented product variants remain `raw_preserved`. Progress goes to
-stderr and final coverage JSON goes to stdout.
+at a time. My Activity uses the streaming activity parser. PR6 adds semantic routing for Timeline,
+Maps, Maps (your places), My Maps, Saved, Calendar ICS, Contacts VCF/CSV/JSON, and Tasks JSON/CSV.
+Provider-native fields remain lossless, recurring calendar definitions are not expanded, and
+explicit list/map/calendar/contact/task relationships are versioned with their own provenance.
+Other bounded JSON/CSV/XML members may use the conservative generic fallback and are reported as
+`partially_structured`; unimplemented variants remain `raw_preserved`. Progress goes to stderr
+and final coverage JSON goes to stdout.
 
 Exit codes are exact: `0` means every discovered non-structural member was safely processed;
 `2` means reconciliation conflicts; `3` means known raw-preserved/unsupported members remain;
@@ -265,8 +270,9 @@ Exit codes are exact: `0` means every discovered non-structural member was safel
 When multiple conditions exist, failure takes precedence, followed by unknown, unsupported, and
 conflict.
 
-This framework is not a claim of complete semantic Google support. Complete support requires the
-remaining PR6–PR11 product adapters and real-Takeout validation defined by the master contract.
+This framework is not yet a claim of complete semantic Google support. Complete support requires
+the remaining PR7–PR11 product adapters and final real-Takeout reconciliation defined by the
+master contract.
 
 ## Permanent cumulative and lossless contract
 
