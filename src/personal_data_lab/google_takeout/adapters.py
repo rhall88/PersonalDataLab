@@ -346,9 +346,6 @@ class GenericStructuredAdapter:
         )
 
 
-DEFAULT_ADAPTER_REGISTRY = AdapterRegistry((MyActivityAdapter(), GenericStructuredAdapter()))
-
-
 @contextmanager
 def open_takeout_member(member: TakeoutMember) -> Iterator[BinaryIO]:
     """Open one exact member as a bounded stream without materializing an archive."""
@@ -373,3 +370,12 @@ def open_takeout_member(member: TakeoutMember) -> Iterator[BinaryIO]:
         raise GoogleAdapterError(f"extracted member escapes its container: {member.member_path}")
     with candidate.open("rb") as stream:
         yield stream
+
+
+# Semantic adapters are imported after the protocol and stream helpers are defined to avoid a
+# circular dependency while keeping the public registry in one place.
+from .semantic import PR6_ADAPTERS
+
+DEFAULT_ADAPTER_REGISTRY = AdapterRegistry(
+    (MyActivityAdapter(), *PR6_ADAPTERS, GenericStructuredAdapter())
+)

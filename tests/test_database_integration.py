@@ -25,6 +25,7 @@ from personal_data_lab.models import (
     NormalizedConversation,
     NormalizedEvent,
     NormalizedRecord,
+    NormalizedRelationship,
     ParsedExport,
 )
 from personal_data_lab.openai_importer import parse_openai_export
@@ -68,6 +69,7 @@ def _truncate(engine: Engine) -> None:
             text(
                 """
                 TRUNCATE TABLE
+                    relationship_observations,
                     asset_observations,
                     record_observations,
                     event_observations,
@@ -78,16 +80,19 @@ def _truncate(engine: Engine) -> None:
                     attachment_versions,
                     asset_versions,
                     record_versions,
+                    relationship_versions,
                     import_run_source_files,
                     source_file_locations,
                     attachments,
                     source_file_assets,
+                    source_file_relationships,
                     source_file_records,
                     source_file_events,
                     source_file_conversations,
                     events,
                     assets,
                     records,
+                    relationships,
                     identities,
                     people,
                     conversations,
@@ -1575,4 +1580,68 @@ def test_assets_are_external_versioned_references_and_path_moves_are_provenance(
         "f" * 64,
     )
     assert int(versions) == 1
+    assert int(observations) == 2
+
+
+def test_relationships_are_versioned_provenance_bearing_and_idempotent(
+    database_engine: Engine,
+) -> None:
+    def exported(sha: str, exported_at: datetime, source_order: int) -> ParsedExport:
+        relationship = NormalizedRelationship(
+            source="google",
+            relationship_type="saved_list_contains_item",
+            source_relationship_namespace="google_takeout/saved/contains",
+            source_relationship_id="list-1:item-1",
+            subject_kind="record",
+            subject_source="google",
+            subject_namespace="google_takeout/saved/saved_list/csv",
+            subject_source_id="provider:list-1",
+            object_kind="record",
+            object_source="google",
+            object_namespace="google_takeout/saved/saved_item/csv",
+            object_source_id="provider:item-1",
+            metadata={"_pdl": {"source_order": source_order}},
+        )
+        return ParsedExport(
+            source="google",
+            parser_version="google-geo-v2",
+            filename="saved.csv",
+            original_path=f"synthetic://{sha[0]}.csv",
+            sha256=sha,
+            size_bytes=1,
+            exported_at=exported_at,
+            snapshot_kind="partial",
+            snapshot_scope="account/takeout/saved",
+            relationships=(relationship,),
+        )
+
+    first = exported("6" * 64, datetime(2025, 1, 1, tzinfo=UTC), 1)
+    newer = exported("7" * 64, datetime(2026, 1, 1, tzinfo=UTC), 2)
+
+    inserted = import_parsed_exports(database_engine, (first,))[0]
+    updated = import_parsed_exports(database_engine, (newer,))[0]
+    repeated = import_parsed_exports(database_engine, (newer,))[0]
+
+    assert inserted.inserted_relationships == 1
+    assert updated.updated_relationships == 1
+    assert repeated.short_circuited
+    assert repeated.source_relationships == repeated.database_relationships == 1
+    with database_engine.connect() as connection:
+        canonical = connection.execute(
+            text(
+                """
+                SELECT relationship_type, metadata -> '_pdl' ->> 'source_order',
+                       canonical_revision
+                FROM relationships
+                """
+            )
+        ).one()
+        versions = connection.execute(
+            text("SELECT COUNT(*) FROM relationship_versions")
+        ).scalar_one()
+        observations = connection.execute(
+            text("SELECT COUNT(*) FROM relationship_observations")
+        ).scalar_one()
+    assert tuple(canonical) == ("saved_list_contains_item", "2", 2)
+    assert int(versions) == 2
     assert int(observations) == 2

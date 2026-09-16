@@ -9,7 +9,13 @@ from pathlib import Path
 from typing import Any
 from uuid import UUID
 
-from .models import NormalizedAsset, NormalizedConversation, NormalizedEvent, NormalizedRecord
+from .models import (
+    NormalizedAsset,
+    NormalizedConversation,
+    NormalizedEvent,
+    NormalizedRecord,
+    NormalizedRelationship,
+)
 
 FINGERPRINT_VERSION = "canonical-v1"
 
@@ -161,3 +167,25 @@ def asset_canonical_payload(asset: NormalizedAsset) -> dict[str, Any]:
 
 def asset_fingerprint(asset: NormalizedAsset) -> bytes:
     return fingerprint_value(asset_canonical_payload(asset))
+
+
+def relationship_canonical_payload(relationship: NormalizedRelationship) -> dict[str, Any]:
+    """Define the complete normalized content of a provider-evidenced relationship."""
+
+    return {
+        "relationship_type": relationship.relationship_type,
+        "subject_kind": relationship.subject_kind,
+        "subject_source": relationship.subject_source,
+        "subject_namespace": relationship.subject_namespace,
+        "subject_source_id": relationship.subject_source_id,
+        "object_kind": relationship.object_kind,
+        "object_source": relationship.object_source,
+        "object_namespace": relationship.object_namespace,
+        "object_source_id": relationship.object_source_id,
+        "metadata": relationship.metadata,
+        "lifecycle_state": relationship.lifecycle_state,
+    }
+
+
+def relationship_fingerprint(relationship: NormalizedRelationship) -> bytes:
+    return fingerprint_value(relationship_canonical_payload(relationship))
