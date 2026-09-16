@@ -374,8 +374,9 @@ def open_takeout_member(member: TakeoutMember) -> Iterator[BinaryIO]:
 
 # Semantic adapters are imported after the protocol and stream helpers are defined to avoid a
 # circular dependency while keeping the public registry in one place.
+from .communications import PR7_ADAPTERS
 from .semantic import PR6_ADAPTERS
 
 DEFAULT_ADAPTER_REGISTRY = AdapterRegistry(
-    (MyActivityAdapter(), *PR6_ADAPTERS, GenericStructuredAdapter())
+    (MyActivityAdapter(), *PR6_ADAPTERS, *PR7_ADAPTERS, GenericStructuredAdapter())
 )

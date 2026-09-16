@@ -17,6 +17,7 @@ This repository contains the completed foundation and its first three source imp
 - Google Takeout My Activity importer
 - Google Takeout 68-product inventory, adapter registry, routing, and coverage framework
 - Google Timeline/Maps/Saved, Calendar, Contacts, and Tasks semantic adapters
+- bounded Gmail MBOX plus Google Chat, Voice, Meet, and Groups communications adapters
 - reconciliation tests
 - Windows/PowerShell setup instructions
 
@@ -258,6 +259,9 @@ personal-data-lab import-google-all data\raw\google\2026-09-10
 `import-google-all` inventories first, routes deterministically, and commits one logical member
 at a time. My Activity uses the streaming activity parser. PR6 adds semantic routing for Timeline,
 Maps, Maps (your places), My Maps, Saved, Calendar ICS, Contacts VCF/CSV/JSON, and Tasks JSON/CSV.
+PR7 adds a bounded two-pass Gmail MBOX stream plus semantic routing for Google Chat, Voice, Meet,
+and Groups. Large MBOX members are committed in deterministic chunks while member coverage and
+byte accounting remain exact.
 Provider-native fields remain lossless, recurring calendar definitions are not expanded, and
 explicit list/map/calendar/contact/task relationships are versioned with their own provenance.
 Other bounded JSON/CSV/XML members may use the conservative generic fallback and are reported as
@@ -271,7 +275,7 @@ When multiple conditions exist, failure takes precedence, followed by unknown, u
 conflict.
 
 This framework is not yet a claim of complete semantic Google support. Complete support requires
-the remaining PR7–PR11 product adapters and final real-Takeout reconciliation defined by the
+the remaining PR8–PR11 product adapters and final real-Takeout reconciliation defined by the
 master contract.
 
 ## Permanent cumulative and lossless contract
