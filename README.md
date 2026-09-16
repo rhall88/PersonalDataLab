@@ -274,6 +274,11 @@ Google Cloud Search, including explicit NotebookLM and Flow relationships.
 PR10 adds account, subscription, payment, purchase, device, home, and provider-event semantics
 across Google Account, One, Pay, Wallet, Purchases & Reservations, Shopping, Store, Play Store,
 Finance, Fi Wireless, Pixel, Android Device Configuration, Home App, Nest, and Profile.
+PR11 adds semantic records/events and streamed external assets for the remaining 25-product long
+tail: account access, notifications, education, publishing, Chrome, legal exports, business,
+developer, Earth, feedback, health, entertainment, Marketplace, Tenor, and non-My-Activity
+YouTube. It also indexes provider-supplied My Activity attachments while leaving activity HTML
+and JSON on the original streaming parser.
 Provider-native fields remain lossless, recurring calendar definitions are not expanded, and
 explicit list/map/calendar/contact/task relationships are versioned with their own provenance.
 Other bounded JSON/CSV/XML members may use the conservative generic fallback and are reported as
@@ -286,9 +291,12 @@ Exit codes are exact: `0` means every discovered non-structural member was safel
 When multiple conditions exist, failure takes precedence, followed by unknown, unsupported, and
 conflict.
 
-This framework is not yet a claim of complete semantic Google support. Complete support requires
-the remaining PR11 long-tail adapters and final real-Takeout reconciliation defined by the
-master contract.
+The PR5–PR11 stack implements the complete 68-product adapter contract for the retained Takeout
+generation. Its whole-export routing audit accounts for all 25,427 data members (146.25 GB) with
+zero unknown, ambiguous, generic-fallback, unsupported, or raw-preserved members. Products absent
+from the retained export have synthetic contract fixtures and remain explicitly marked
+`not_present_in_export`; binary content stays in its immutable source and is represented by
+content-addressed external assets when processed.
 
 ## Permanent cumulative and lossless contract
 

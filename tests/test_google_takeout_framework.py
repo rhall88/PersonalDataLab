@@ -99,7 +99,7 @@ def test_inventory_accounts_for_every_zip_member_without_opening_payloads(
     assert "Accounted members: 6/6" in render_inventory_table(inventory)
 
 
-def test_my_activity_binary_members_are_raw_preserved_not_parsed(tmp_path: Path) -> None:
+def test_my_activity_binary_members_are_external_assets(tmp_path: Path) -> None:
     source = _zip(
         tmp_path / "takeout-20260909T012526Z-001.zip",
         {
@@ -119,10 +119,12 @@ def test_my_activity_binary_members_are_raw_preserved_not_parsed(tmp_path: Path)
         attachment = next(
             member for member in inventory.members if member.extension == extension
         )
-        assert attachment.candidate_adapter is None
-        assert attachment.support_status == "raw_preserved"
-        assert attachment.reason == "no_pr5_activity_pattern"
-        assert DEFAULT_ADAPTER_REGISTRY.resolve(attachment) is None
+        assert attachment.candidate_adapter == "my_activity_asset"
+        assert attachment.support_status == "fully_structured"
+        assert attachment.reason is None
+        adapter = DEFAULT_ADAPTER_REGISTRY.resolve(attachment)
+        assert adapter is not None
+        assert adapter.adapter_name == "my_activity_asset"
 
 
 def test_inventory_handles_split_archives_and_browser_download_duplicates(tmp_path: Path) -> None:
