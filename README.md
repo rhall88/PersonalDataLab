@@ -20,6 +20,7 @@ This repository contains the completed foundation and its first three source imp
 - bounded Gmail MBOX plus Google Chat, Voice, Meet, and Groups communications adapters
 - Google Photos/Drive/Recorder rich metadata, document text, and external-asset graph adapters
 - Gemini/Flow/NotebookLM/Keep/Journal AI, knowledge, note, and generated-work adapters
+- Google account/commerce/device/home adapters, including Play Store and Nest JSONL handling
 - reconciliation tests
 - Windows/PowerShell setup instructions
 
@@ -270,6 +271,9 @@ Audio, and Street View. Binary bytes remain in their immutable source files, nev
 PR9 adds AI project, generated-media, conversation, notebook, document, and note semantics for
 Gemini, Gemini in Workspace, NotebookLM, Flow, Workspace Studio, Keep, Journal, Pinpoint, and
 Google Cloud Search, including explicit NotebookLM and Flow relationships.
+PR10 adds account, subscription, payment, purchase, device, home, and provider-event semantics
+across Google Account, One, Pay, Wallet, Purchases & Reservations, Shopping, Store, Play Store,
+Finance, Fi Wireless, Pixel, Android Device Configuration, Home App, Nest, and Profile.
 Provider-native fields remain lossless, recurring calendar definitions are not expanded, and
 explicit list/map/calendar/contact/task relationships are versioned with their own provenance.
 Other bounded JSON/CSV/XML members may use the conservative generic fallback and are reported as
@@ -283,7 +287,7 @@ When multiple conditions exist, failure takes precedence, followed by unknown, u
 conflict.
 
 This framework is not yet a claim of complete semantic Google support. Complete support requires
-the remaining PR10–PR11 product adapters and final real-Takeout reconciliation defined by the
+the remaining PR11 long-tail adapters and final real-Takeout reconciliation defined by the
 master contract.
 
 ## Permanent cumulative and lossless contract
