@@ -472,6 +472,11 @@ def _parse_activity_stream(
             export_id=export_id,
             snapshot_kind="partial",
             snapshot_scope="account/activity",
+            parse_warnings=tuple(
+                "activity timestamp could not be normalized"
+                for event in events
+                if event.metadata.get("_pdl", {}).get("unparsed_time") is not None
+            ),
             events=events,
         )
     except (FingerprintError, UnicodeDecodeError, ValidationError) as error:

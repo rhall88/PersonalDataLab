@@ -20,7 +20,13 @@ from personal_data_lab.database import (
     import_parsed_exports,
 )
 from personal_data_lab.google_importer import GoogleExportError, parse_google_export
-from personal_data_lab.models import NormalizedConversation, NormalizedEvent, ParsedExport
+from personal_data_lab.models import (
+    NormalizedAsset,
+    NormalizedConversation,
+    NormalizedEvent,
+    NormalizedRecord,
+    ParsedExport,
+)
 from personal_data_lab.openai_importer import parse_openai_export
 
 pytestmark = pytest.mark.integration
@@ -62,18 +68,26 @@ def _truncate(engine: Engine) -> None:
             text(
                 """
                 TRUNCATE TABLE
+                    asset_observations,
+                    record_observations,
                     event_observations,
                     conversation_observations,
                     attachment_observations,
                     event_versions,
                     conversation_versions,
                     attachment_versions,
+                    asset_versions,
+                    record_versions,
                     import_run_source_files,
                     source_file_locations,
                     attachments,
+                    source_file_assets,
+                    source_file_records,
                     source_file_events,
                     source_file_conversations,
                     events,
+                    assets,
+                    records,
                     identities,
                     people,
                     conversations,
@@ -1430,3 +1444,135 @@ def test_google_cli_keeps_completed_members_when_a_later_member_is_invalid(
         event_count = connection.execute(text("SELECT COUNT(*) FROM events")).scalar_one()
         run_count = connection.execute(text("SELECT COUNT(*) FROM import_runs")).scalar_one()
     assert event_count == run_count == 1
+
+
+def test_durable_records_preserve_versions_stale_evidence_and_later_absence(
+    database_engine: Engine,
+) -> None:
+    def exported(sha: str, exported_at: datetime, title: str | None) -> ParsedExport:
+        records = (
+            ()
+            if title is None
+            else (
+                NormalizedRecord(
+                    source="synthetic",
+                    record_type="contact",
+                    source_record_namespace="contacts",
+                    source_record_id="contact-1",
+                    title=title,
+                ),
+            )
+        )
+        return ParsedExport(
+            source="synthetic",
+            parser_version="synthetic-record-v1",
+            filename=f"{sha[0]}.json",
+            original_path=f"synthetic://{sha[0]}.json",
+            sha256=sha,
+            size_bytes=1,
+            exported_at=exported_at,
+            snapshot_kind="complete",
+            snapshot_scope="account/contacts",
+            records=records,
+        )
+
+    first = exported("1" * 64, datetime(2025, 1, 1, tzinfo=UTC), "Ada")
+    newer = exported("2" * 64, datetime(2026, 1, 1, tzinfo=UTC), "Ada Lovelace")
+    stale = exported("3" * 64, datetime(2024, 1, 1, tzinfo=UTC), "A. Lovelace")
+    absent = exported("4" * 64, datetime(2027, 1, 1, tzinfo=UTC), None)
+    conflict = exported("5" * 64, datetime(2026, 1, 1, tzinfo=UTC), "Ada Byron")
+
+    inserted = import_parsed_exports(database_engine, (first,))[0]
+    updated = import_parsed_exports(database_engine, (newer,))[0]
+    stale_result = import_parsed_exports(database_engine, (stale,))[0]
+    conflict_result = import_parsed_exports(database_engine, (conflict,))[0]
+    absent_result = import_parsed_exports(database_engine, (absent,))[0]
+    repeated = import_parsed_exports(database_engine, (newer,))[0]
+
+    assert inserted.inserted_records == 1
+    assert updated.updated_records == 1
+    assert stale_result.stale_records == 1
+    assert conflict_result.conflicted_records == 1
+    assert absent_result.source_records == absent_result.database_records == 0
+    assert repeated.short_circuited
+    with database_engine.connect() as connection:
+        canonical = connection.execute(
+            text("SELECT title, canonical_revision, lifecycle_state FROM records")
+        ).one()
+        version_count = connection.execute(text("SELECT COUNT(*) FROM record_versions")).scalar_one()
+        observations = connection.execute(
+            text(
+                """
+                SELECT ro.outcome, rv.normalized_payload ->> 'title'
+                FROM record_observations ro
+                JOIN record_versions rv ON rv.id = ro.record_version_id
+                ORDER BY ro.import_run_id
+                """
+            )
+        ).all()
+    assert tuple(canonical) == ("Ada Lovelace", 2, "active")
+    assert int(version_count) == 4
+    assert [tuple(row) for row in observations] == [
+        ("inserted", "Ada"),
+        ("updated", "Ada Lovelace"),
+        ("stale", "A. Lovelace"),
+        ("conflicted", "Ada Byron"),
+    ]
+
+
+def test_assets_are_external_versioned_references_and_path_moves_are_provenance(
+    database_engine: Engine,
+) -> None:
+    def exported(sha: str, locator: str, exported_at: datetime) -> ParsedExport:
+        asset = NormalizedAsset(
+            source="google",
+            asset_namespace="photos/media",
+            source_asset_id="provider-photo-1",
+            sha256="f" * 64,
+            mime_type="image/jpeg",
+            filename="photo.jpg",
+            original_path=locator,
+            size_bytes=10_000_000_000,
+            metadata={"google": {"favorite": True}},
+        )
+        return ParsedExport(
+            source="google",
+            parser_version="synthetic-asset-v1",
+            filename="photo-sidecar.json",
+            original_path=locator + ".json",
+            sha256=sha,
+            size_bytes=1,
+            exported_at=exported_at,
+            snapshot_kind="partial",
+            snapshot_scope="account/photos",
+            assets=(asset,),
+        )
+
+    first = exported(
+        "a" * 64,
+        "C:/takeout-a.zip!/Takeout/Google Photos/photo.jpg",
+        datetime(2025, 1, 1, tzinfo=UTC),
+    )
+    moved = exported(
+        "b" * 64,
+        "D:/takeout-b.zip!/Takeout/Google Photos/photo.jpg",
+        datetime(2026, 1, 1, tzinfo=UTC),
+    )
+    first_result = import_parsed_exports(database_engine, (first,))[0]
+    moved_result = import_parsed_exports(database_engine, (moved,))[0]
+
+    assert first_result.inserted_assets == 1
+    assert moved_result.unchanged_assets == 1
+    with database_engine.connect() as connection:
+        asset = connection.execute(
+            text("SELECT original_path, size_bytes, sha256 FROM assets")
+        ).one()
+        versions = connection.execute(text("SELECT COUNT(*) FROM asset_versions")).scalar_one()
+        observations = connection.execute(text("SELECT COUNT(*) FROM asset_observations")).scalar_one()
+    assert tuple(asset) == (
+        "D:/takeout-b.zip!/Takeout/Google Photos/photo.jpg",
+        10_000_000_000,
+        "f" * 64,
+    )
+    assert int(versions) == 1
+    assert int(observations) == 2

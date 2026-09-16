@@ -9,6 +9,8 @@ from .anthropic_importer import parse_anthropic_export
 from .config import database_url
 from .database import create_database_engine, import_openai_export, import_parsed_exports
 from .google_importer import iter_google_exports
+from .google_takeout.inventory import inspect_google, render_inventory_table
+from .google_takeout.orchestrator import import_google_all
 from .migrations import LATEST_SCHEMA_VERSION, migrate_database
 from .openai_importer import parse_openai_export
 
@@ -34,6 +36,24 @@ def _parser() -> argparse.ArgumentParser:
         help="Takeout ZIP, folder of split ZIPs, extracted Takeout, or MyActivity file",
     )
     google.add_argument("--database-url", help="overrides DATABASE_URL from .env")
+    inspect = subparsers.add_parser(
+        "inspect-google",
+        help="inventory every member of Takeout ZIPs or an extracted export",
+    )
+    inspect.add_argument("source", help="Takeout ZIP, folder of split ZIPs, or extracted Takeout")
+    inspect.add_argument(
+        "--format",
+        dest="output_format",
+        choices=("json", "table"),
+        default="json",
+        help="output machine-readable JSON (default) or a human-readable table",
+    )
+    google_all = subparsers.add_parser(
+        "import-google-all",
+        help="inventory and import all members supported by registered Takeout adapters",
+    )
+    google_all.add_argument("source", help="Takeout ZIP, folder of split ZIPs, or extracted Takeout")
+    google_all.add_argument("--database-url", help="overrides DATABASE_URL from .env")
     migrate = subparsers.add_parser("migrate", help="upgrade an existing database schema")
     migrate.add_argument("--database-url", help="overrides DATABASE_URL from .env")
     return parser
@@ -54,7 +74,30 @@ def _batch_summary(parsed_exports: Sequence, results: Sequence) -> dict:
                 "parser_version",
             },
         )
-        | result.model_dump()
+        | result.model_dump(
+            exclude={
+                "source_records",
+                "database_records",
+                "source_assets",
+                "database_assets",
+                "inserted_records",
+                "updated_records",
+                "unchanged_records",
+                "stale_records",
+                "conflicted_records",
+                "tombstoned_records",
+                "new_record_versions",
+                "reused_record_versions",
+                "inserted_assets",
+                "updated_assets",
+                "unchanged_assets",
+                "stale_assets",
+                "conflicted_assets",
+                "tombstoned_assets",
+                "new_asset_versions",
+                "reused_asset_versions",
+            }
+        )
         | {"reconciled": result.reconciled}
         for parsed, result in zip(parsed_exports, results, strict=True)
     ]
@@ -118,6 +161,29 @@ def _google_member_imported(parsed, result) -> None:
     )
 
 
+def _google_all_member_started(member, adapter) -> None:
+    print(
+        f"[google-all] parsing member={json.dumps(member.source_locator)} "
+        f"product={member.product_key} adapter={adapter.adapter_name} "
+        f"size_bytes={member.uncompressed_size}",
+        file=sys.stderr,
+        flush=True,
+    )
+
+
+def _google_all_member_imported(member, parsed, result) -> None:
+    print(
+        f"[google-all] imported member={json.dumps(member.source_locator)} "
+        f"product={member.product_key} records={result.source_records} "
+        f"events={result.source_events} conversations={result.source_conversations} "
+        f"assets={result.source_assets} short_circuited={str(result.short_circuited).lower()} "
+        f"conflicts="
+        f"{result.conflicted_records + result.conflicted_events + result.conflicted_conversations + result.conflicted_assets}",
+        file=sys.stderr,
+        flush=True,
+    )
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     if args.command == "import-openai":
@@ -147,6 +213,35 @@ def main(argv: Sequence[str] | None = None) -> int:
             results.append(result)
         print(json.dumps(_batch_summary(parsed_exports, results), indent=2))
         return 2 if any(result.has_conflicts for result in results) else 0
+    if args.command == "inspect-google":
+        inventory = inspect_google(args.source)
+        if args.output_format == "table":
+            print(render_inventory_table(inventory))
+        else:
+            print(json.dumps(inventory.model_dump(mode="json"), indent=2))
+        return 5 if inventory.unknown_members_count else 0
+    if args.command == "import-google-all":
+        engine = create_database_engine(database_url(args.database_url))
+        summary = import_google_all(
+            engine,
+            args.source,
+            on_member_start=_google_all_member_started,
+            on_member_imported=_google_all_member_imported,
+        )
+        for product in summary.coverage.values():
+            for failed_member in product.failed_members:
+                print(
+                    f"[google-all] failed member={json.dumps(failed_member)}",
+                    file=sys.stderr,
+                    flush=True,
+                )
+        print(
+            json.dumps(
+                summary.model_dump(mode="json") | {"exit_code": summary.exit_code},
+                indent=2,
+            )
+        )
+        return summary.exit_code
     if args.command == "migrate":
         engine = create_database_engine(database_url(args.database_url))
         applied = migrate_database(engine)

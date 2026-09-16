@@ -14,6 +14,7 @@ This repository contains the completed foundation and its first three source imp
 - OpenAI data-export importer
 - Anthropic data-export importer
 - Google Takeout My Activity importer
+- Google Takeout 68-product inventory, adapter registry, routing, and coverage framework
 - reconciliation tests
 - Windows/PowerShell setup instructions
 
@@ -223,6 +224,50 @@ binaries, and raw Location History tracks are deliberately deferred to product-s
 parsers. Unsupported products are left untouched in the retained Takeout rather than being
 silently represented as successfully imported.
 
+### Inspect a complete Google Takeout
+
+Inventory one ZIP, a directory of split ZIPs, or an extracted Takeout without extracting ZIPs or
+opening obvious member payloads:
+
+```powershell
+personal-data-lab inspect-google data\raw\google\2026-09-10
+personal-data-lab inspect-google data\raw\google\2026-09-10 --format table
+```
+
+JSON is the default. It includes every archive member, ZIP sizes/CRC where available, inferred
+export identity, canonical product key, candidate adapter, member disposition, per-product
+totals, unknown members, and the complete-accounting invariant. Directory entries and Takeout's
+archive-browser files are counted as intentional structural members, never silently dropped.
+
+The permanent 68-product contract is in
+[`GOOGLE_TAKEOUT_COMPLETE_INGESTION_SPEC.md`](GOOGLE_TAKEOUT_COMPLETE_INGESTION_SPEC.md), and
+current product-by-product status is in
+[`GOOGLE_PRODUCT_COVERAGE.md`](GOOGLE_PRODUCT_COVERAGE.md). The implementation architecture is
+summarized in
+[`GOOGLE_TAKEOUT_FRAMEWORK_ARCHITECTURE.md`](GOOGLE_TAKEOUT_FRAMEWORK_ARCHITECTURE.md).
+
+### Import all currently supported Takeout members
+
+```powershell
+personal-data-lab migrate
+personal-data-lab import-google-all data\raw\google\2026-09-10
+```
+
+`import-google-all` inventories first, routes deterministically, and commits one logical member
+at a time. PR4 My Activity members use the existing fully structured parser. Bounded known-product
+JSON/CSV/XML members may use the conservative generic fallback and are reported as
+`partially_structured`; unimplemented product variants remain `raw_preserved`. Progress goes to
+stderr and final coverage JSON goes to stdout.
+
+Exit codes are exact: `0` means every discovered non-structural member was safely processed;
+`2` means reconciliation conflicts; `3` means known raw-preserved/unsupported members remain;
+`4` means at least one matched member failed; and `5` means unknown/unclassified members remain.
+When multiple conditions exist, failure takes precedence, followed by unknown, unsupported, and
+conflict.
+
+This framework is not a claim of complete semantic Google support. Complete support requires the
+remaining PR6–PR11 product adapters and real-Takeout validation defined by the master contract.
+
 ## Permanent cumulative and lossless contract
 
 PersonalDataLab is cumulative and lossless. Raw exports are immutable evidence. Every distinct
@@ -295,7 +340,8 @@ These concepts are intentionally different:
 
 ### Query layers for future AI and MCP use
 
-Ordinary questions query `people`, `identities`, `conversations`, `events`, and `attachments`.
+Ordinary questions query `people`, `identities`, `conversations`, `events`, `records`, `assets`,
+and `attachments`.
 Historical-change questions query the corresponding version tables. Provenance or forensic
 questions additionally query observations, import runs, source files, and source-file locations.
 Agents should not compare raw exports or scan every provenance layer to answer normal questions;

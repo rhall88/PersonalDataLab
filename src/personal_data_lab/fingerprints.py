@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any
 from uuid import UUID
 
-from .models import NormalizedConversation, NormalizedEvent
+from .models import NormalizedAsset, NormalizedConversation, NormalizedEvent, NormalizedRecord
 
 FINGERPRINT_VERSION = "canonical-v1"
 
@@ -118,3 +118,46 @@ def event_fingerprint(
             conversation_source_id=conversation_source_id,
         )
     )
+
+
+def record_canonical_payload(record: NormalizedRecord) -> dict[str, Any]:
+    """Define the complete normalized content of a canonical durable record."""
+
+    return {
+        "record_type": record.record_type,
+        "title": record.title,
+        "text": record.text,
+        "created_at": record.created_at,
+        "updated_at": record.updated_at,
+        "occurred_at": record.occurred_at,
+        "actor_identity": record.actor_identity,
+        "metadata": record.metadata,
+        "lifecycle_state": record.lifecycle_state,
+    }
+
+
+def record_fingerprint(record: NormalizedRecord) -> bytes:
+    return fingerprint_value(record_canonical_payload(record))
+
+
+def asset_canonical_payload(asset: NormalizedAsset) -> dict[str, Any]:
+    """Define asset metadata without copying the referenced content bytes."""
+
+    return {
+        "sha256": asset.sha256,
+        "mime_type": asset.mime_type,
+        "filename": asset.filename,
+        "size_bytes": asset.size_bytes,
+        "created_at": asset.created_at,
+        "captured_at": asset.captured_at,
+        "modified_at": asset.modified_at,
+        "width": asset.width,
+        "height": asset.height,
+        "duration_ms": asset.duration_ms,
+        "metadata": asset.metadata,
+        "lifecycle_state": asset.lifecycle_state,
+    }
+
+
+def asset_fingerprint(asset: NormalizedAsset) -> bytes:
+    return fingerprint_value(asset_canonical_payload(asset))
