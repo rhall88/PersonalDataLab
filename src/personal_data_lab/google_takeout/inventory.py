@@ -268,11 +268,11 @@ def _classify_member(
         }
     if product_key == "my_activity":
         return base | {
-            "candidate_adapter": None,
-            "support_status": "raw_preserved",
-            "requires_byte_level_inspection": not (binary or structured),
+            "candidate_adapter": "my_activity_asset",
+            "support_status": "fully_structured",
+            "requires_byte_level_inspection": True,
             "accounting_category": "classified",
-            "reason": "no_pr5_activity_pattern",
+            "reason": None,
         }
     if (
         extension in GENERIC_STRUCTURED_EXTENSIONS

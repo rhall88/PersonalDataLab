@@ -1,4 +1,4 @@
-# Google Takeout framework architecture (PR5–PR10)
+# Google Takeout framework architecture (PR5–PR11)
 
 The framework keeps Takeout container mechanics, product semantics, and canonical persistence
 separate:
@@ -41,6 +41,11 @@ separate:
     payment, purchase, device, home, Play Store, and provider-event representations. Nest's
     provider-specific CSV-quoted JSONL is decoded when valid; malformed rows remain explicit
     opaque events with warnings rather than being dropped or repaired speculatively.
+12. PR11 adds `google_takeout.long_tail`. It closes the 25 remaining registry products with
+    family-aware record/event classification, provider-ID-first identity, delimiter-aware CSV,
+    structured Chrome/YouTube expansion, conservative HTML/XML/text handling, and streamed
+    external assets. A companion My Activity asset adapter closes provider-supplied attachments
+    without competing with the original activity parser.
 
 One source member is the parsing and transaction boundary. ZIP streams are opened only for the
 selected adapter; no archive is extracted. Adding a new Google product normally requires one
@@ -52,9 +57,10 @@ metadata, and ZIP CRC remain inventory evidence, but CRC is never represented as
 identity. A future product adapter that promotes a binary to a durable asset must compute SHA-256
 when content identity/deduplication requires it.
 
-The generic fallback is capped at 64 MiB per member because it performs whole-member JSON, CSV,
-or XML parsing. Larger structured members are explicitly raw-preserved until a product-specific
-incremental adapter exists. My Activity retains PR4's streaming decoder. The orchestrator also
+The generic fallback remains capped at 64 MiB per member because it performs whole-member JSON,
+CSV, or XML parsing. No member in the retained 68-product export needs that fallback after PR11;
+it remains a conservative forward-compatibility path for future formats. My Activity retains
+PR4's streaming decoder. The orchestrator also
 accepts chunk-yielding adapters: source member and byte totals are counted once, while every
 chunk receives an independent transaction boundary and restart-safe run category.
 
