@@ -19,6 +19,7 @@ This repository contains the completed foundation and its first three source imp
 - Google Timeline/Maps/Saved, Calendar, Contacts, and Tasks semantic adapters
 - bounded Gmail MBOX plus Google Chat, Voice, Meet, and Groups communications adapters
 - Google Photos/Drive/Recorder rich metadata, document text, and external-asset graph adapters
+- Gemini/Flow/NotebookLM/Keep/Journal AI, knowledge, note, and generated-work adapters
 - reconciliation tests
 - Windows/PowerShell setup instructions
 
@@ -266,6 +267,9 @@ byte accounting remain exact.
 PR8 adds Photos sidecar/album semantics, Drive structured-text and Office Open XML extraction,
 Recorder transcript/audio links, and external asset indexing for Photos, Drive, Recorder, Phone
 Audio, and Street View. Binary bytes remain in their immutable source files, never PostgreSQL.
+PR9 adds AI project, generated-media, conversation, notebook, document, and note semantics for
+Gemini, Gemini in Workspace, NotebookLM, Flow, Workspace Studio, Keep, Journal, Pinpoint, and
+Google Cloud Search, including explicit NotebookLM and Flow relationships.
 Provider-native fields remain lossless, recurring calendar definitions are not expanded, and
 explicit list/map/calendar/contact/task relationships are versioned with their own provenance.
 Other bounded JSON/CSV/XML members may use the conservative generic fallback and are reported as
@@ -279,7 +283,7 @@ When multiple conditions exist, failure takes precedence, followed by unknown, u
 conflict.
 
 This framework is not yet a claim of complete semantic Google support. Complete support requires
-the remaining PR9–PR11 product adapters and final real-Takeout reconciliation defined by the
+the remaining PR10–PR11 product adapters and final real-Takeout reconciliation defined by the
 master contract.
 
 ## Permanent cumulative and lossless contract
