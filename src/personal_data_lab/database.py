@@ -12,14 +12,25 @@ from sqlalchemy.engine import Connection, Engine
 
 from .fingerprints import (
     FINGERPRINT_VERSION,
+    asset_canonical_payload,
+    asset_fingerprint,
     canonical_json_bytes,
     conversation_canonical_payload,
     conversation_fingerprint,
     event_canonical_payload,
     event_fingerprint,
+    record_canonical_payload,
+    record_fingerprint,
 )
 from .migrations import LATEST_SCHEMA_VERSION
-from .models import ImportResult, NormalizedConversation, NormalizedEvent, ParsedExport
+from .models import (
+    ImportResult,
+    NormalizedAsset,
+    NormalizedConversation,
+    NormalizedEvent,
+    NormalizedRecord,
+    ParsedExport,
+)
 from .reconciliation import Authority, authority_advances, classify_changed_authority
 
 Outcome = Literal[
@@ -84,6 +95,8 @@ def _validate_batch(parsed_exports: tuple[ParsedExport, ...]) -> None:
         raise ReconciliationError("a source file may appear only once in an import run")
     conversation_keys: set[tuple[str, str, str]] = set()
     event_keys: set[tuple[str, str, str]] = set()
+    record_keys: set[tuple[str, str, str]] = set()
+    asset_keys: set[tuple[str, str, str]] = set()
     for parsed in parsed_exports:
         for conversation in parsed.conversations:
             conversation_key = (
@@ -118,6 +131,24 @@ def _validate_batch(parsed_exports: tuple[ParsedExport, ...]) -> None:
                     f"import rolled back: duplicate event identity {event_key}"
                 )
             event_keys.add(event_key)
+        for record in parsed.records:
+            record_key = (
+                record.source,
+                record.source_record_namespace,
+                record.source_record_id,
+            )
+            if record_key in record_keys:
+                raise ReconciliationError(
+                    f"import rolled back: duplicate record identity {record_key}"
+                )
+            record_keys.add(record_key)
+        for asset in parsed.assets:
+            asset_key = (asset.source, asset.asset_namespace, asset.source_asset_id)
+            if asset_key in asset_keys:
+                raise ReconciliationError(
+                    f"import rolled back: duplicate asset identity {asset_key}"
+                )
+            asset_keys.add(asset_key)
 
 
 def _require_latest_schema(connection: Connection) -> None:
@@ -278,8 +309,10 @@ def _require_matching_fingerprint_version(
 def _persist_version(
     connection: Connection,
     *,
-    table: Literal["conversation_versions", "event_versions"],
-    record_column: Literal["conversation_id", "event_id"],
+    table: Literal[
+        "conversation_versions", "event_versions", "record_versions", "asset_versions"
+    ],
+    record_column: Literal["conversation_id", "event_id", "record_id", "asset_id"],
     record_id: int,
     fingerprint: bytes,
     payload: dict[str, Any],
@@ -760,6 +793,283 @@ def _reconcile_event(
     return outcome, version_id, version_created
 
 
+def _reconcile_resource(
+    connection: Connection,
+    run_id: int,
+    source_file_id: int,
+    parsed: ParsedExport,
+    normalized: NormalizedRecord | NormalizedAsset,
+) -> tuple[Outcome, int, bool]:
+    """Reconcile records and assets through the same cumulative/versioned contract."""
+
+    if isinstance(normalized, NormalizedRecord):
+        entity = "record"
+        table = "records"
+        version_table = "record_versions"
+        observation_table = "record_observations"
+        source_link_table = "source_file_records"
+        id_column = "record_id"
+        version_id_column = "record_version_id"
+        namespace_column = "source_record_namespace"
+        source_id_column = "source_record_id"
+        namespace = normalized.source_record_namespace
+        source_id = normalized.source_record_id
+        payload = record_canonical_payload(normalized)
+        fingerprint = record_fingerprint(normalized)
+        canonical_columns = (
+            "record_type",
+            "title",
+            "text",
+            "created_at",
+            "updated_at",
+            "occurred_at",
+            "actor_identity",
+            "metadata",
+        )
+        field_values: dict[str, Any] = {
+            column: payload[column] for column in canonical_columns
+        }
+    else:
+        entity = "asset"
+        table = "assets"
+        version_table = "asset_versions"
+        observation_table = "asset_observations"
+        source_link_table = "source_file_assets"
+        id_column = "asset_id"
+        version_id_column = "asset_version_id"
+        namespace_column = "asset_namespace"
+        source_id_column = "source_asset_id"
+        namespace = normalized.asset_namespace
+        source_id = normalized.source_asset_id
+        payload = asset_canonical_payload(normalized)
+        fingerprint = asset_fingerprint(normalized)
+        canonical_columns = (
+            "sha256",
+            "mime_type",
+            "filename",
+            "original_path",
+            "size_bytes",
+            "created_at",
+            "captured_at",
+            "modified_at",
+            "width",
+            "height",
+            "duration_ms",
+            "metadata",
+        )
+        field_values = {
+            "sha256": normalized.sha256,
+            "mime_type": normalized.mime_type,
+            "filename": normalized.filename,
+            "original_path": normalized.original_path,
+            "size_bytes": normalized.size_bytes,
+            "created_at": normalized.created_at,
+            "captured_at": normalized.captured_at,
+            "modified_at": normalized.modified_at,
+            "width": normalized.width,
+            "height": normalized.height,
+            "duration_ms": normalized.duration_ms,
+            "metadata": normalized.metadata,
+        }
+
+    authority = _incoming_authority(normalized, parsed)
+    existing = connection.execute(
+        text(
+            f"""
+            SELECT id, content_fingerprint, fingerprint_version, authority_at,
+                   authority_kind, lifecycle_state
+            FROM {table}
+            WHERE source = :source
+              AND {namespace_column} = :namespace
+              AND {source_id_column} = :source_id
+            """
+        ),
+        {"source": normalized.source, "namespace": namespace, "source_id": source_id},
+    ).one_or_none()
+    params: dict[str, Any] = {
+        "source": normalized.source,
+        "namespace": namespace,
+        "source_id": source_id,
+        "fingerprint": fingerprint,
+        "fingerprint_version": FINGERPRINT_VERSION,
+        "provider_updated_at": normalized.provider_updated_at,
+        "authority_at": authority.at,
+        "authority_kind": authority.kind,
+        "run_id": run_id,
+        "lifecycle_state": normalized.lifecycle_state,
+        **field_values,
+    }
+    params["metadata"] = json.dumps(field_values["metadata"])
+    field_names = ", ".join(canonical_columns)
+    field_parameters = ", ".join(
+        "CAST(:metadata AS jsonb)" if column == "metadata" else f":{column}"
+        for column in canonical_columns
+    )
+    if existing is None:
+        canonical_id = int(
+            connection.execute(
+                text(
+                    f"""
+                    INSERT INTO {table}
+                        (source, {namespace_column}, {source_id_column}, {field_names},
+                         content_fingerprint, fingerprint_version, provider_updated_at,
+                         authority_at, authority_kind, canonical_run_id,
+                         first_observed_run_id, last_observed_run_id, lifecycle_state,
+                         tombstoned_at, tombstone_run_id)
+                    VALUES
+                        (:source, :namespace, :source_id, {field_parameters},
+                         :fingerprint, :fingerprint_version,
+                         CAST(:provider_updated_at AS timestamptz),
+                         CAST(:authority_at AS timestamptz), :authority_kind, :run_id,
+                         :run_id, :run_id, :lifecycle_state,
+                         CASE WHEN :lifecycle_state = 'provider_deleted'
+                              THEN CAST(:authority_at AS timestamptz) END,
+                         CASE WHEN :lifecycle_state = 'provider_deleted' THEN :run_id END)
+                    RETURNING id
+                    """
+                ),
+                params,
+            ).scalar_one()
+        )
+        version_id, version_created = _persist_version(
+            connection,
+            table=version_table,
+            record_column=id_column,
+            record_id=canonical_id,
+            fingerprint=fingerprint,
+            payload=payload,
+            run_id=run_id,
+            provider_updated_at=normalized.provider_updated_at,
+            authority=authority,
+            lifecycle_state=normalized.lifecycle_state,
+        )
+        outcome: Outcome = "inserted"
+    else:
+        canonical_id = int(existing.id)
+        _require_matching_fingerprint_version(
+            entity=entity,
+            logical_id=f"{normalized.source}/{namespace}/{source_id}",
+            stored_version=str(existing.fingerprint_version),
+        )
+        version_id, version_created = _persist_version(
+            connection,
+            table=version_table,
+            record_column=id_column,
+            record_id=canonical_id,
+            fingerprint=fingerprint,
+            payload=payload,
+            run_id=run_id,
+            provider_updated_at=normalized.provider_updated_at,
+            authority=authority,
+            lifecycle_state=normalized.lifecycle_state,
+        )
+        if bytes(existing.content_fingerprint) == fingerprint:
+            outcome = "unchanged"
+            existing_authority = Authority(existing.authority_at, str(existing.authority_kind))
+            authority_updates = ""
+            if authority_advances(existing_authority, authority):
+                authority_updates = """
+                    provider_updated_at = CAST(:provider_updated_at AS timestamptz),
+                    authority_at = CAST(:authority_at AS timestamptz),
+                    authority_kind = :authority_kind,
+                    canonical_run_id = :run_id,
+                """
+            locator_update = "original_path = :original_path," if entity == "asset" else ""
+            connection.execute(
+                text(
+                    f"""
+                    UPDATE {table} SET
+                        {authority_updates}
+                        {locator_update}
+                        last_observed_run_id = :run_id
+                    WHERE id = :id
+                    """
+                ),
+                params | {"id": canonical_id},
+            )
+        else:
+            changed = classify_changed_authority(
+                Authority(existing.authority_at, str(existing.authority_kind)), authority
+            )
+            if changed in ("stale", "conflicted"):
+                outcome = changed
+                connection.execute(
+                    text(f"UPDATE {table} SET last_observed_run_id = :run_id WHERE id = :id"),
+                    {"run_id": run_id, "id": canonical_id},
+                )
+            else:
+                assignments = ", ".join(
+                    f"{column} = CAST(:metadata AS jsonb)"
+                    if column == "metadata"
+                    else f"{column} = :{column}"
+                    for column in canonical_columns
+                )
+                tombstoned = (
+                    str(existing.lifecycle_state) != "provider_deleted"
+                    and normalized.lifecycle_state == "provider_deleted"
+                )
+                connection.execute(
+                    text(
+                        f"""
+                        UPDATE {table} SET
+                            {assignments},
+                            content_fingerprint = :fingerprint,
+                            fingerprint_version = :fingerprint_version,
+                            provider_updated_at = CAST(:provider_updated_at AS timestamptz),
+                            authority_at = CAST(:authority_at AS timestamptz),
+                            authority_kind = :authority_kind,
+                            canonical_run_id = :run_id,
+                            last_observed_run_id = :run_id,
+                            canonical_revision = canonical_revision + 1,
+                            canonical_updated_at = CURRENT_TIMESTAMP,
+                            lifecycle_state = :lifecycle_state,
+                            tombstoned_at = CASE
+                                WHEN :lifecycle_state = 'provider_deleted'
+                                    THEN CAST(:authority_at AS timestamptz)
+                                ELSE NULL
+                            END,
+                            tombstone_run_id = CASE
+                                WHEN :lifecycle_state = 'provider_deleted' THEN :run_id
+                                ELSE NULL
+                            END
+                        WHERE id = :id
+                          AND content_fingerprint IS DISTINCT FROM :fingerprint
+                        """
+                    ),
+                    params | {"id": canonical_id},
+                )
+                outcome = "tombstoned" if tombstoned else "updated"
+
+    connection.execute(
+        text(
+            f"""
+            INSERT INTO {source_link_table} (source_file_id, {id_column})
+            VALUES (:source_file_id, :canonical_id)
+            ON CONFLICT DO NOTHING
+            """
+        ),
+        {"source_file_id": source_file_id, "canonical_id": canonical_id},
+    )
+    connection.execute(
+        text(
+            f"""
+            INSERT INTO {observation_table}
+                (import_run_id, source_file_id, {id_column}, {version_id_column}, outcome)
+            VALUES (:run_id, :source_file_id, :canonical_id, :version_id, :outcome)
+            ON CONFLICT DO NOTHING
+            """
+        ),
+        {
+            "run_id": run_id,
+            "source_file_id": source_file_id,
+            "canonical_id": canonical_id,
+            "version_id": version_id,
+            "outcome": outcome,
+        },
+    )
+    return outcome, version_id, version_created
+
+
 def _empty_counts() -> dict[str, int]:
     return {
         name: 0
@@ -781,6 +1091,12 @@ def _import_parsed_export(
     reused_conversation_versions = 0
     new_event_versions = 0
     reused_event_versions = 0
+    record_counts = _empty_counts()
+    asset_counts = _empty_counts()
+    new_record_versions = 0
+    reused_record_versions = 0
+    new_asset_versions = 0
+    reused_asset_versions = 0
     for conversation in parsed.conversations:
         conversation_id, outcome, version_id, version_created = _reconcile_conversation(
             connection, run_id, parsed, conversation
@@ -839,6 +1155,22 @@ def _import_parsed_export(
         new_event_versions += int(version_created)
         reused_event_versions += int(not version_created)
 
+    for record in parsed.records:
+        record_outcome, _, version_created = _reconcile_resource(
+            connection, run_id, source_file_id, parsed, record
+        )
+        record_counts[record_outcome] += 1
+        new_record_versions += int(version_created)
+        reused_record_versions += int(not version_created)
+
+    for asset in parsed.assets:
+        asset_outcome, _, version_created = _reconcile_resource(
+            connection, run_id, source_file_id, parsed, asset
+        )
+        asset_counts[asset_outcome] += 1
+        new_asset_versions += int(version_created)
+        reused_asset_versions += int(not version_created)
+
     database_events = int(
         connection.execute(
             text(
@@ -861,6 +1193,28 @@ def _import_parsed_export(
             {"run_id": run_id, "source_file_id": source_file_id},
         ).scalar_one()
     )
+    database_records = int(
+        connection.execute(
+            text(
+                """
+                SELECT COUNT(*) FROM record_observations
+                WHERE import_run_id = :run_id AND source_file_id = :source_file_id
+                """
+            ),
+            {"run_id": run_id, "source_file_id": source_file_id},
+        ).scalar_one()
+    )
+    database_assets = int(
+        connection.execute(
+            text(
+                """
+                SELECT COUNT(*) FROM asset_observations
+                WHERE import_run_id = :run_id AND source_file_id = :source_file_id
+                """
+            ),
+            {"run_id": run_id, "source_file_id": source_file_id},
+        ).scalar_one()
+    )
     result = ImportResult(
         source_file_id=source_file_id,
         run_id=run_id,
@@ -868,6 +1222,10 @@ def _import_parsed_export(
         database_conversations=database_conversations,
         source_events=parsed.event_count,
         database_events=database_events,
+        source_records=parsed.record_count,
+        database_records=database_records,
+        source_assets=parsed.asset_count,
+        database_assets=database_assets,
         inserted_conversations=conversation_counts["inserted"],
         updated_conversations=conversation_counts["updated"],
         unchanged_conversations=conversation_counts["unchanged"],
@@ -884,12 +1242,30 @@ def _import_parsed_export(
         tombstoned_events=event_counts["tombstoned"],
         new_event_versions=new_event_versions,
         reused_event_versions=reused_event_versions,
+        inserted_records=record_counts["inserted"],
+        updated_records=record_counts["updated"],
+        unchanged_records=record_counts["unchanged"],
+        stale_records=record_counts["stale"],
+        conflicted_records=record_counts["conflicted"],
+        tombstoned_records=record_counts["tombstoned"],
+        new_record_versions=new_record_versions,
+        reused_record_versions=reused_record_versions,
+        inserted_assets=asset_counts["inserted"],
+        updated_assets=asset_counts["updated"],
+        unchanged_assets=asset_counts["unchanged"],
+        stale_assets=asset_counts["stale"],
+        conflicted_assets=asset_counts["conflicted"],
+        tombstoned_assets=asset_counts["tombstoned"],
+        new_asset_versions=new_asset_versions,
+        reused_asset_versions=reused_asset_versions,
     )
     if not result.reconciled:
         raise ReconciliationError(
             "import rolled back: "
             f"conversations {result.database_conversations}/{result.source_conversations}, "
             f"events {result.database_events}/{result.source_events}"
+            f", records {result.database_records}/{result.source_records}"
+            f", assets {result.database_assets}/{result.source_assets}"
         )
     return result
 
@@ -950,7 +1326,11 @@ def import_parsed_exports(
             for parsed, source_file_id in ordered_pairs
         )
         conflict_count = sum(
-            result.conflicted_conversations + result.conflicted_events for result in results
+            result.conflicted_conversations
+            + result.conflicted_events
+            + result.conflicted_records
+            + result.conflicted_assets
+            for result in results
         )
         final_status = "conflicted" if conflict_count else "completed"
         serialized = [result.model_dump(mode="json") for result in results]

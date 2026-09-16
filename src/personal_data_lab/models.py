@@ -50,6 +50,58 @@ class NormalizedConversation(BaseModel):
     lifecycle_state: Literal["active", "provider_deleted"] = "active"
 
 
+class NormalizedRecord(BaseModel):
+    """Durable provider object whose identity is independent of one event."""
+
+    model_config = ConfigDict(frozen=True)
+
+    source: str
+    record_type: str
+    source_record_namespace: str = "record"
+    source_record_id: str
+    title: str | None = None
+    text: str | None = None
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
+    occurred_at: datetime | None = None
+    actor_identity: str | None = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    provider_updated_at: datetime | None = None
+    authority_at: datetime | None = None
+    authority_kind: Literal[
+        "provider_revision", "provider_updated_at", "exported_at", "unknown"
+    ] = "unknown"
+    lifecycle_state: Literal["active", "provider_deleted"] = "active"
+
+
+class NormalizedAsset(BaseModel):
+    """External binary/resource reference; content bytes are never stored here."""
+
+    model_config = ConfigDict(frozen=True)
+
+    source: str
+    asset_namespace: str
+    source_asset_id: str
+    sha256: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+    mime_type: str | None = None
+    filename: str
+    original_path: str
+    size_bytes: int = Field(ge=0)
+    created_at: datetime | None = None
+    captured_at: datetime | None = None
+    modified_at: datetime | None = None
+    width: int | None = Field(default=None, ge=0)
+    height: int | None = Field(default=None, ge=0)
+    duration_ms: int | None = Field(default=None, ge=0)
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    provider_updated_at: datetime | None = None
+    authority_at: datetime | None = None
+    authority_kind: Literal[
+        "provider_revision", "provider_updated_at", "exported_at", "unknown"
+    ] = "unknown"
+    lifecycle_state: Literal["active", "provider_deleted"] = "active"
+
+
 class ParsedExport(BaseModel):
     """Normalized content and immutable-source provenance."""
 
@@ -66,8 +118,11 @@ class ParsedExport(BaseModel):
     export_id: str | None = None
     snapshot_kind: Literal["unknown", "partial", "complete"] = "unknown"
     snapshot_scope: str = "provider"
+    parse_warnings: tuple[str, ...] = ()
     conversations: tuple[NormalizedConversation, ...] = ()
     events: tuple[NormalizedEvent, ...] = ()
+    records: tuple[NormalizedRecord, ...] = ()
+    assets: tuple[NormalizedAsset, ...] = ()
 
     @model_validator(mode="after")
     def require_one_source(self) -> Self:
@@ -78,6 +133,10 @@ class ParsedExport(BaseModel):
                 raise ValueError("conversation event source must match parsed export source")
         if any(event.source != self.source for event in self.events):
             raise ValueError("standalone event source must match parsed export source")
+        if any(record.source != self.source for record in self.records):
+            raise ValueError("record source must match parsed export source")
+        if any(asset.source != self.source for asset in self.assets):
+            raise ValueError("asset source must match parsed export source")
         return self
 
     @property
@@ -90,6 +149,14 @@ class ParsedExport(BaseModel):
             len(conversation.events) for conversation in self.conversations
         )
 
+    @property
+    def record_count(self) -> int:
+        return len(self.records)
+
+    @property
+    def asset_count(self) -> int:
+        return len(self.assets)
+
 
 class ImportResult(BaseModel):
     """Import counts; database counts are memberships scoped to this source file."""
@@ -101,6 +168,10 @@ class ImportResult(BaseModel):
     database_conversations: int
     source_events: int
     database_events: int
+    source_records: int = 0
+    database_records: int = 0
+    source_assets: int = 0
+    database_assets: int = 0
     run_id: int | None = None
     inserted_conversations: int = 0
     updated_conversations: int = 0
@@ -118,25 +189,58 @@ class ImportResult(BaseModel):
     tombstoned_events: int = 0
     new_event_versions: int = 0
     reused_event_versions: int = 0
+    inserted_records: int = 0
+    updated_records: int = 0
+    unchanged_records: int = 0
+    stale_records: int = 0
+    conflicted_records: int = 0
+    tombstoned_records: int = 0
+    new_record_versions: int = 0
+    reused_record_versions: int = 0
+    inserted_assets: int = 0
+    updated_assets: int = 0
+    unchanged_assets: int = 0
+    stale_assets: int = 0
+    conflicted_assets: int = 0
+    tombstoned_assets: int = 0
+    new_asset_versions: int = 0
+    reused_asset_versions: int = 0
     short_circuited: bool = False
 
     @property
     def has_conflicts(self) -> bool:
-        return bool(self.conflicted_conversations or self.conflicted_events)
+        return bool(
+            self.conflicted_conversations
+            or self.conflicted_events
+            or self.conflicted_records
+            or self.conflicted_assets
+        )
 
     @computed_field
     @property
     def new_distinct_versions(self) -> int:
-        return self.new_conversation_versions + self.new_event_versions
+        return (
+            self.new_conversation_versions
+            + self.new_event_versions
+            + self.new_record_versions
+            + self.new_asset_versions
+        )
 
     @computed_field
     @property
     def reused_versions(self) -> int:
-        return self.reused_conversation_versions + self.reused_event_versions
+        return (
+            self.reused_conversation_versions
+            + self.reused_event_versions
+            + self.reused_record_versions
+            + self.reused_asset_versions
+        )
 
     @property
     def reconciled(self) -> bool:
         return (
             self.source_conversations == self.database_conversations
             and self.source_events == self.database_events
+            and self.source_records == self.database_records
+            and self.source_assets == self.database_assets
         )
