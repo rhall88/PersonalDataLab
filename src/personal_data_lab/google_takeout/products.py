@@ -88,7 +88,11 @@ _PRODUCTS = (
     _product("google_account", "Google Account", "account_device_adapter", "json html csv", "account device event"),
     _product("google_ads", "Google Ads", "business_ads_adapter", "json csv", "generic_google_record event"),
     _product("business_profile", "Google Business Profile", "business_ads_adapter", "json csv media", "business_profile review asset"),
-    _product("google_chat", "Google Chat", "communications_adapter", "json html media", "conversation event asset"),
+    _product(
+        "google_chat", "Google Chat", "communications_semantic", "json media",
+        "conversation event asset", support="fully_structured",
+        notes="PR7 message, membership, and external-asset semantics."
+    ),
     _product("cloud_search", "Google Cloud Search", "search_knowledge_adapter", "json csv", "developer_resource saved_item"),
     _product("google_developers", "Google Developers", "activity_adapter", "json csv html", "developer_resource event"),
     _product("google_earth", "Google Earth", "geo_adapter", "kml kmz json", "map place asset"),
@@ -97,7 +101,11 @@ _PRODUCTS = (
     _product("google_finance", "Google Finance", "commerce_adapter", "json csv", "saved_item"),
     _product("google_health", "Google Health", "health_adapter", "json csv", "health_record"),
     _product("help_communities", "Google Help Communities", "publishing_contribution_adapter", "json csv html", "contribution conversation"),
-    _product("google_meet", "Google Meet", "communications_adapter", "json csv document media", "conversation event document asset"),
+    _product(
+        "google_meet", "Google Meet", "communications_semantic", "json csv document media",
+        "conversation event document asset", support="fully_structured",
+        notes="PR7 call events and external assets."
+    ),
     _product("google_one", "Google One", "account_device_adapter", "json csv", "subscription account"),
     _product("google_pay", "Google Pay", "commerce_adapter", "json csv", "payment purchase event"),
     _product("google_photos", "Google Photos", "photos_adapter", "json image video", "photo_metadata video_metadata album asset"),
@@ -109,11 +117,19 @@ _PRODUCTS = (
     _product("google_store", "Google Store", "commerce_adapter", "json csv", "purchase reservation"),
     _product("google_wallet", "Google Wallet", "commerce_adapter", "json csv", "payment reservation"),
     _product("workspace_marketplace", "Google Workspace Marketplace", "marketplace_adapter", "json csv", "subscription"),
-    _product("groups", "Groups", "communications_adapter", "mbox atom xml json html", "conversation event generic_google_record"),
+    _product(
+        "groups", "Groups", "communications_semantic", "mbox atom xml json html csv",
+        "conversation event group_membership", support="fully_structured",
+        notes="PR7 group membership plus bounded streaming MBOX when present."
+    ),
     _product("home_app", "Home App", "home_iot_adapter", "json csv media", "home_device event asset"),
     _product("journal", "Journal", "notes_adapter", "json html media", "note asset"),
     _product("keep", "Keep", "notes_adapter", "json html media", "note asset"),
-    _product("mail", "Mail", "gmail_adapter", "mbox", "conversation event asset"),
+    _product(
+        "mail", "Mail", "gmail_mbox", "mbox json", "conversation event asset mail_setting",
+        support="fully_structured",
+        notes="PR7 two-pass bounded streaming MBOX plus settings semantics."
+    ),
     _product(
         "maps", "Maps", "geo_semantic", "json csv kml kmz xml", "place event",
         support="fully_structured", notes="PR6 semantic geographic adapter."
@@ -163,7 +179,11 @@ _PRODUCTS = (
         "place event map timeline_settings timeline_notice",
         support="fully_structured", notes="PR6 provider-evidenced timeline and geographic semantics."
     ),
-    _product("voice", "Voice", "communications_adapter", "json csv html audio", "conversation event transcript asset"),
+    _product(
+        "voice", "Voice", "communications_semantic", "json csv html vcard audio media",
+        "conversation event transcript asset voice_contact", support="fully_structured",
+        notes="PR7 Voice communications, referenced contacts, audio, and media."
+    ),
     _product("workspace_studio", "Workspace Studio", "google_ai_adapter", "json document media", "ai_project document asset"),
     _product("youtube", "YouTube and YouTube Music", "activity_adapter", "json csv html media", "event saved_item subscription asset"),
 )
