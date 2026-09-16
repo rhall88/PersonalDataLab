@@ -18,6 +18,7 @@ This repository contains the completed foundation and its first three source imp
 - Google Takeout 68-product inventory, adapter registry, routing, and coverage framework
 - Google Timeline/Maps/Saved, Calendar, Contacts, and Tasks semantic adapters
 - bounded Gmail MBOX plus Google Chat, Voice, Meet, and Groups communications adapters
+- Google Photos/Drive/Recorder rich metadata, document text, and external-asset graph adapters
 - reconciliation tests
 - Windows/PowerShell setup instructions
 
@@ -262,6 +263,9 @@ Maps, Maps (your places), My Maps, Saved, Calendar ICS, Contacts VCF/CSV/JSON, a
 PR7 adds a bounded two-pass Gmail MBOX stream plus semantic routing for Google Chat, Voice, Meet,
 and Groups. Large MBOX members are committed in deterministic chunks while member coverage and
 byte accounting remain exact.
+PR8 adds Photos sidecar/album semantics, Drive structured-text and Office Open XML extraction,
+Recorder transcript/audio links, and external asset indexing for Photos, Drive, Recorder, Phone
+Audio, and Street View. Binary bytes remain in their immutable source files, never PostgreSQL.
 Provider-native fields remain lossless, recurring calendar definitions are not expanded, and
 explicit list/map/calendar/contact/task relationships are versioned with their own provenance.
 Other bounded JSON/CSV/XML members may use the conservative generic fallback and are reported as
@@ -275,7 +279,7 @@ When multiple conditions exist, failure takes precedence, followed by unknown, u
 conflict.
 
 This framework is not yet a claim of complete semantic Google support. Complete support requires
-the remaining PR8–PR11 product adapters and final real-Takeout reconciliation defined by the
+the remaining PR9–PR11 product adapters and final real-Takeout reconciliation defined by the
 master contract.
 
 ## Permanent cumulative and lossless contract

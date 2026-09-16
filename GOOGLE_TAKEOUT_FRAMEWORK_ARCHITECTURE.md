@@ -1,4 +1,4 @@
-# Google Takeout framework architecture (PR5–PR7)
+# Google Takeout framework architecture (PR5–PR8)
 
 The framework keeps Takeout container mechanics, product semantics, and canonical persistence
 separate:
@@ -28,6 +28,11 @@ separate:
    parsed incrementally in a second pass, and yielded as deterministic bounded chunks. Chat,
    Voice, Meet, and Groups retain product-native fields while promoting messages, calls,
    conversations, memberships, and external assets into their semantic objects.
+9. PR8 adds `google_takeout.rich_assets`. Photos sidecars and albums, Drive documents, and
+   Recorder transcripts become semantic records linked to path-stable external assets. Plain
+   text, structured files, and Office Open XML receive bounded text extraction. All other media,
+   archives, and documents are streamed only to compute external-asset identity and never stored
+   as database binary content.
 
 One source member is the parsing and transaction boundary. ZIP streams are opened only for the
 selected adapter; no archive is extracted. Adding a new Google product normally requires one

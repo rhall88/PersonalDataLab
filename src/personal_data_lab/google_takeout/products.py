@@ -81,7 +81,10 @@ _PRODUCTS = (
     ),
     _product("appeal_content", "Content returned from your appeal", "legal_export_adapter", "document archive binary", "document asset"),
     _product("discover", "Discover", "notification_feed_adapter", "json csv html", "event subscription"),
-    _product("drive", "Drive", "drive_adapter", "document binary json", "document asset"),
+    _product(
+        "drive", "Drive", "rich_asset_semantic", "document binary json", "document asset",
+        support="fully_structured", notes="PR8 document text/structure extraction plus external assets."
+    ),
     _product("flow", "Flow", "google_ai_adapter", "json media", "ai_project conversation asset"),
     _product("gemini", "Gemini", "google_ai_adapter", "json html media", "conversation ai_project asset"),
     _product("gemini_workspace", "Gemini in Workspace", "google_ai_adapter", "json html document", "conversation document asset"),
@@ -108,7 +111,11 @@ _PRODUCTS = (
     ),
     _product("google_one", "Google One", "account_device_adapter", "json csv", "subscription account"),
     _product("google_pay", "Google Pay", "commerce_adapter", "json csv", "payment purchase event"),
-    _product("google_photos", "Google Photos", "photos_adapter", "json image video", "photo_metadata video_metadata album asset"),
+    _product(
+        "google_photos", "Google Photos", "rich_asset_semantic", "json image video",
+        "photo_metadata video_metadata album asset", support="fully_structured",
+        notes="PR8 Photos sidecars, albums, and path-linked external media assets."
+    ),
     _product("play_games", "Google Play Games Services", "entertainment_adapter", "json csv", "game_record event"),
     _product("play_movies_tv", "Google Play Movies & TV", "entertainment_adapter", "json csv", "generic_google_record event"),
     _product("play_store", "Google Play Store", "commerce_adapter", "json csv", "purchase subscription event"),
@@ -156,19 +163,29 @@ _PRODUCTS = (
     _product("nest", "Nest", "home_iot_adapter", "json csv media", "home_device event asset"),
     _product("news", "News", "notification_feed_adapter", "json csv html", "event subscription"),
     _product("notebooklm", "NotebookLM", "google_ai_adapter", "json document media", "notebook document asset"),
-    _product("phone_audio", "Phone Audio", "telecom_adapter", "audio json", "audio_recording transcript asset"),
+    _product(
+        "phone_audio", "Phone Audio", "rich_asset_semantic", "audio json",
+        "audio_recording transcript asset", support="fully_structured",
+        notes="PR8 semantic metadata plus external audio assets; synthetic-only until observed."
+    ),
     _product("pinpoint", "Pinpoint", "search_knowledge_adapter", "json csv document", "ai_project document"),
     _product("pixel", "Pixel", "account_device_adapter", "json csv", "device event"),
     _product("profile", "Profile", "account_device_adapter", "json csv media", "account asset"),
     _product("purchases_reservations", "Purchases & Reservations", "commerce_adapter", "json csv", "purchase reservation"),
-    _product("recorder", "Recorder", "recorder_adapter", "json audio", "audio_recording transcript asset"),
+    _product(
+        "recorder", "Recorder", "rich_asset_semantic", "json audio", "audio_recording transcript asset",
+        support="fully_structured", notes="PR8 transcript-to-audio relationships and external audio assets."
+    ),
     _product(
         "saved", "Saved", "geo_semantic", "json csv kml kmz xml", "saved_list saved_item place",
         support="fully_structured", notes="PR6 saved-list semantics and ordered membership."
     ),
     _product("search_contributions", "Search Contributions", "publishing_contribution_adapter", "json csv media", "contribution review asset"),
     _product("search_notifications", "Search Notifications", "notification_feed_adapter", "json csv html", "event subscription"),
-    _product("street_view", "Street View", "publishing_contribution_adapter", "json image", "contribution asset"),
+    _product(
+        "street_view", "Street View", "rich_asset_semantic", "json image", "contribution asset",
+        support="fully_structured", notes="PR8 semantic metadata plus external imagery; synthetic-only until observed."
+    ),
     _product(
         "tasks", "Tasks", "tasks_semantic", "json csv", "task_list task",
         support="fully_structured", notes="PR6 task-list, task, and parent-child semantics."
