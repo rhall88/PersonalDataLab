@@ -137,8 +137,16 @@ def _empty_coverage(inventory: GoogleInventory) -> dict[str, dict[str, object]]:
     return result
 
 
-def _apply_result(coverage: dict[str, object], parsed: ParsedExport, result: ImportResult) -> None:
-    coverage["members_processed"] = int(coverage["members_processed"]) + 1
+def _apply_result(
+    coverage: dict[str, object],
+    parsed: ParsedExport,
+    result: ImportResult,
+    *,
+    count_member: bool = True,
+) -> None:
+    if count_member:
+        coverage["members_processed"] = int(coverage["members_processed"]) + 1
+        coverage["bytes_processed"] = int(coverage["bytes_processed"]) + parsed.size_bytes
     coverage["records_parsed"] = int(coverage["records_parsed"]) + parsed.record_count
     coverage["events_parsed"] = int(coverage["events_parsed"]) + parsed.event_count
     coverage["conversations_parsed"] = (
@@ -148,7 +156,6 @@ def _apply_result(coverage: dict[str, object], parsed: ParsedExport, result: Imp
     coverage["relationships_parsed"] = (
         int(coverage["relationships_parsed"]) + parsed.relationship_count
     )
-    coverage["bytes_processed"] = int(coverage["bytes_processed"]) + parsed.size_bytes
     coverage["parse_warnings"] = int(coverage["parse_warnings"]) + len(
         parsed.parse_warnings
     )
@@ -271,17 +278,33 @@ def import_google_all(
         if on_member_start is not None:
             on_member_start(member, adapter)
         try:
-            with open_takeout_member(member) as stream:
-                parsed = adapter.parse(stream, member)
-            result = import_parsed_exports(engine, (parsed,))[0]
-            _apply_result(coverage, parsed, result)
+            streaming_parser = getattr(adapter, "iter_parsed_exports", None)
+            if callable(streaming_parser):
+                parsed_exports = streaming_parser(member)
+            else:
+                def parse_once(selected_adapter=adapter, selected_member=member):
+                    with open_takeout_member(selected_member) as stream:
+                        yield selected_adapter.parse(stream, selected_member)
+
+                parsed_exports = parse_once()
+            chunks = 0
+            every_chunk_short_circuited = True
+            member_has_assets = False
+            for parsed in parsed_exports:
+                result = import_parsed_exports(engine, (parsed,))[0]
+                _apply_result(coverage, parsed, result, count_member=chunks == 0)
+                chunks += 1
+                every_chunk_short_circuited &= result.short_circuited
+                member_has_assets |= parsed.asset_count > 0
+                if on_member_imported is not None:
+                    on_member_imported(member, parsed, result)
+            if chunks == 0:
+                raise RuntimeError("adapter produced no parsed exports")
             imported_members += 1
-            short_circuited_members += int(result.short_circuited)
-            asset_indexed_members += int(parsed.asset_count > 0)
+            short_circuited_members += int(every_chunk_short_circuited)
+            asset_indexed_members += int(member_has_assets)
             marker = "_full_members" if adapter.support_level == "fully_structured" else "_partial_members"
             coverage[marker] = int(coverage[marker]) + 1
-            if on_member_imported is not None:
-                on_member_imported(member, parsed, result)
         except Exception as error:  # noqa: BLE001 - member isolation is the public contract
             coverage["failures"] = int(coverage["failures"]) + 1
             coverage["failed_members"].append(
