@@ -94,7 +94,8 @@ def test_inventory_accounts_for_every_zip_member_without_opening_payloads(
     drive = next(member for member in inventory.members if member.filename == "video.bin")
     assert drive.product_key == "drive"
     assert drive.appears_binary
-    assert drive.support_status == "raw_preserved"
+    assert drive.candidate_adapter == "rich_asset_semantic"
+    assert drive.support_status == "fully_structured"
     assert "Accounted members: 6/6" in render_inventory_table(inventory)
 
 
@@ -340,14 +341,14 @@ def test_orchestrator_reports_full_partial_raw_and_unknown_coverage(
     summary = orchestrator.import_google_all(object(), str(source))
 
     assert summary.members_total == 4
-    assert summary.members_imported == 2
+    assert summary.members_imported == 3
     assert summary.members_short_circuited == 0
-    assert summary.members_raw_preserved == 1
+    assert summary.members_raw_preserved == 0
     assert summary.members_unknown == 1
     assert summary.exit_code == 5
     assert summary.coverage["my_activity"].support_status == "fully_structured"
     assert summary.coverage["calendar"].support_status == "partially_structured"
-    assert summary.coverage["drive"].support_status == "raw_preserved"
+    assert summary.coverage["drive"].support_status == "fully_structured"
     assert summary.coverage["contacts"].support_status == "not_present_in_export"
 
 
