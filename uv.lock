@@ -95,7 +95,7 @@ wheels = [
 
 [[package]]
 name = "personal-data-lab"
-version = "0.8.0"
+version = "0.9.0"
 source = { editable = "." }
 dependencies = [
     { name = "psycopg", extra = ["binary"] },

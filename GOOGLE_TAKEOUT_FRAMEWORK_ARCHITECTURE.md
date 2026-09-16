@@ -1,4 +1,4 @@
-# Google Takeout framework architecture (PR5–PR8)
+# Google Takeout framework architecture (PR5–PR9)
 
 The framework keeps Takeout container mechanics, product semantics, and canonical persistence
 separate:
@@ -33,6 +33,10 @@ separate:
    text, structured files, and Office Open XML receive bounded text extraction. All other media,
    archives, and documents are streamed only to compute external-asset identity and never stored
    as database binary content.
+10. PR9 adds `google_takeout.ai_knowledge`. Provider IDs anchor Flow project/generated-media
+    relationships; path-stable notebook identities connect NotebookLM metadata, source documents,
+    audio, video, and other assets across split Takeout members. Keep microsecond timestamps and
+    Journal seconds/nanoseconds are normalized without dropping provider-native values.
 
 One source member is the parsing and transaction boundary. ZIP streams are opened only for the
 selected adapter; no archive is extracted. Adding a new Google product normally requires one
