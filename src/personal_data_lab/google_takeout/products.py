@@ -53,12 +53,12 @@ def _product(
 
 
 _PRODUCTS = (
-    _product("access_log_activity", "Access Log Activity", "account_device_adapter", "json csv", "event"),
-    _product("alerts", "Alerts", "notification_feed_adapter", "json csv html", "event subscription"),
-    _product("android_device_configuration", "Android Device Configuration Service", "account_device_adapter", "json", "device"),
-    _product("arts_culture", "Arts & Culture", "arts_culture_adapter", "json csv html", "generic_google_record"),
-    _product("assignments", "Assignments", "education_adapter", "json csv", "assignment event asset"),
-    _product("blogger", "Blogger", "publishing_contribution_adapter", "atom xml json html media", "blog_post conversation asset"),
+    _product("access_log_activity", "Access Log Activity", "long_tail_semantic", "json csv", "event", support="fully_structured", notes="PR11 account access and device activity events."),
+    _product("alerts", "Alerts", "long_tail_semantic", "json csv html", "event subscription", support="fully_structured", notes="PR11 notification and subscription semantics."),
+    _product("android_device_configuration", "Android Device Configuration Service", "account_commerce_semantic", "json html", "device", support="fully_structured", notes="PR10 device configuration records."),
+    _product("arts_culture", "Arts & Culture", "long_tail_semantic", "json csv html", "saved_item asset", support="fully_structured", notes="PR11 cultural saved-item records and external assets."),
+    _product("assignments", "Assignments", "long_tail_semantic", "json csv", "assignment event asset", support="fully_structured", notes="PR11 education records, activity, and external assets."),
+    _product("blogger", "Blogger", "long_tail_semantic", "atom xml json html media", "contribution event asset", support="fully_structured", notes="PR11 publishing contributions and external assets."),
     _product(
         "calendar",
         "Calendar",
@@ -68,8 +68,8 @@ _PRODUCTS = (
         support="fully_structured",
         notes="PR6 iCalendar definitions, bounded one-off event projections, and relationships.",
     ),
-    _product("chrome", "Chrome", "activity_adapter", "json html csv", "event saved_item"),
-    _product("classroom", "Classroom", "education_adapter", "json csv", "classroom_course assignment event asset"),
+    _product("chrome", "Chrome", "long_tail_semantic", "json html csv", "account device event saved_item", support="fully_structured", notes="PR11 Chrome bookmarks, device, extension, preference, and autofill semantics."),
+    _product("classroom", "Classroom", "long_tail_semantic", "json csv", "classroom_course assignment event asset", support="fully_structured", notes="PR11 course, assignment, activity, and external-asset semantics."),
     _product(
         "contacts",
         "Contacts",
@@ -79,41 +79,84 @@ _PRODUCTS = (
         support="fully_structured",
         notes="PR6 vCard/CSV/JSON contacts with explicit group membership and photo references.",
     ),
-    _product("appeal_content", "Content returned from your appeal", "legal_export_adapter", "document archive binary", "document asset"),
-    _product("discover", "Discover", "notification_feed_adapter", "json csv html", "event subscription"),
-    _product("drive", "Drive", "drive_adapter", "document binary json", "document asset"),
-    _product("flow", "Flow", "google_ai_adapter", "json media", "ai_project conversation asset"),
-    _product("gemini", "Gemini", "google_ai_adapter", "json html media", "conversation ai_project asset"),
-    _product("gemini_workspace", "Gemini in Workspace", "google_ai_adapter", "json html document", "conversation document asset"),
-    _product("google_account", "Google Account", "account_device_adapter", "json html csv", "account device event"),
-    _product("google_ads", "Google Ads", "business_ads_adapter", "json csv", "generic_google_record event"),
-    _product("business_profile", "Google Business Profile", "business_ads_adapter", "json csv media", "business_profile review asset"),
-    _product("google_chat", "Google Chat", "communications_adapter", "json html media", "conversation event asset"),
-    _product("cloud_search", "Google Cloud Search", "search_knowledge_adapter", "json csv", "developer_resource saved_item"),
-    _product("google_developers", "Google Developers", "activity_adapter", "json csv html", "developer_resource event"),
-    _product("google_earth", "Google Earth", "geo_adapter", "kml kmz json", "map place asset"),
-    _product("google_feedback", "Google Feedback", "feedback_survey_adapter", "json html media", "survey_response asset"),
-    _product("google_fi", "Google Fi Wireless", "telecom_adapter", "json csv", "event account"),
-    _product("google_finance", "Google Finance", "commerce_adapter", "json csv", "saved_item"),
-    _product("google_health", "Google Health", "health_adapter", "json csv", "health_record"),
-    _product("help_communities", "Google Help Communities", "publishing_contribution_adapter", "json csv html", "contribution conversation"),
-    _product("google_meet", "Google Meet", "communications_adapter", "json csv document media", "conversation event document asset"),
-    _product("google_one", "Google One", "account_device_adapter", "json csv", "subscription account"),
-    _product("google_pay", "Google Pay", "commerce_adapter", "json csv", "payment purchase event"),
-    _product("google_photos", "Google Photos", "photos_adapter", "json image video", "photo_metadata video_metadata album asset"),
-    _product("play_games", "Google Play Games Services", "entertainment_adapter", "json csv", "game_record event"),
-    _product("play_movies_tv", "Google Play Movies & TV", "entertainment_adapter", "json csv", "generic_google_record event"),
-    _product("play_store", "Google Play Store", "commerce_adapter", "json csv", "purchase subscription event"),
-    _product("product_surveys", "Google Product Surveys", "feedback_survey_adapter", "json csv", "survey_response"),
-    _product("google_shopping", "Google Shopping", "commerce_adapter", "json csv", "purchase saved_item event"),
-    _product("google_store", "Google Store", "commerce_adapter", "json csv", "purchase reservation"),
-    _product("google_wallet", "Google Wallet", "commerce_adapter", "json csv", "payment reservation"),
-    _product("workspace_marketplace", "Google Workspace Marketplace", "marketplace_adapter", "json csv", "subscription"),
-    _product("groups", "Groups", "communications_adapter", "mbox atom xml json html", "conversation event generic_google_record"),
-    _product("home_app", "Home App", "home_iot_adapter", "json csv media", "home_device event asset"),
-    _product("journal", "Journal", "notes_adapter", "json html media", "note asset"),
-    _product("keep", "Keep", "notes_adapter", "json html media", "note asset"),
-    _product("mail", "Mail", "gmail_adapter", "mbox", "conversation event asset"),
+    _product("appeal_content", "Content returned from your appeal", "long_tail_semantic", "document archive binary", "document asset", support="fully_structured", notes="PR11 conservative legal document and external-asset preservation."),
+    _product("discover", "Discover", "long_tail_semantic", "json csv html", "event subscription", support="fully_structured", notes="PR11 liked-content events and persistent feed settings/follows."),
+    _product(
+        "drive", "Drive", "rich_asset_semantic", "document binary json", "document asset",
+        support="fully_structured", notes="PR8 document text/structure extraction plus external assets."
+    ),
+    _product(
+        "flow", "Flow", "ai_knowledge_semantic", "json media", "ai_project conversation asset",
+        support="fully_structured", notes="PR9 projects, generated-media records, prompts, and external media."
+    ),
+    _product(
+        "gemini", "Gemini", "ai_knowledge_semantic", "json html media", "conversation ai_project asset",
+        support="fully_structured", notes="PR9 lossless HTML conversation documents."
+    ),
+    _product(
+        "gemini_workspace", "Gemini in Workspace", "ai_knowledge_semantic", "json html document",
+        "conversation document asset", support="fully_structured",
+        notes="PR9 workspace Gemini text/conversation documents."
+    ),
+    _product("google_account", "Google Account", "account_commerce_semantic", "json html csv", "account device event", support="fully_structured", notes="PR10 account/device documents."),
+    _product("google_ads", "Google Ads", "long_tail_semantic", "json csv", "business_profile event asset", support="fully_structured", notes="PR11 advertising/business records, events, and external assets."),
+    _product("business_profile", "Google Business Profile", "long_tail_semantic", "json csv media", "business_profile review asset", support="fully_structured", notes="PR11 business profile, review, and external-asset semantics."),
+    _product(
+        "google_chat", "Google Chat", "communications_semantic", "json media",
+        "conversation event asset", support="fully_structured",
+        notes="PR7 message, membership, and external-asset semantics."
+    ),
+    _product(
+        "cloud_search", "Google Cloud Search", "ai_knowledge_semantic", "json csv",
+        "developer_resource saved_item", support="fully_structured",
+        notes="PR9 structured knowledge records; synthetic-only until observed."
+    ),
+    _product("google_developers", "Google Developers", "long_tail_semantic", "json csv html", "developer_resource event", support="fully_structured", notes="PR11 developer profiles, interests, awards, and program resources."),
+    _product("google_earth", "Google Earth", "long_tail_semantic", "kml kmz json", "map place asset", support="fully_structured", notes="PR11 geographic records and external map assets."),
+    _product("google_feedback", "Google Feedback", "long_tail_semantic", "json html media", "survey_response asset", support="fully_structured", notes="PR11 feedback submissions and external assets."),
+    _product("google_fi", "Google Fi Wireless", "account_commerce_semantic", "json csv", "event account", support="fully_structured", notes="PR10 telecom account/event contract; synthetic-only until observed."),
+    _product("google_finance", "Google Finance", "account_commerce_semantic", "json csv", "saved_item", support="fully_structured", notes="PR10 portfolio/settings records."),
+    _product("google_health", "Google Health", "long_tail_semantic", "json csv", "health_record asset", support="fully_structured", notes="PR11 lossless health records and external assets without diagnosis or unit conversion."),
+    _product("help_communities", "Google Help Communities", "long_tail_semantic", "json csv html", "contribution conversation asset", support="fully_structured", notes="PR11 help-community contributions and external assets."),
+    _product(
+        "google_meet", "Google Meet", "communications_semantic", "json csv document media",
+        "conversation event document asset", support="fully_structured",
+        notes="PR7 call events and external assets."
+    ),
+    _product("google_one", "Google One", "account_commerce_semantic", "json csv html", "subscription account", support="fully_structured", notes="PR10 subscription/account documents."),
+    _product("google_pay", "Google Pay", "account_commerce_semantic", "json csv html", "payment purchase event", support="fully_structured", notes="PR10 payment transactions and account documents."),
+    _product(
+        "google_photos", "Google Photos", "rich_asset_semantic", "json image video",
+        "photo_metadata video_metadata album asset", support="fully_structured",
+        notes="PR8 Photos sidecars, albums, and path-linked external media assets."
+    ),
+    _product("play_games", "Google Play Games Services", "long_tail_semantic", "json csv html media", "game_record event asset", support="fully_structured", notes="PR11 game records/activity and external profile media."),
+    _product("play_movies_tv", "Google Play Movies & TV", "long_tail_semantic", "json csv", "saved_item event asset", support="fully_structured", notes="PR11 entertainment library/activity records and external assets."),
+    _product("play_store", "Google Play Store", "account_commerce_semantic", "json csv", "purchase subscription event", support="fully_structured", notes="PR10 installs, purchases, orders, subscriptions, devices, library, points, and settings."),
+    _product("product_surveys", "Google Product Surveys", "long_tail_semantic", "json csv", "survey_response", support="fully_structured", notes="PR11 product survey responses with provider timestamps and fields."),
+    _product("google_shopping", "Google Shopping", "account_commerce_semantic", "json csv", "purchase saved_item event", support="fully_structured", notes="PR10 shopping review/event semantics."),
+    _product("google_store", "Google Store", "account_commerce_semantic", "json csv", "purchase reservation", support="fully_structured", notes="PR10 store purchase/reservation semantics."),
+    _product("google_wallet", "Google Wallet", "account_commerce_semantic", "json csv pdf", "payment reservation", support="fully_structured", notes="PR10 structured records and external documents."),
+    _product("workspace_marketplace", "Google Workspace Marketplace", "long_tail_semantic", "json csv text", "subscription asset", support="fully_structured", notes="PR11 installed/authorized application records and external assets."),
+    _product(
+        "groups", "Groups", "communications_semantic", "mbox atom xml json html csv",
+        "conversation event group_membership", support="fully_structured",
+        notes="PR7 group membership plus bounded streaming MBOX when present."
+    ),
+    _product("home_app", "Home App", "account_commerce_semantic", "json csv media", "home_device event asset", support="fully_structured", notes="PR10 home datasets and external assets."),
+    _product(
+        "journal", "Journal", "ai_knowledge_semantic", "json html media", "note asset",
+        support="fully_structured", notes="PR9 journal note and nanosecond timestamp semantics."
+    ),
+    _product(
+        "keep", "Keep", "ai_knowledge_semantic", "json html media", "note asset",
+        support="fully_structured", notes="PR9 Keep notes with lifecycle flags and microsecond timestamps."
+    ),
+    _product(
+        "mail", "Mail", "gmail_mbox", "mbox json", "conversation event asset mail_setting",
+        support="fully_structured",
+        notes="PR7 two-pass bounded streaming MBOX plus settings semantics."
+    ),
     _product(
         "maps", "Maps", "geo_semantic", "json csv kml kmz xml", "place event",
         support="fully_structured", notes="PR6 semantic geographic adapter."
@@ -130,42 +173,67 @@ _PRODUCTS = (
         "json html",
         "event",
         support="fully_structured",
-        notes="PR4 streaming My Activity adapter; JSON and HTML activity members are supported.",
+        notes="PR4 streaming activity plus PR11 external-attachment indexing.",
     ),
     _product(
         "my_maps", "My Maps", "geo_semantic", "kml kmz csv json xml", "map place asset",
         support="fully_structured",
         notes="PR6 synthetic contract coverage; real export canary remains not present."
     ),
-    _product("nest", "Nest", "home_iot_adapter", "json csv media", "home_device event asset"),
-    _product("news", "News", "notification_feed_adapter", "json csv html", "event subscription"),
-    _product("notebooklm", "NotebookLM", "google_ai_adapter", "json document media", "notebook document asset"),
-    _product("phone_audio", "Phone Audio", "telecom_adapter", "audio json", "audio_recording transcript asset"),
-    _product("pinpoint", "Pinpoint", "search_knowledge_adapter", "json csv document", "ai_project document"),
-    _product("pixel", "Pixel", "account_device_adapter", "json csv", "device event"),
-    _product("profile", "Profile", "account_device_adapter", "json csv media", "account asset"),
-    _product("purchases_reservations", "Purchases & Reservations", "commerce_adapter", "json csv", "purchase reservation"),
-    _product("recorder", "Recorder", "recorder_adapter", "json audio", "audio_recording transcript asset"),
+    _product("nest", "Nest", "account_commerce_semantic", "json jsonl csv media", "home_device event asset", support="partially_structured", notes="PR10 Nest devices and CSV-wrapped JSONL events; malformed provider rows remain explicit opaque records."),
+    _product("news", "News", "long_tail_semantic", "json csv html text", "event subscription", support="fully_structured", notes="PR11 notification/subscription semantics with explicit empty files."),
+    _product(
+        "notebooklm", "NotebookLM", "ai_knowledge_semantic", "json document media",
+        "notebook document asset", support="fully_structured",
+        notes="PR9 notebooks, bounded document text, external assets, and explicit membership."
+    ),
+    _product(
+        "phone_audio", "Phone Audio", "rich_asset_semantic", "audio json",
+        "audio_recording transcript asset", support="fully_structured",
+        notes="PR8 semantic metadata plus external audio assets; synthetic-only until observed."
+    ),
+    _product(
+        "pinpoint", "Pinpoint", "ai_knowledge_semantic", "json csv document", "ai_project document",
+        support="fully_structured", notes="PR9 knowledge document contract; synthetic-only until observed."
+    ),
+    _product("pixel", "Pixel", "account_commerce_semantic", "json csv", "device event", support="fully_structured", notes="PR10 device/event contract; synthetic-only until observed."),
+    _product("profile", "Profile", "account_commerce_semantic", "json html media", "account asset", support="fully_structured", notes="PR10 profile/account records and external media."),
+    _product("purchases_reservations", "Purchases & Reservations", "account_commerce_semantic", "json csv", "purchase reservation", support="fully_structured", notes="PR10 purchase/reservation contract; synthetic-only until observed."),
+    _product(
+        "recorder", "Recorder", "rich_asset_semantic", "json audio", "audio_recording transcript asset",
+        support="fully_structured", notes="PR8 transcript-to-audio relationships and external audio assets."
+    ),
     _product(
         "saved", "Saved", "geo_semantic", "json csv kml kmz xml", "saved_list saved_item place",
         support="fully_structured", notes="PR6 saved-list semantics and ordered membership."
     ),
-    _product("search_contributions", "Search Contributions", "publishing_contribution_adapter", "json csv media", "contribution review asset"),
-    _product("search_notifications", "Search Notifications", "notification_feed_adapter", "json csv html", "event subscription"),
-    _product("street_view", "Street View", "publishing_contribution_adapter", "json image", "contribution asset"),
+    _product("search_contributions", "Search Contributions", "long_tail_semantic", "json csv media", "contribution review asset", support="fully_structured", notes="PR11 contribution/review records and external assets."),
+    _product("search_notifications", "Search Notifications", "long_tail_semantic", "json csv html", "event subscription", support="fully_structured", notes="PR11 notification settings and subscriptions."),
+    _product(
+        "street_view", "Street View", "rich_asset_semantic", "json image", "contribution asset",
+        support="fully_structured", notes="PR8 semantic metadata plus external imagery; synthetic-only until observed."
+    ),
     _product(
         "tasks", "Tasks", "tasks_semantic", "json csv", "task_list task",
         support="fully_structured", notes="PR6 task-list, task, and parent-child semantics."
     ),
-    _product("tenor", "Tenor", "tenor_adapter", "json csv media", "event saved_item asset"),
+    _product("tenor", "Tenor", "long_tail_semantic", "json csv media", "event saved_item asset", support="fully_structured", notes="PR11 search, favorite, pack, and external-asset semantics without URL fetching."),
     _product(
         "timeline", "Timeline", "geo_semantic", "json csv kml kmz xml txt",
         "place event map timeline_settings timeline_notice",
         support="fully_structured", notes="PR6 provider-evidenced timeline and geographic semantics."
     ),
-    _product("voice", "Voice", "communications_adapter", "json csv html audio", "conversation event transcript asset"),
-    _product("workspace_studio", "Workspace Studio", "google_ai_adapter", "json document media", "ai_project document asset"),
-    _product("youtube", "YouTube and YouTube Music", "activity_adapter", "json csv html media", "event saved_item subscription asset"),
+    _product(
+        "voice", "Voice", "communications_semantic", "json csv html vcard audio media",
+        "conversation event transcript asset voice_contact", support="fully_structured",
+        notes="PR7 Voice communications, referenced contacts, audio, and media."
+    ),
+    _product(
+        "workspace_studio", "Workspace Studio", "ai_knowledge_semantic", "json document media",
+        "ai_project document asset", support="fully_structured",
+        notes="PR9 structured project/document records; observed export is empty."
+    ),
+    _product("youtube", "YouTube and YouTube Music", "long_tail_semantic", "json csv html media", "account event saved_list saved_item subscription contribution asset", support="fully_structured", notes="PR11 non-My-Activity channels, playlists, subscriptions, comments, chats, uploads, music, and external media."),
 )
 
 PRODUCT_REGISTRY: dict[str, GoogleProduct] = {

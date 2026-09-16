@@ -17,6 +17,11 @@ This repository contains the completed foundation and its first three source imp
 - Google Takeout My Activity importer
 - Google Takeout 68-product inventory, adapter registry, routing, and coverage framework
 - Google Timeline/Maps/Saved, Calendar, Contacts, and Tasks semantic adapters
+- bounded Gmail MBOX plus Google Chat, Voice, Meet, and Groups communications adapters
+- Google Photos/Drive/Recorder rich metadata, document text, and external-asset graph adapters
+- Gemini/Flow/NotebookLM/Keep/Journal AI, knowledge, note, and generated-work adapters
+- Google account/commerce/device/home adapters, including Play Store and Nest JSONL handling
+- Google long-tail semantic adapters, YouTube/Chrome product data, and external My Activity assets
 - reconciliation tests
 - Windows/PowerShell setup instructions
 
@@ -258,6 +263,23 @@ personal-data-lab import-google-all data\raw\google\2026-09-10
 `import-google-all` inventories first, routes deterministically, and commits one logical member
 at a time. My Activity uses the streaming activity parser. PR6 adds semantic routing for Timeline,
 Maps, Maps (your places), My Maps, Saved, Calendar ICS, Contacts VCF/CSV/JSON, and Tasks JSON/CSV.
+PR7 adds a bounded two-pass Gmail MBOX stream plus semantic routing for Google Chat, Voice, Meet,
+and Groups. Large MBOX members are committed in deterministic chunks while member coverage and
+byte accounting remain exact.
+PR8 adds Photos sidecar/album semantics, Drive structured-text and Office Open XML extraction,
+Recorder transcript/audio links, and external asset indexing for Photos, Drive, Recorder, Phone
+Audio, and Street View. Binary bytes remain in their immutable source files, never PostgreSQL.
+PR9 adds AI project, generated-media, conversation, notebook, document, and note semantics for
+Gemini, Gemini in Workspace, NotebookLM, Flow, Workspace Studio, Keep, Journal, Pinpoint, and
+Google Cloud Search, including explicit NotebookLM and Flow relationships.
+PR10 adds account, subscription, payment, purchase, device, home, and provider-event semantics
+across Google Account, One, Pay, Wallet, Purchases & Reservations, Shopping, Store, Play Store,
+Finance, Fi Wireless, Pixel, Android Device Configuration, Home App, Nest, and Profile.
+PR11 adds semantic records/events and streamed external assets for the remaining 25-product long
+tail: account access, notifications, education, publishing, Chrome, legal exports, business,
+developer, Earth, feedback, health, entertainment, Marketplace, Tenor, and non-My-Activity
+YouTube. It also indexes provider-supplied My Activity attachments while leaving activity HTML
+and JSON on the original streaming parser.
 Provider-native fields remain lossless, recurring calendar definitions are not expanded, and
 explicit list/map/calendar/contact/task relationships are versioned with their own provenance.
 Other bounded JSON/CSV/XML members may use the conservative generic fallback and are reported as
@@ -270,9 +292,12 @@ Exit codes are exact: `0` means every discovered non-structural member was safel
 When multiple conditions exist, failure takes precedence, followed by unknown, unsupported, and
 conflict.
 
-This framework is not yet a claim of complete semantic Google support. Complete support requires
-the remaining PR7–PR11 product adapters and final real-Takeout reconciliation defined by the
-master contract.
+The PR5–PR11 stack implements the complete 68-product adapter contract for the retained Takeout
+generation. Its whole-export routing audit accounts for all 25,427 data members (146.25 GB) with
+zero unknown, ambiguous, generic-fallback, unsupported, or raw-preserved members. Products absent
+from the retained export have synthetic contract fixtures and remain explicitly marked
+`not_present_in_export`; binary content stays in its immutable source and is represented by
+content-addressed external assets when processed.
 
 ## Permanent cumulative and lossless contract
 
@@ -459,7 +484,11 @@ gh pr create --base main --title "Add the Anthropic data importer"
 
 Review the pull request before merging.
 
-## Deferred roadmap
+## Roadmap
 
-Product-specific Google parsers, embeddings, semantic search, MCP servers, agent workflows,
-generic filesystem deduplication, and binary delta chains remain future work.
+The Google adapter program is implemented through PR11. The next gate is a complete real-corpus
+import and identical second import, including restart and count reconciliation. Apple privacy
+exports and independently acquired iMessages remain separate future source families. Full-text
+and semantic search, identity resolution, derived claims, MCP, and agents follow only after the
+source corpus is operationally proven. See [`ROADMAP.md`](ROADMAP.md) for the ordered program and
+completion gates.

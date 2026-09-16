@@ -94,11 +94,12 @@ def test_inventory_accounts_for_every_zip_member_without_opening_payloads(
     drive = next(member for member in inventory.members if member.filename == "video.bin")
     assert drive.product_key == "drive"
     assert drive.appears_binary
-    assert drive.support_status == "raw_preserved"
+    assert drive.candidate_adapter == "rich_asset_semantic"
+    assert drive.support_status == "fully_structured"
     assert "Accounted members: 6/6" in render_inventory_table(inventory)
 
 
-def test_my_activity_binary_members_are_raw_preserved_not_parsed(tmp_path: Path) -> None:
+def test_my_activity_binary_members_are_external_assets(tmp_path: Path) -> None:
     source = _zip(
         tmp_path / "takeout-20260909T012526Z-001.zip",
         {
@@ -118,10 +119,12 @@ def test_my_activity_binary_members_are_raw_preserved_not_parsed(tmp_path: Path)
         attachment = next(
             member for member in inventory.members if member.extension == extension
         )
-        assert attachment.candidate_adapter is None
-        assert attachment.support_status == "raw_preserved"
-        assert attachment.reason == "no_pr5_activity_pattern"
-        assert DEFAULT_ADAPTER_REGISTRY.resolve(attachment) is None
+        assert attachment.candidate_adapter == "my_activity_asset"
+        assert attachment.support_status == "fully_structured"
+        assert attachment.reason is None
+        adapter = DEFAULT_ADAPTER_REGISTRY.resolve(attachment)
+        assert adapter is not None
+        assert adapter.adapter_name == "my_activity_asset"
 
 
 def test_inventory_handles_split_archives_and_browser_download_duplicates(tmp_path: Path) -> None:
@@ -340,14 +343,14 @@ def test_orchestrator_reports_full_partial_raw_and_unknown_coverage(
     summary = orchestrator.import_google_all(object(), str(source))
 
     assert summary.members_total == 4
-    assert summary.members_imported == 2
+    assert summary.members_imported == 3
     assert summary.members_short_circuited == 0
-    assert summary.members_raw_preserved == 1
+    assert summary.members_raw_preserved == 0
     assert summary.members_unknown == 1
     assert summary.exit_code == 5
     assert summary.coverage["my_activity"].support_status == "fully_structured"
     assert summary.coverage["calendar"].support_status == "partially_structured"
-    assert summary.coverage["drive"].support_status == "raw_preserved"
+    assert summary.coverage["drive"].support_status == "fully_structured"
     assert summary.coverage["contacts"].support_status == "not_present_in_export"
 
 
