@@ -1,10 +1,10 @@
-# PersonalDataLab roadmap after Google PR11
+# PersonalDataLab roadmap after Google PR13
 
 PersonalDataLab develops in four layers. Each layer depends on the evidence guarantees beneath
 it: acquire and preserve first, normalize second, derive understanding third, and expose that
 understanding to products and agents last.
 
-## 1. Finish Google operational acceptance
+## 1. Google operational acceptance — completed in PR13
 
 The PR5–PR11 implementation covers the 68-product contract and routes every retained Takeout
 member. Production acceptance remains a separate gate:
@@ -17,8 +17,9 @@ member. Production acceptance remains a separate gate:
 6. record bounded-memory, elapsed-time, database-size, backup, and restore evidence;
 7. publish only sanitized counts and operational results.
 
-Google is production-accepted only after both complete runs succeed. Routing audits and
-representative binary canaries do not substitute for this gate.
+PR13 completed the full read, restart/resume proof, clean differential replay of every discovered
+conflict, and identical replay of the corrected affected set. See
+[`PR13_GOOGLE_PRODUCTION_ACCEPTANCE_REPORT.md`](PR13_GOOGLE_PRODUCTION_ACCEPTANCE_REPORT.md).
 
 ## 2. Add source families without mixing provenance
 
@@ -83,7 +84,7 @@ chain must never depend on an embedding model, UI, or agent remaining available.
 | PR | Outcome | Required completion gate |
 |---|---|---|
 | PR12 | Integrate PR7–PR11 onto `main`; replace the stale roadmap | Full cumulative CI on the real default-branch base |
-| PR13 | Complete Google production acceptance and identical reimport | Full member/object reconciliation, safe resume, no unintended second-run versions |
+| PR13 | Complete Google production acceptance and corrected differential reimport | Complete accounting, safe resume, clean affected-member replay, no unintended second-run versions |
 | PR14 | Apple privacy-export inventory and framework | 100% archive/member/byte accounting with zero silent skips |
 | PR15+ | Evidence-shaped Apple semantic and asset adapters | Per-family real canaries, provenance, idempotency, and coverage |
 | Following PR | Separate iMessages device-export importer | Conversation/message/attachment reconciliation and identical reimport |

@@ -22,6 +22,8 @@ This repository contains the completed foundation and its first three source imp
 - Gemini/Flow/NotebookLM/Keep/Journal AI, knowledge, note, and generated-work adapters
 - Google account/commerce/device/home adapters, including Play Store and Nest JSONL handling
 - Google long-tail semantic adapters, YouTube/Chrome product data, and external My Activity assets
+- production acceptance against the retained 146.25 GB Takeout, including restart and targeted
+  idempotency evidence
 - reconciliation tests
 - Windows/PowerShell setup instructions
 
@@ -226,10 +228,10 @@ All provider fields remain available under `metadata.google`; adapter-owned cont
 under `metadata._pdl`, and normalized `time` is stored as `occurred_at` instead of being duplicated
 in fingerprinted metadata.
 
-Gmail MBOX content, Drive document extraction, Google Photos sidecars and binaries, and raw
-Location History track variants not present in the validated export remain assigned to later
-product-specific phases. Unsupported products are left untouched in the retained Takeout rather
-than being silently represented as successfully imported.
+Gmail MBOX content, Drive document extraction, Google Photos sidecars and binaries, and observed
+Location History variants are handled by the registered semantic and external-asset adapters.
+Absent products remain explicitly `not_present_in_export`; no empirical-support claim is made for
+formats missing from the retained Takeout.
 
 ### Inspect a complete Google Takeout
 
@@ -486,9 +488,9 @@ Review the pull request before merging.
 
 ## Roadmap
 
-The Google adapter program is implemented through PR11. The next gate is a complete real-corpus
-import and identical second import, including restart and count reconciliation. Apple privacy
-exports and independently acquired iMessages remain separate future source families. Full-text
-and semantic search, identity resolution, derived claims, MCP, and agents follow only after the
-source corpus is operationally proven. See [`ROADMAP.md`](ROADMAP.md) for the ordered program and
-completion gates.
+Google ingestion is implemented through PR11 and production-accepted in PR13; see
+[`PR13_GOOGLE_PRODUCTION_ACCEPTANCE_REPORT.md`](PR13_GOOGLE_PRODUCTION_ACCEPTANCE_REPORT.md).
+The next gate is inventory-first support for official Apple privacy exports. Independently
+acquired iMessages remain a separate future source family. Full-text and semantic search,
+identity resolution, derived claims, MCP, and agents follow the source-ingestion phases. See
+[`ROADMAP.md`](ROADMAP.md) for the ordered program and completion gates.
