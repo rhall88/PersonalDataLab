@@ -1,6 +1,40 @@
 # PR14 official Apple privacy-export production acceptance report
 
-## Scope
+## Current status: parser v3 requires fresh corpus acceptance
+
+The corpus results below are historical evidence for parser v2 at `c4bfb4c`, not acceptance of the
+current parser. Review reproduced nine classes of correctness/provenance/privacy defects despite
+that successful exact replay. Parser v3 fixes those cases and adds synthetic regression coverage.
+
+Changes include context-aware replay categories, packaging-independent canonical metadata,
+conservative dataset identity policies, parameter-preserving VCF/ICS and timezone interpretation,
+complete XML trees and positional duplicate CSV headers, validated component boundaries, precise
+PDF-guide classification, indexed nested locators, and default source-path redaction. Coverage now
+reports generic structured adapters as partial and refuses production-ready status on warnings.
+
+Required before claiming full production acceptance again:
+
+1. Run v3 against the retained read-only corpus in a fresh isolated PostgreSQL database.
+2. Reconcile the newly indexed PDFs, corrected XML/calendar representations, and all note and
+   attachment contexts. Reassess the four duplicate-byte run reuses below individually.
+3. Disposition generic structured coverage with product-specific semantic fixtures/adapters;
+   exit 3 is an explicit partial-support result, not a failed persistence operation.
+4. Repeat interruption/resume and exact replay; record sanitized canonical/version/run counts.
+5. Keep the v2 database as historical evidence. A parser-version bump does not erase old identities.
+
+The private corpus is unavailable in the review workspace, so no new real-data counts are claimed.
+
+## Review-fix regression evidence
+
+- Local suite: 183 passed; 39 PostgreSQL-dependent tests skipped (no local database server).
+- Focused Apple suite: 33 passed, including the reproduced review failures.
+- Four additional PostgreSQL regressions cover identical notes/shared attachments, changed and
+  smaller exports, repackaged-source replay/provenance, and CSV interruption/resume/replay.
+- Ruff, Python compilation, and diff whitespace checks passed locally.
+- The branch CI runs the complete suite against PostgreSQL 18/pgvector; consult the current commit's
+  check result for database verification. These synthetic tests do not replace corpus acceptance.
+
+## Historical parser v2 scope
 
 PR14 brings the retained official Apple privacy export to the same operational standard as the
 Google importer: recursive accounting, explicit product routing, semantic normalization,
@@ -118,9 +152,10 @@ version, or import run.
 - Clean complete import: exit 0.
 - Exact unchanged replay: exit 0, 467/467 members short-circuited.
 
-## Boundary and next frontier
+## Historical v2 conclusion (superseded by the current-status gate above)
 
 Official Apple privacy-export ingestion is production-ready for the retained export. Device-level
 iMessage ingestion remains separate and must preserve phone/device extraction provenance. The next
 cross-provider phase is a unified query/search layer, followed by evidence-backed identity
 resolution and derived claims; none of those layers may rewrite source truth.
+

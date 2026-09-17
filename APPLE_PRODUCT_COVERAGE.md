@@ -1,6 +1,7 @@
 # Apple privacy-export product coverage
 
 This is the permanent observed-surface registry for the retained official Apple privacy export.
+The file counts below describe the parser v2 inventory; v3 requires a fresh corpus inventory.
 It is evidence-shaped: absent products are not claimed, and independently extracted iMessages
 are deliberately excluded.
 
@@ -39,7 +40,9 @@ are deliberately excluded.
 | voice_memos | 22 | content-addressed external audio assets |
 | wallet | 6 | structured cards, tokens, preferences, account, and transaction records/events |
 
-The retained corpus has 29 present registry products and three registry entries not present as a
-distinct classified leaf. Its 467 data members route without generic unknowns or raw-preserved
-fallbacks. Production acceptance completed with zero conflicts, failures, unknowns, or warnings;
-see [`PR14_APPLE_PRODUCTION_ACCEPTANCE_REPORT.md`](PR14_APPLE_PRODUCTION_ACCEPTANCE_REPORT.md).
+The v2 retained corpus had 29 present registry products and three absent entries. These historical
+467-member counts are not a v3 acceptance claim. In v3, generic CSV/JSON/XML members are explicitly
+`partially_structured` even when all fields are preserved; native-format support is finalized from
+actual parse/import results. Warnings, failures, unknowns, and partial support block the production
+ready gate. The revised guide classification may increase asset counts. See
+[`PR14_APPLE_PRODUCTION_ACCEPTANCE_REPORT.md`](PR14_APPLE_PRODUCTION_ACCEPTANCE_REPORT.md).

@@ -1645,3 +1645,152 @@ def test_relationships_are_versioned_provenance_bearing_and_idempotent(
     assert tuple(canonical) == ("saved_list_contains_item", "2", 2)
     assert int(versions) == 2
     assert int(observations) == 2
+
+
+def _apple_zip(path: Path, entries: list[tuple[str, str | bytes]]) -> Path:
+    with ZipFile(path, "w") as archive:
+        for name, body in entries:
+            archive.writestr(name, body)
+    return path
+
+
+def _apple_counts(engine: Engine) -> dict[str, int]:
+    tables = (
+        "records",
+        "record_versions",
+        "events",
+        "event_versions",
+        "assets",
+        "asset_versions",
+        "relationships",
+        "relationship_versions",
+        "import_runs",
+    )
+    with engine.connect() as connection:
+        return {
+            table: connection.execute(text(f"SELECT count(*) FROM {table}")).scalar_one()
+            for table in tables
+        }
+
+
+def test_apple_identical_notes_and_attachments_persist_all_contexts_and_replay(
+    database_engine: Engine,
+    tmp_path: Path,
+) -> None:
+    from personal_data_lab.apple_export.orchestrator import import_apple_all
+
+    source = _apple_zip(
+        tmp_path / "iCloud Notes.zip",
+        [
+            ("Notes/A/note.txt", "same body"),
+            ("Notes/B/note.txt", "same body"),
+            ("Notes/A/image.jpg", b"same image"),
+            ("Notes/B/image.jpg", b"same image"),
+        ],
+    )
+    first = import_apple_all(database_engine, str(source))
+    assert first.exit_code == 0
+    before = _apple_counts(database_engine)
+    assert before["records"] == before["record_versions"] == 4
+    assert before["assets"] == before["asset_versions"] == 1
+    assert before["relationships"] == before["relationship_versions"] == 4
+    assert before["import_runs"] == 4
+    second = import_apple_all(database_engine, str(source))
+    assert second.members_short_circuited == 4
+    assert second.exit_code == 0
+    assert _apple_counts(database_engine) == before
+
+
+def test_apple_changed_packaging_and_smaller_exports_do_not_conflict_or_delete(
+    database_engine: Engine,
+    tmp_path: Path,
+) -> None:
+    from personal_data_lab.apple_export.orchestrator import import_apple_all
+
+    header = "Device Identifier,Event Date,Action\n"
+    a, b, c = "d1,2026-01-01,play\n", "d1,2026-01-02,stop\n", "d1,2026-01-03,play\n"
+    source = _apple_zip(tmp_path / "Other Data Part 1.zip", [("history.csv", header + a + b)])
+    assert import_apple_all(database_engine, str(source)).exit_code == 3
+    source = _apple_zip(
+        tmp_path / "Other Data Part 2.zip",
+        [
+            ("unrelated/", ""),
+            ("history.csv", header + c + b + a),
+        ],
+    )
+    summary = import_apple_all(database_engine, str(source))
+    assert summary.members_failed == 0
+    assert not any(item.conflicts for item in summary.coverage.values())
+    counts = _apple_counts(database_engine)
+    assert counts["records"] == counts["record_versions"] == 3
+    assert counts["events"] == counts["event_versions"] == 3
+    source = _apple_zip(source, [("history.csv", header + b)])
+    smaller = import_apple_all(database_engine, str(source))
+    assert not any(item.conflicts for item in smaller.coverage.values())
+    after = _apple_counts(database_engine)
+    assert after["records"] == after["record_versions"] == 3
+    assert after["events"] == after["event_versions"] == 3
+
+
+def test_apple_repackaged_identical_notes_reuse_runs_and_add_source_locations(
+    database_engine: Engine,
+    tmp_path: Path,
+) -> None:
+    from personal_data_lab.apple_export.orchestrator import import_apple_all
+
+    source = _apple_zip(tmp_path / "iCloud Notes Part 1.zip", [("Notes/A/note.txt", "body")])
+    assert import_apple_all(database_engine, str(source)).exit_code == 0
+    before = _apple_counts(database_engine)
+    source = _apple_zip(
+        tmp_path / "iCloud Notes Part 2.zip",
+        [
+            ("unrelated/", ""),
+            ("Notes/A/note.txt", "body"),
+        ],
+    )
+    summary = import_apple_all(database_engine, str(source))
+    assert summary.members_short_circuited == 1
+    assert _apple_counts(database_engine) == before
+    with database_engine.connect() as connection:
+        assert (
+            connection.execute(text("SELECT count(*) FROM source_file_locations")).scalar_one() == 2
+        )
+
+
+def test_apple_csv_interruption_resumes_committed_chunks_and_replays(
+    database_engine: Engine,
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    from personal_data_lab.apple_export import adapters
+    from personal_data_lab.apple_export.orchestrator import import_apple_all
+
+    monkeypatch.setattr(adapters, "CSV_BATCH_ROWS", 2)
+    source = _apple_zip(
+        tmp_path / "Other Data.zip",
+        [
+            (
+                "history.csv",
+                "Device Identifier,Event Date,Action\n"
+                + "".join(f"d1,2026-01-0{index},play\n" for index in range(1, 6)),
+            )
+        ],
+    )
+
+    def interrupt(member, parsed, result):
+        raise KeyboardInterrupt("synthetic interruption after committed chunk")
+
+    with pytest.raises(KeyboardInterrupt):
+        import_apple_all(database_engine, str(source), on_member_imported=interrupt)
+    interrupted = _apple_counts(database_engine)
+    assert interrupted["records"] == interrupted["record_versions"] == 2
+    assert interrupted["import_runs"] == 1
+    resumed = import_apple_all(database_engine, str(source))
+    assert resumed.members_failed == 0
+    assert resumed.members_imported == 1
+    complete = _apple_counts(database_engine)
+    assert complete["records"] == complete["record_versions"] == 5
+    assert complete["events"] == complete["event_versions"] == 5
+    assert complete["import_runs"] == 3
+    assert import_apple_all(database_engine, str(source)).members_short_circuited == 1
+    assert _apple_counts(database_engine) == complete

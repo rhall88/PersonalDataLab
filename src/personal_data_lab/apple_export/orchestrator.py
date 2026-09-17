@@ -72,7 +72,7 @@ class AppleImportSummary(BaseModel):
             self.complete_accounting
             and not self.members_failed
             and not self.members_unknown
-            and not any(item.conflicts for item in self.coverage.values())
+            and not any(item.conflicts or item.parse_warnings for item in self.coverage.values())
             and all(
                 item.status in {"fully_structured", "not_present_in_export"}
                 for item in self.coverage.values()
@@ -88,6 +88,11 @@ class AppleImportSummary(BaseModel):
             return 5
         if any(item.conflicts for item in self.coverage.values()):
             return 2
+        if any(
+            item.parse_warnings or item.status == "partially_structured"
+            for item in self.coverage.values()
+        ):
+            return 3
         return 0
 
 
@@ -103,7 +108,7 @@ def _coverage(inventory: AppleInventory) -> dict[str, dict[str, object]]:
         result[key] = {
             "product": product.display_name,
             "product_key": key,
-            "status": "fully_structured" if observed else "not_present_in_export",
+            "status": "pending" if observed else "not_present_in_export",
             "members_discovered": observed.data_members if observed else 0,
             "members_processed": 0,
             "members_short_circuited": 0,
@@ -150,7 +155,7 @@ def import_apple_all(
     on_member_start: MemberCallback | None = None,
     on_member_imported: ImportedCallback | None = None,
 ) -> AppleImportSummary:
-    """Recursively inventory and import each Apple data leaf in a restart-safe transaction."""
+    """Inventory and import each leaf (or bounded CSV chunk) in a restart-safe transaction."""
 
     inventory = inspect_apple(source_path)
     mutable = _coverage(inventory)
@@ -194,6 +199,15 @@ def import_apple_all(
                     on_member_imported(member, parsed, result)
             if chunks == 0:
                 raise AppleAdapterError("adapter produced no parsed exports")
+            if coverage["status"] != "failed":
+                if (
+                    adapter.support_level != "fully_structured"
+                    or coverage["parse_warnings"]
+                    or coverage["status"] == "partially_structured"
+                ):
+                    coverage["status"] = "partially_structured"
+                else:
+                    coverage["status"] = "fully_structured"
             imported += 1
             processed_bytes += member.uncompressed_size
             coverage["members_processed"] = int(coverage["members_processed"]) + 1

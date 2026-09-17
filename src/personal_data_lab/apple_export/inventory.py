@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import re
 import tempfile
 from collections import defaultdict
@@ -23,22 +24,8 @@ SUPPORTED_EXTENSIONS = STRUCTURED_EXTENSIONS | TEXT_EXTENSIONS | ASSET_EXTENSION
 SPOOL_LIMIT_BYTES = 8 * 1024 * 1024
 MAX_NESTING_DEPTH = 8
 
-_GUIDE_ARCHIVES = frozenset(
-    {
-        "amp-app-stores.zip",
-        "app-install-activity.zip",
-        "apple-id.zip",
-        "apple-online-and-retail-stores.zip",
-        "apple-pay-activity.zip",
-        "applecare-support-activity.zip",
-        "feedback-assistant-activity.zip",
-        "icloud-bookmarks.zip",
-        "icloud-calendars-and-reminders.zip",
-        "icloud-notes.zip",
-        "marketing-communications.zip",
-        "other-data.zip",
-    }
-)
+# Exact root-level provider document names only. User attachment paths never qualify.
+_GUIDE_FILENAMES = frozenset({"data and privacy guide.pdf"})
 
 
 class AppleInventoryError(ValueError):
@@ -53,6 +40,8 @@ class AppleMember(BaseModel):
     outer_archive_path: str = Field(exclude=True)
     container_chain: tuple[str, ...]
     container_entry_indices: tuple[int, ...]
+    container_occurrences: tuple[int, ...] = ()
+    entry_occurrence: int = Field(default=0, ge=0)
     member_path: str
     entry_index: int = Field(ge=0)
     filename: str
@@ -72,9 +61,13 @@ class AppleMember(BaseModel):
 
     @property
     def source_locator(self) -> str:
-        chain = "!/".join((*self.container_chain, self.member_path))
-        chain = f"{chain}#entry={self.entry_index}"
-        return f"{self.outer_archive_path}!/{chain}"
+        entries = list(zip(self.container_chain, self.container_entry_indices, strict=True))
+        entries.append((self.member_path, self.entry_index))
+        return "apple-zip:" + json.dumps(
+            {"archive": self.outer_archive_path, "entries": entries},
+            ensure_ascii=True,
+            separators=(",", ":"),
+        )
 
     @property
     def is_leaf(self) -> bool:
@@ -134,7 +127,10 @@ class AppleInventory(BaseModel):
         return self.classified_data_members + self.structural_members + self.unknown_members_count
 
     def public_dict(self, *, include_paths: bool = False) -> dict[str, object]:
-        data = self.model_dump(mode="json", exclude={"members", "unknown_members"})
+        excluded = {"members", "unknown_members"}
+        if not include_paths:
+            excluded.add("source_path")
+        data = self.model_dump(mode="json", exclude=excluded)
         fields = {
             "member_id",
             "product",
@@ -169,17 +165,11 @@ def _safe_path(value: str) -> bool:
     )
 
 
-def _is_guide(outer_archive: str, member_path: str, extension: str) -> bool:
+def _is_guide(member_path: str, extension: str) -> bool:
     if extension != ".pdf":
         return False
-    lowered = outer_archive.casefold()
-    normalized = member_path.casefold()
-    return (
-        lowered in _GUIDE_ARCHIVES
-        or lowered.startswith("amp-")
-        or "guide" in normalized
-        or "data and privacy" in normalized
-    )
+    normalized = member_path.replace("\\", "/").casefold()
+    return "/" not in normalized and normalized in _GUIDE_FILENAMES
 
 
 def _adapter_for(product: AppleProduct, path: str, extension: str) -> str | None:
@@ -206,11 +196,13 @@ def _member(
     chain_indices: tuple[int, ...],
     info: ZipInfo,
     entry_index: int,
+    chain_occurrences: tuple[int, ...],
+    entry_occurrence: int,
 ) -> AppleMember:
     path = info.filename.replace("\\", "/")
     extension = Path(PurePosixPath(path).name).suffix.casefold()
     nested = extension == ".zip" and not info.is_dir()
-    guide = _is_guide(outer_path.name, path, extension)
+    guide = not chain and _is_guide(path, extension)
     product = product_for(outer_path.name, "/".join((*chain, path)))
     safe = _safe_path(path) and all(_safe_path(item) for item in chain)
     adapter = None if nested or guide or info.is_dir() else _adapter_for(product, path, extension)
@@ -245,6 +237,8 @@ def _member(
         outer_archive_path=str(outer_path),
         container_chain=chain,
         container_entry_indices=chain_indices,
+        container_occurrences=chain_occurrences,
+        entry_occurrence=entry_occurrence,
         member_path=path,
         entry_index=entry_index,
         filename=PurePosixPath(path).name,
@@ -270,16 +264,23 @@ def _inventory_archive(
     chain: tuple[str, ...],
     chain_indices: tuple[int, ...],
     output: list[AppleMember],
+    chain_occurrences: tuple[int, ...] = (),
 ) -> None:
     if len(chain) > MAX_NESTING_DEPTH:
         raise AppleInventoryError(f"nested ZIP depth exceeds {MAX_NESTING_DEPTH}")
+    occurrences: dict[str, int] = defaultdict(int)
     for entry_index, info in enumerate(archive.infolist()):
+        name = info.filename.replace("\\", "/")
+        occurrence = occurrences[name]
+        occurrences[name] += 1
         item = _member(
             outer_path=outer_path,
             chain=chain,
             chain_indices=chain_indices,
             info=info,
             entry_index=entry_index,
+            chain_occurrences=chain_occurrences,
+            entry_occurrence=occurrence,
         )
         output.append(item)
         if not item.is_nested_archive or item.accounting_category == "unknown":
@@ -299,6 +300,7 @@ def _inventory_archive(
                         (*chain, info.filename),
                         (*chain_indices, entry_index),
                         output,
+                        (*chain_occurrences, occurrence),
                     )
         except (BadZipFile, OSError) as error:
             raise AppleInventoryError(
@@ -383,21 +385,52 @@ def inspect_apple(source_path: str | Path) -> AppleInventory:
 def open_apple_member(member: AppleMember) -> Iterator[BinaryIO]:
     """Open a leaf member through an arbitrary nested ZIP chain."""
 
+    with open_apple_locator(member.source_locator) as stream:
+        yield stream
+
+
+@contextmanager
+def open_apple_locator(locator: str) -> Iterator[BinaryIO]:
+    """Reopen persisted provenance without an in-memory inventory or ambiguous ZIP names."""
+    try:
+        if not locator.startswith("apple-zip:"):
+            raise ValueError
+        value = json.loads(locator.removeprefix("apple-zip:"))
+        entries = value["entries"]
+        if (
+            not isinstance(value["archive"], str)
+            or not isinstance(entries, list)
+            or not entries
+            or len(entries) > MAX_NESTING_DEPTH + 1
+        ):
+            raise ValueError
+        if any(
+            not isinstance(name, str) or not _safe_path(name) or type(index) is not int or index < 0
+            for name, index in entries
+        ):
+            raise ValueError
+    except (ValueError, KeyError, TypeError) as error:
+        raise AppleInventoryError("invalid Apple source locator") from error
     with ExitStack() as stack:
-        archive: ZipFile = stack.enter_context(ZipFile(member.outer_archive_path))
-        for nested_index in member.container_entry_indices:
-            nested_info = archive.infolist()[nested_index]
-            source = stack.enter_context(archive.open(nested_info))
+        archive = stack.enter_context(ZipFile(value["archive"]))
+        for level, (name, index) in enumerate(entries):
+            try:
+                info = archive.infolist()[index]
+            except IndexError as error:
+                raise AppleInventoryError(
+                    "Apple source locator no longer matches archive"
+                ) from error
+            if info.filename.replace("\\", "/") != name.replace("\\", "/"):
+                raise AppleInventoryError("Apple source locator no longer matches archive")
+            stream = stack.enter_context(archive.open(info))
+            if level == len(entries) - 1:
+                yield stream
+                return
             spool = stack.enter_context(tempfile.SpooledTemporaryFile(max_size=SPOOL_LIMIT_BYTES))
-            while chunk := source.read(1024 * 1024):
+            while chunk := stream.read(1024 * 1024):
                 spool.write(chunk)
             spool.seek(0)
             archive = stack.enter_context(ZipFile(spool))
-        info = archive.infolist()[member.entry_index]
-        if info.filename.replace("\\", "/") != member.member_path:
-            raise AppleInventoryError("Apple member entry index no longer matches inventory")
-        stream = stack.enter_context(archive.open(info))
-        yield stream
 
 
 def _human_size(value: int) -> str:

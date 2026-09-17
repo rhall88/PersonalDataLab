@@ -23,12 +23,14 @@ conflict, and identical replay of the corrected affected set. See
 
 ## 2. Add source families without mixing provenance
 
-### Official Apple privacy export — production-ready in PR14
+### Official Apple privacy export — PR14 review fixes; v3 acceptance pending
 
 The retained export now has recursive inventory, a 32-surface registry, complete physical versus
 logical byte accounting, privacy-safe progress, structured and native-format adapters, streamed
 external assets, restart-safe transactions, and coverage reporting. A complete real-data
-PostgreSQL import, controlled resume, and exact unchanged replay passed. Do not infer support for
+PostgreSQL import, controlled resume, and exact unchanged replay passed for parser v2. Review
+found defects outside exact-replay coverage; parser v3 fixes them and requires fresh real-corpus
+acceptance. Generic structured coverage is now explicitly partial. Do not infer support for
 products or formats absent from the retained export.
 
 ### iMessages device export
@@ -86,7 +88,8 @@ chain must never depend on an embedding model, UI, or agent remaining available.
 |---|---|---|
 | PR12 | Integrate PR7–PR11 onto `main`; replace the stale roadmap | Full cumulative CI on the real default-branch base |
 | PR13 | Complete Google production acceptance and corrected differential reimport | Complete accounting, safe resume, clean affected-member replay, no unintended second-run versions |
-| PR14 | Production-ready official Apple privacy-export ingestion | Complete accounting, full real import, safe resume, exact idempotent replay |
+| PR14 | Official Apple privacy-export ingestion review fixes | v3 synthetic regressions; fresh corpus and semantic acceptance pending |
 | Following PR | Separate iMessages device-export importer | Conversation/message/attachment reconciliation and identical reimport |
 | Following PRs | Provider parity, unified search, identities, claims, semantic retrieval | Each derived object cites evidence and remains reversible |
 | Final product track | Timeline, exploration, analytics, MCP, and agents | Fast normal queries, permission boundaries, and evidence-citing answers |
+

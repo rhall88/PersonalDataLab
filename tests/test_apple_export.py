@@ -159,7 +159,8 @@ def test_concatenated_json_and_mislabeled_utf16_xml_are_lossless(tmp_path: Path)
     wifi = _parsed(next(item for item in members if item.extension == ".xml"))[0]
     assert books.record_count == 2
     assert wifi.record_count == 1
-    assert wifi.records[0].metadata["apple"]["tag"] == "network"
+    assert wifi.records[0].metadata["apple"]["tag"] == "plist"
+    assert wifi.records[0].metadata["apple"]["children"][0]["tag"] == "network"
 
 
 def test_contacts_calendar_notes_and_note_assets_are_semantic(tmp_path: Path) -> None:
@@ -273,9 +274,9 @@ def test_orchestrator_complete_coverage_and_short_circuit(tmp_path: Path, monkey
     summary = orchestrator.import_apple_all(object(), str(source))
     assert summary.members_imported == summary.members_short_circuited == 1
     assert summary.complete_accounting
-    assert summary.production_ready
-    assert summary.exit_code == 0
-    assert summary.coverage["account_device"].status == "fully_structured"
+    assert not summary.production_ready
+    assert summary.exit_code == 3
+    assert summary.coverage["account_device"].status == "partially_structured"
     assert summary.coverage["notes"].status == "not_present_in_export"
 
 
@@ -317,3 +318,306 @@ def test_apple_cli_defaults_are_private_and_machine_readable(
     assert secret not in captured.err
     assert "PRIVATE BODY" not in captured.out
     assert "PRIVATE BODY" not in captured.err
+
+
+def test_identical_note_bytes_have_distinct_replay_keys(tmp_path: Path) -> None:
+    from personal_data_lab.database import _run_key
+
+    source = _zip(
+        tmp_path / "iCloud Notes.zip",
+        [
+            ("Notes/A/note.txt", "same body"),
+            ("Notes/B/note.txt", "same body"),
+            ("Notes/A/image.jpg", b"same image"),
+            ("Notes/B/image.jpg", b"same image"),
+        ],
+    )
+    parsed = [_parsed(member)[0] for member in inspect_apple(source).members]
+    assert parsed[0].sha256 == parsed[1].sha256
+    assert len({_run_key((item,)) for item in parsed}) == 4
+    assert parsed[2].assets[0].source_asset_id == parsed[3].assets[0].source_asset_id
+    assert (
+        parsed[2].relationships[0].source_relationship_id
+        != parsed[3].relationships[0].source_relationship_id
+    )
+
+
+def test_repackaging_and_row_reordering_preserve_identity_and_fingerprint(tmp_path: Path) -> None:
+    from personal_data_lab.fingerprints import record_fingerprint
+
+    header = "Device Identifier,Event Date,Action\n"
+    rows = ["d1,2026-01-01,play\n", "d1,2026-01-02,stop\n"]
+    source = _zip(tmp_path / "Other Data Part 1.zip", [("history.csv", header + "".join(rows))])
+    before = _parsed(inspect_apple(source).members[0])[0]
+    source = _zip(
+        tmp_path / "Other Data Part 2.zip",
+        [
+            ("unrelated.txt", "added"),
+            ("history.csv", header + "".join(reversed(rows))),
+        ],
+    )
+    after = _parsed(inspect_apple(source).members[1])[0]
+    expected = {record.source_record_id: record_fingerprint(record) for record in before.records}
+    assert expected == {
+        record.source_record_id: record_fingerprint(record) for record in after.records
+    }
+    source = _zip(source, [("history.csv", header + rows[1])])
+    smaller = _parsed(inspect_apple(source).members[0])[0]
+    assert expected[smaller.records[0].source_record_id] == record_fingerprint(smaller.records[0])
+
+
+def test_context_key_survives_unrelated_nested_zip_reordering(tmp_path: Path) -> None:
+    from personal_data_lab.database import _run_key
+
+    source = _zip(
+        tmp_path / "iCloud Notes.zip",
+        [
+            (
+                "notes.zip",
+                _nested(
+                    [
+                        ("Notes/A/note.txt", "body"),
+                    ]
+                ),
+            )
+        ],
+    )
+    a = _parsed(next(item for item in inspect_apple(source).members if item.is_leaf))[0]
+    source = _zip(
+        source,
+        [
+            ("unrelated.txt", "x"),
+            (
+                "notes.zip",
+                _nested(
+                    [
+                        ("new.txt", "y"),
+                        ("Notes/A/note.txt", "body"),
+                    ]
+                ),
+            ),
+        ],
+    )
+    b = _parsed(
+        next(item for item in inspect_apple(source).members if item.filename == "note.txt")
+    )[0]
+    assert _run_key((a,)) == _run_key((b,))
+    assert a.records == b.records
+
+
+def test_nested_locator_roundtrips_duplicate_container_names(tmp_path: Path) -> None:
+    from personal_data_lab.apple_export.inventory import open_apple_locator
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        source = _zip(
+            tmp_path / "Other Data.zip",
+            [
+                ("Voice Memos.zip", _nested([("a!/#entry=1.m4a", b"first")])),
+                ("Voice Memos.zip", _nested([("a!/#entry=1.m4a", b"second")])),
+            ],
+        )
+    members = [member for member in inspect_apple(source).members if member.is_leaf]
+    assert len({member.source_locator for member in members}) == 2
+    for member, expected in zip(members, (b"first", b"second"), strict=True):
+        with open_apple_locator(member.source_locator) as stream:
+            assert stream.read() == expected
+
+
+def test_duplicate_note_entry_names_are_distinct(tmp_path: Path) -> None:
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        source = _zip(
+            tmp_path / "iCloud Notes.zip",
+            [
+                ("Notes/A/note.txt", "first"),
+                ("Notes/A/note.txt", "second"),
+            ],
+        )
+    records = [
+        record
+        for member in inspect_apple(source).members
+        for record in _parsed(member)[0].records
+        if record.record_type == "note"
+    ]
+    assert len({record.source_record_id for record in records}) == 2
+
+
+def test_calendar_preserves_parameters_nested_alarms_and_recurrence_identity(
+    tmp_path: Path,
+) -> None:
+    source = _zip(
+        tmp_path / "iCloud Calendars and Reminders.zip",
+        [
+            (
+                "Home.ics",
+                (
+                    "BEGIN:VCALENDAR\nVERSION:2.0\nBEGIN:VEVENT\nUID:e1\n"
+                    "DTSTART;TZID=America/New_York:20260917T090000\nSUMMARY:Meeting\n"
+                    "BEGIN:VALARM\nDESCRIPTION:Alarm\nEND:VALARM\nEND:VEVENT\n"
+                    "BEGIN:VEVENT\nUID:e1\nRECURRENCE-ID;TZID=America/New_York:20260924T090000\n"
+                    "DTSTART;TZID=America/New_York:20260924T100000\nEND:VEVENT\nEND:VCALENDAR\n"
+                ),
+            )
+        ],
+    )
+    parsed = _parsed(inspect_apple(source).members[0])[0]
+    assert parsed.events[0].occurred_at.isoformat() == "2026-09-17T13:00:00+00:00"
+    apple = parsed.events[0].metadata["apple"]
+    assert apple["property_details"]["DTSTART"][0]["params"] == {"TZID": ["America/New_York"]}
+    assert "DESCRIPTION" not in apple["properties"]
+    assert "DESCRIPTION:Alarm" in apple["lines"]
+    assert len({event.source_record_id for event in parsed.events}) == 2
+
+
+@pytest.mark.parametrize("date", ["DTSTART:20260917T090000", "DTSTART;VALUE=DATE:20260917"])
+def test_calendar_does_not_invent_instants_for_floating_or_all_day_dates(
+    tmp_path: Path, date: str
+) -> None:
+    source = _zip(
+        tmp_path / "iCloud Calendars and Reminders.zip",
+        [
+            (
+                "Home.ics",
+                f"BEGIN:VCALENDAR\nBEGIN:VEVENT\nUID:e1\n{date}\nEND:VEVENT\nEND:VCALENDAR\n",
+            )
+        ],
+    )
+    parsed = _parsed(inspect_apple(source).members[0])[0]
+    assert parsed.events[0].occurred_at is None
+    assert not parsed.parse_warnings
+
+
+def test_contact_parameters_are_retained(tmp_path: Path) -> None:
+    source = _zip(
+        tmp_path / "iCloud Contacts.zip",
+        [
+            (
+                "contact.vcf",
+                (
+                    "BEGIN:VCARD\nUID:c1\nFN:Ada\nTEL;TYPE=HOME,VOICE:123\n"
+                    'EMAIL;TYPE="work;preferred":ada@example.invalid\nEND:VCARD\n'
+                ),
+            )
+        ],
+    )
+    props = (
+        _parsed(inspect_apple(source).members[0])[0]
+        .records[0]
+        .metadata["apple"]["property_details"]
+    )
+    assert props["TEL"][0]["params"] == {"TYPE": ["HOME,VOICE"]}
+    assert props["EMAIL"][0]["params"] == {"TYPE": ["work;preferred"]}
+
+
+@pytest.mark.parametrize(
+    "filename,body",
+    [
+        ("broken.vcf", "BEGIN:VCARD\nUID:c1\nFN:Lost\n"),
+        ("broken.ics", "BEGIN:VCALENDAR\nBEGIN:VEVENT\nUID:e1\nEND:VCALENDAR\n"),
+        ("broken.ics", "not a calendar"),
+    ],
+)
+def test_malformed_components_fail_instead_of_succeeding_empty(
+    tmp_path: Path, filename: str, body: str
+) -> None:
+    source = _zip(tmp_path / "Other Data.zip", [(filename, body)])
+    with pytest.raises(AppleAdapterError):
+        _parsed(inspect_apple(source).members[0])
+
+
+def test_valid_empty_calendar_is_accepted(tmp_path: Path) -> None:
+    source = _zip(
+        tmp_path / "Other Data.zip",
+        [("empty.ics", "BEGIN:VCALENDAR\nVERSION:2.0\nEND:VCALENDAR\n")],
+    )
+    assert _parsed(inspect_apple(source).members[0])[0].record_count == 0
+
+
+def test_xml_preserves_root_mixed_order_whitespace_and_tail(tmp_path: Path) -> None:
+    source = _zip(
+        tmp_path / "Other Data.zip",
+        [
+            (
+                "data.xml",
+                '<root account="A"> prefix <a>one</a>tail<b/><a>two</a><!--comment--></root>',
+            )
+        ],
+    )
+    root = _parsed(inspect_apple(source).members[0])[0].records[0].metadata["apple"]
+    assert root["attributes"] == {"account": "A"}
+    assert root["text"] == " prefix "
+    assert [child["tag"] for child in root["children"]] == ["a", "b", "a", "#comment"]
+    assert root["children"][0]["tail"] == "tail"
+
+
+@pytest.mark.parametrize(
+    "csv_text,headers,cells",
+    [
+        ("id,value,value\n1,first,second\n", ["id", "value", "value"], ["1", "first", "second"]),
+        (
+            "id,_extra_columns\n1,value,surplus\n",
+            ["id", "_extra_columns"],
+            ["1", "value", "surplus"],
+        ),
+    ],
+)
+def test_csv_preserves_duplicate_and_reserved_headers(
+    tmp_path: Path, csv_text, headers, cells
+) -> None:
+    source = _zip(tmp_path / "Other Data.zip", [("data.csv", csv_text)])
+    apple = _parsed(inspect_apple(source).members[0])[0].records[0].metadata["apple"]
+    assert apple == {"headers": headers, "cells": cells}
+
+
+@pytest.mark.parametrize("outer", ["iCloud Notes.zip", "icloud-notes.zip", "amp-custom.zip"])
+def test_user_pdf_guides_are_assets(tmp_path: Path, outer: str) -> None:
+    source = _zip(
+        tmp_path / outer,
+        [
+            ("Notes/Travel guide/Trip.pdf", b"personal"),
+            ("Travel guide.pdf", b"personal"),
+            ("Notes/A/Data and Privacy Guide.pdf", b"personal"),
+        ],
+    )
+    assert all(
+        member.candidate_adapter == "apple_asset" for member in inspect_apple(source).members
+    )
+
+
+def test_inventory_source_path_requires_opt_in(tmp_path: Path) -> None:
+    private = tmp_path / "PRIVATE ACCOUNT DIRECTORY"
+    private.mkdir()
+    source = _zip(private / "iCloud Notes.zip", [("Notes/A/note.txt", "body")])
+    inventory = inspect_apple(source)
+    assert "PRIVATE ACCOUNT DIRECTORY" not in json.dumps(inventory.public_dict())
+    assert inventory.public_dict(include_paths=True)["source_path"] == str(source)
+
+
+def test_warnings_prevent_production_ready_and_success_exit(tmp_path: Path, monkeypatch) -> None:
+    source = _zip(
+        tmp_path / "iCloud Calendars and Reminders.zip",
+        [
+            (
+                "Home.ics",
+                "BEGIN:VCALENDAR\nBEGIN:VEVENT\nUID:e1\nDTSTART;TZID=Unknown/Zone:20260917T090000\nEND:VEVENT\nEND:VCALENDAR\n",
+            )
+        ],
+    )
+    monkeypatch.setattr(
+        orchestrator,
+        "import_parsed_exports",
+        lambda engine, batch: (
+            ImportResult(
+                source_file_id=1,
+                source_conversations=0,
+                database_conversations=0,
+                source_events=1,
+                database_events=1,
+            ),
+        ),
+    )
+    summary = orchestrator.import_apple_all(object(), str(source))
+    assert summary.coverage["calendars_reminders"].parse_warnings == 1
+    assert summary.exit_code == 3
+    assert not summary.production_ready

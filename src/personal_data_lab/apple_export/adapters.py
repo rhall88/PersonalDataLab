@@ -12,6 +12,7 @@ from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
 from typing import BinaryIO, Protocol, runtime_checkable
 from xml.etree import ElementTree
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from ..fingerprints import canonical_json_bytes
 from ..models import (
@@ -25,7 +26,7 @@ from .inventory import AppleMember, open_apple_member
 
 CSV_BATCH_ROWS = 5_000
 MAX_TEXT_BYTES = 64 * 1024 * 1024
-PARSER_VERSION = "apple-privacy-v2"
+PARSER_VERSION = "apple-privacy-v3"
 
 
 class AppleAdapterError(ValueError):
@@ -36,6 +37,7 @@ class AppleAdapterError(ValueError):
 class AppleAdapter(Protocol):
     adapter_name: str
     parser_version: str
+    support_level: str
 
     def parse(self, stream: BinaryIO, member: AppleMember) -> ParsedExport: ...
 
@@ -52,7 +54,15 @@ def _path_token(member: AppleMember, *, parent: bool = False) -> str:
     path = PurePosixPath(member.member_path)
     if parent:
         path = path.parent
-    payload = "\x00".join((*member.container_chain, path.as_posix())).encode("utf-8")
+    payload = canonical_json_bytes(
+        {
+            "containers": list(
+                zip(member.container_chain, member.container_occurrences, strict=True)
+            ),
+            "path": path.as_posix(),
+            "occurrence": 0 if parent else member.entry_occurrence,
+        }
+    )
     return hashlib.sha256(payload).hexdigest()[:24]
 
 
@@ -97,7 +107,6 @@ def _metadata(
         "_pdl": {
             "acquisition_method": "apple_privacy_export",
             "adapter": adapter,
-            "member_id": member.member_id,
             "product": member.product_key,
             "dataset": _dataset_key(member),
             **extra,
@@ -171,24 +180,11 @@ def _first_value(value: dict[str, object], names: tuple[str, ...]) -> object | N
     return None
 
 
-_ID_NAMES = (
-    "id",
-    "identifier",
-    "uuid",
-    "guid",
-    "event id",
-    "transaction id",
-    "transaction identifier",
-    "order number",
-    "request id",
-    "review reference number",
-    "vote reference number",
-    "device identifier",
-    "credential id",
-    "playback identifier",
-    "apple id number",
-    "apple account number",
-)
+# Only explicit dataset-level entity identifiers belong here. A device/account ID in
+# activity history is not an event ID. Unmapped datasets use complete payload identity.
+_DATASET_ID_FIELDS = {
+    ("account_device", "devices"): ("device identifier",),
+}
 _TIME_NAMES = (
     "event date time",
     "event time",
@@ -238,10 +234,10 @@ def _string(value: object | None) -> str | None:
     return result or None
 
 
-def _identity(value: object, occurrence: int = 1) -> str:
+def _identity(value: object, occurrence: int = 1, *, id_names: tuple[str, ...] = ()) -> str:
     provider_id = None
     if isinstance(value, dict):
-        provider_id = _string(_first_value(value, _ID_NAMES))
+        provider_id = _string(_first_value(value, id_names))
     if provider_id:
         base = f"provider:{hashlib.sha256(provider_id.encode()).hexdigest()[:32]}"
     else:
@@ -286,12 +282,15 @@ def _objects(
     occurrences: defaultdict[str, int] = seen if seen is not None else defaultdict(int)
     records: list[NormalizedRecord] = []
     events: list[NormalizedEvent] = []
+    id_names = _DATASET_ID_FIELDS.get((member.product_key, _dataset_key(member)), ())
     for raw in values:
         safe = _json_safe(raw)
         value = safe if isinstance(safe, dict) else {"value": safe}
-        base = _identity(value)
+        base = _identity(value, id_names=id_names)
         occurrences[base] += 1
-        source_id = _identity(value, occurrences[base])
+        if base.startswith("provider:") and occurrences[base] > 1:
+            raise AppleAdapterError("duplicate entity identifier in mapped Apple dataset")
+        source_id = _identity(value, occurrences[base], id_names=id_names)
         record_type, is_event = _semantic_kind(member, value)
         occurred_at = _timestamp(_first_value(value, _TIME_NAMES))
         title = _string(_first_value(value, _TITLE_NAMES))
@@ -337,7 +336,9 @@ def _export(
     warnings: tuple[str, ...] = (),
     chunk: int | None = None,
 ) -> ParsedExport:
-    category = f"apple_privacy/{member.product_key}/{_dataset_key(member)}"
+    # Parsing can depend on the note directory even when source bytes are identical.
+    # Stable member context excludes archive filename and unrelated ZIP entry positions.
+    category = f"apple_privacy/{member.product_key}/{_dataset_key(member)}/{_path_token(member)}"
     if chunk is not None:
         category += f"/chunk/{chunk:08d}"
     return ParsedExport(
@@ -359,6 +360,7 @@ def _export(
 
 
 class StructuredAdapter:
+    support_level = "partially_structured"
     adapter_name = "apple_structured"
     parser_version = f"{PARSER_VERSION}/structured"
 
@@ -377,8 +379,13 @@ class StructuredAdapter:
                     for item in (decoded if isinstance(decoded, list) else [decoded])
                 ]
             elif member.extension == ".xml":
-                root = ElementTree.fromstring(text)
-                values = [self._xml_value(child) for child in root] or [self._xml_value(root)]
+                root = ElementTree.fromstring(
+                    text,
+                    parser=ElementTree.XMLParser(
+                        target=ElementTree.TreeBuilder(insert_comments=True, insert_pis=True)
+                    ),
+                )
+                values = [self._xml_value(root)]
             else:
                 raise AppleAdapterError("streaming CSV path required")
         except (UnicodeDecodeError, json.JSONDecodeError, ElementTree.ParseError) as error:
@@ -422,19 +429,19 @@ class StructuredAdapter:
 
     @classmethod
     def _xml_value(cls, element: ElementTree.Element) -> dict[str, object]:
-        result: dict[str, object] = {
-            "tag": element.tag,
-            **{f"@{k}": v for k, v in element.attrib.items()},
+        return {
+            "tag": (
+                element.tag
+                if isinstance(element.tag, str)
+                else "#comment"
+                if element.tag is ElementTree.Comment
+                else "#processing-instruction"
+            ),
+            "attributes": dict(element.attrib),
+            "text": element.text,
+            "tail": element.tail,
+            "children": [cls._xml_value(child) for child in element],
         }
-        text = (element.text or "").strip()
-        if text:
-            result["text"] = text
-        children: dict[str, list[object]] = defaultdict(list)
-        for child in element:
-            children[child.tag].append(cls._xml_value(child))
-        for key, items in children.items():
-            result[key] = items[0] if len(items) == 1 else items
-        return result
 
     def iter_parsed_exports(self, member: AppleMember) -> Iterator[ParsedExport]:
         if member.extension != ".csv":
@@ -455,10 +462,25 @@ class StructuredAdapter:
                     dialect = csv.Sniffer().sniff(sample, delimiters=",\t;|")
                 except csv.Error:
                     dialect = csv.excel
-                reader = csv.DictReader(text_stream, dialect=dialect)
+                reader = csv.reader(text_stream, dialect=dialect, strict=True)
+                headers = next(reader, None)
+                if headers is None or not headers:
+                    raise AppleAdapterError("Apple CSV has no header")
                 rows: list[object] = []
-                for row in reader:
-                    rows.append(dict(row))
+                for cells in reader:
+                    if not cells:
+                        continue
+                    if len(set(headers)) != len(headers) or "_extra_columns" in headers:
+                        # Positional form avoids duplicate/irregular header overwrites.
+                        row = {"headers": headers, "cells": cells}
+                    else:
+                        row = {
+                            key: cells[index] if index < len(cells) else None
+                            for index, key in enumerate(headers)
+                        }
+                        if len(cells) > len(headers):
+                            row["_extra_columns"] = cells[len(headers) :]
+                    rows.append(row)
                     if len(rows) >= CSV_BATCH_ROWS:
                         chunk_index += 1
                         records, events = _objects(
@@ -499,31 +521,108 @@ def _unfold(text: str) -> list[str]:
 
 
 def _components(text: str, name: str) -> list[list[str]]:
+    """Validate every boundary, retaining nested component lines without flattening them."""
     result: list[list[str]] = []
+    stack: list[str] = []
     current: list[str] | None = None
+    target_depth = 0
+    saw_component = False
     for line in _unfold(text):
+        if not line:
+            continue
         upper = line.upper()
-        if upper == f"BEGIN:{name}":
-            current = []
-        elif upper == f"END:{name}" and current is not None:
-            result.append(current)
-            current = None
-        elif current is not None:
-            current.append(line)
+        if upper.startswith("BEGIN:"):
+            component = upper[6:]
+            saw_component = True
+            if current is not None:
+                current.append(line)
+            stack.append(component)
+            if component == name and current is None:
+                current, target_depth = [], len(stack)
+        elif upper.startswith("END:"):
+            if not stack or stack[-1] != upper[4:]:
+                raise AppleAdapterError("unbalanced Apple component boundaries")
+            if current is not None:
+                if len(stack) == target_depth:
+                    result.append(current)
+                    current = None
+                else:
+                    current.append(line)
+            stack.pop()
+        else:
+            if not stack or ":" not in line:
+                raise AppleAdapterError("malformed Apple component property")
+            if current is not None:
+                current.append(line)
+    if stack or not saw_component:
+        raise AppleAdapterError("incomplete Apple component document")
     return result
 
 
-def _properties(lines: list[str]) -> dict[str, list[str]]:
-    result: dict[str, list[str]] = defaultdict(list)
+def _property_details(lines: list[str]) -> dict[str, list[dict[str, object]]]:
+    result: dict[str, list[dict[str, object]]] = defaultdict(list)
+    depth = 0
     for line in lines:
-        if ":" not in line:
+        upper = line.upper()
+        if upper.startswith("BEGIN:"):
+            depth += 1
             continue
-        key, value = line.split(":", 1)
-        result[key.split(";", 1)[0].upper()].append(value)
+        if upper.startswith("END:"):
+            depth -= 1
+            continue
+        if depth:
+            continue
+        # Quoted parameter values may contain delimiters.
+        parts = re.split(r":(?=(?:[^\"]*\"[^\"]*\")*[^\"]*$)", line, maxsplit=1)
+        if len(parts) != 2:
+            raise AppleAdapterError("malformed Apple property")
+        head, value = parts
+        fields = re.split(r";(?=(?:[^\"]*\"[^\"]*\")*[^\"]*$)", head)
+        params: dict[str, list[str]] = defaultdict(list)
+        for field in fields[1:]:
+            key, separator, item = field.partition("=")
+            if not separator:
+                key, item = "TYPE", key
+            params[key.upper()].append(item.strip('"'))
+        result[fields[0].upper()].append({"value": value, "params": dict(params)})
     return dict(result)
 
 
+def _properties(lines: list[str]) -> dict[str, list[str]]:
+    return {
+        key: [str(item["value"]) for item in items]
+        for key, items in _property_details(lines).items()
+    }
+
+
+def _calendar_time(lines: list[str], warnings: list[str]) -> datetime | None:
+    details = _property_details(lines)
+    values = details.get("DTSTART") or details.get("DUE")
+    if not values:
+        return None
+    item = values[0]
+    value, params = str(item["value"]), item["params"]
+    try:
+        if re.fullmatch(r"\d{8}", value):
+            datetime.strptime(value, "%Y%m%d")  # noqa: DTZ007 - validate a date, not an instant
+            return None  # An all-day date is not a UTC instant.
+        if value.endswith("Z"):
+            return datetime.strptime(value, "%Y%m%dT%H%M%SZ").replace(tzinfo=UTC)
+        local = datetime.strptime(value, "%Y%m%dT%H%M%S")  # noqa: DTZ007 - zone resolved below
+        timezone = params.get("TZID", [])
+        if not timezone:
+            return None  # Preserve floating local time without inventing a zone.
+        zone = ZoneInfo(timezone[0])
+        # RFC 5545 selects the first occurrence for repeated local times and the
+        # pre-transition offset for nonexistent local times (fold=0).
+        return local.replace(tzinfo=zone, fold=0).astimezone(UTC)
+    except (ValueError, ZoneInfoNotFoundError):
+        warnings.append("unresolved_calendar_time")
+        return None
+
+
 class ContactsAdapter:
+    support_level = "fully_structured"
     adapter_name = "apple_contacts"
     parser_version = f"{PARSER_VERSION}/contacts"
 
@@ -537,18 +636,29 @@ class ContactsAdapter:
         except UnicodeDecodeError as error:
             raise AppleAdapterError("malformed Apple vCard") from error
         cards = _components(text, "VCARD")
+        if not cards:
+            raise AppleAdapterError("Apple vCard document contains no cards")
         records: list[NormalizedRecord] = []
         seen: defaultdict[str, int] = defaultdict(int)
+        payloads: dict[str, bytes] = {}
         for lines in cards:
             props = _properties(lines)
             uid = (props.get("UID") or [None])[0]
             fn = (props.get("FN") or [None])[0]
-            payload = {"properties": props}
+            payload = {
+                "properties": props,
+                "property_details": _property_details(lines),
+                "lines": lines,
+            }
             base = (
                 f"provider:{uid}"
                 if uid
                 else f"content:{hashlib.sha256(canonical_json_bytes(payload)).hexdigest()}"
             )
+            digest = canonical_json_bytes(payload)
+            if base in payloads and payloads[base] != digest:
+                raise AppleAdapterError("ambiguous repeated Apple contact UID")
+            payloads[base] = digest
             seen[base] += 1
             source_id = base if seen[base] == 1 else f"{base}#occurrence={seen[base]}"
             records.append(
@@ -566,6 +676,7 @@ class ContactsAdapter:
 
 
 class CalendarAdapter:
+    support_level = "fully_structured"
     adapter_name = "apple_calendar"
     parser_version = f"{PARSER_VERSION}/calendar"
 
@@ -581,18 +692,41 @@ class CalendarAdapter:
         records: list[NormalizedRecord] = []
         events: list[NormalizedEvent] = []
         seen: defaultdict[str, int] = defaultdict(int)
+        calendars = _components(text, "VCALENDAR")
+        if len(calendars) != 1:
+            raise AppleAdapterError("Apple calendar requires one VCALENDAR envelope")
+        calendar_details = _property_details(calendars[0])
+        timezones = _components(text, "VTIMEZONE")
+        warnings: list[str] = []
+        payloads: dict[str, bytes] = {}
         for component in ("VEVENT", "VTODO"):
             for lines in _components(text, component):
                 props = _properties(lines)
                 uid = (props.get("UID") or [None])[0]
+                details = _property_details(lines)
+                payload = {
+                    "component": component,
+                    "properties": props,
+                    "property_details": details,
+                    "lines": lines,
+                    "calendar_properties": calendar_details,
+                    "timezones": timezones,
+                }
+                recurrence = hashlib.sha256(
+                    canonical_json_bytes(details.get("RECURRENCE-ID", []))
+                ).hexdigest()
                 base = (
-                    f"provider:{uid}"
+                    f"provider:{component}:{uid}:recurrence:{recurrence}"
                     if uid
-                    else f"content:{hashlib.sha256(canonical_json_bytes(props)).hexdigest()}"
+                    else f"content:{hashlib.sha256(canonical_json_bytes(payload)).hexdigest()}"
                 )
+                digest = canonical_json_bytes(payload)
+                if base in payloads and payloads[base] != digest:
+                    raise AppleAdapterError("ambiguous repeated Apple calendar UID/recurrence")
+                payloads[base] = digest
                 seen[base] += 1
                 source_id = base if seen[base] == 1 else f"{base}#occurrence={seen[base]}"
-                occurred_at = _timestamp((props.get("DTSTART") or props.get("DUE") or [None])[0])
+                occurred_at = _calendar_time(lines, warnings)
                 title = (props.get("SUMMARY") or [None])[0]
                 record_type = "calendar_event" if component == "VEVENT" else "reminder"
                 records.append(
@@ -604,7 +738,9 @@ class CalendarAdapter:
                         title=title,
                         occurred_at=occurred_at,
                         metadata=_metadata(
-                            member, {"component": component, "properties": props}, self.adapter_name
+                            member,
+                            payload,
+                            self.adapter_name,
                         ),
                         authority_kind="unknown",
                     )
@@ -618,17 +754,25 @@ class CalendarAdapter:
                         source_record_id=source_id,
                         text=title,
                         metadata=_metadata(
-                            member, {"component": component, "properties": props}, self.adapter_name
+                            member,
+                            payload,
+                            self.adapter_name,
                         ),
                         authority_kind="unknown",
                     )
                 )
         return _export(
-            member, sha256, adapter=self.adapter_name, records=tuple(records), events=tuple(events)
+            member,
+            sha256,
+            adapter=self.adapter_name,
+            records=tuple(records),
+            events=tuple(events),
+            warnings=tuple(sorted(set(warnings))),
         )
 
 
 class NotesAdapter:
+    support_level = "fully_structured"
     adapter_name = "apple_notes"
     parser_version = f"{PARSER_VERSION}/notes"
 
@@ -681,6 +825,7 @@ class NotesAdapter:
 
 
 class TextAdapter:
+    support_level = "fully_structured"
     adapter_name = "apple_text"
     parser_version = f"{PARSER_VERSION}/text"
 
@@ -707,6 +852,7 @@ class TextAdapter:
 
 
 class AssetAdapter:
+    support_level = "fully_structured"
     adapter_name = "apple_asset"
     parser_version = f"{PARSER_VERSION}/asset"
 

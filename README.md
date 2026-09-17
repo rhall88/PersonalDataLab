@@ -314,14 +314,14 @@ personal-data-lab import-apple-all data\raw\apple\2026-09-16
 Apple commonly nests ZIPs inside the downloaded ZIPs. The inventory recursively accounts for
 containers, guide PDFs, structured data, notes, contacts, calendars, and external media without
 extracting over the source. It reports physical outer-archive bytes separately from logical leaf
-bytes. Default JSON and progress output redact member paths because Notes filenames may contain
+bytes. Default JSON and progress output redact source and member paths because Notes filenames may contain
 private content; `inspect-apple --include-paths` is an explicit diagnostic opt-in.
 
 CSV rows are streamed in bounded chunks, Contacts and Calendars receive native VCF/ICS semantics,
 Notes retain text and attachment relationships, and binary media remains source-backed. See
 [`APPLE_INGESTION_SPEC.md`](APPLE_INGESTION_SPEC.md) and
-[`APPLE_PRODUCT_COVERAGE.md`](APPLE_PRODUCT_COVERAGE.md). The retained export's clean complete
-pass and exact replay are recorded in
+[`APPLE_PRODUCT_COVERAGE.md`](APPLE_PRODUCT_COVERAGE.md). Parser v3 corrects review findings and marks generic structured coverage as partial (exit 3).
+A fresh full-corpus acceptance run remains required. Historical parser v2 results are recorded in
 [`PR14_APPLE_PRODUCTION_ACCEPTANCE_REPORT.md`](PR14_APPLE_PRODUCTION_ACCEPTANCE_REPORT.md).
 
 ## Permanent cumulative and lossless contract
@@ -519,3 +519,4 @@ separate provenance family from independently acquired iMessages; see
 Full-text and semantic search,
 identity resolution, derived claims, MCP, and agents follow the source-ingestion phases. See
 [`ROADMAP.md`](ROADMAP.md) for the ordered program and completion gates.
+
