@@ -301,6 +301,29 @@ from the retained export have synthetic contract fixtures and remain explicitly 
 `not_present_in_export`; binary content stays in its immutable source and is represented by
 content-addressed external assets when processed.
 
+### Inspect and import an official Apple privacy export
+
+Keep the untouched Apple ZIPs together in their own acquisition folder, separate from iPhone or
+iMessage exports:
+
+```powershell
+personal-data-lab inspect-apple data\raw\apple\2026-09-16 --format table
+personal-data-lab import-apple-all data\raw\apple\2026-09-16
+```
+
+Apple commonly nests ZIPs inside the downloaded ZIPs. The inventory recursively accounts for
+containers, guide PDFs, structured data, notes, contacts, calendars, and external media without
+extracting over the source. It reports physical outer-archive bytes separately from logical leaf
+bytes. Default JSON and progress output redact member paths because Notes filenames may contain
+private content; `inspect-apple --include-paths` is an explicit diagnostic opt-in.
+
+CSV rows are streamed in bounded chunks, Contacts and Calendars receive native VCF/ICS semantics,
+Notes retain text and attachment relationships, and binary media remains source-backed. See
+[`APPLE_INGESTION_SPEC.md`](APPLE_INGESTION_SPEC.md) and
+[`APPLE_PRODUCT_COVERAGE.md`](APPLE_PRODUCT_COVERAGE.md). The retained export's clean complete
+pass and exact replay are recorded in
+[`PR14_APPLE_PRODUCTION_ACCEPTANCE_REPORT.md`](PR14_APPLE_PRODUCTION_ACCEPTANCE_REPORT.md).
+
 ## Permanent cumulative and lossless contract
 
 PersonalDataLab is cumulative and lossless. Raw exports are immutable evidence. Every distinct
@@ -490,7 +513,9 @@ Review the pull request before merging.
 
 Google ingestion is implemented through PR11 and production-accepted in PR13; see
 [`PR13_GOOGLE_PRODUCTION_ACCEPTANCE_REPORT.md`](PR13_GOOGLE_PRODUCTION_ACCEPTANCE_REPORT.md).
-The next gate is inventory-first support for official Apple privacy exports. Independently
-acquired iMessages remain a separate future source family. Full-text and semantic search,
+Official Apple privacy-export ingestion is implemented with recursive accounting and remains a
+separate provenance family from independently acquired iMessages; see
+[`PR14_APPLE_PRODUCTION_ACCEPTANCE_REPORT.md`](PR14_APPLE_PRODUCTION_ACCEPTANCE_REPORT.md).
+Full-text and semantic search,
 identity resolution, derived claims, MCP, and agents follow the source-ingestion phases. See
 [`ROADMAP.md`](ROADMAP.md) for the ordered program and completion gates.
