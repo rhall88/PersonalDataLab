@@ -31,8 +31,11 @@ The private corpus is unavailable in the review workspace, so no new real-data c
 - Four additional PostgreSQL regressions cover identical notes/shared attachments, changed and
   smaller exports, repackaged-source replay/provenance, and CSV interruption/resume/replay.
 - Ruff, Python compilation, and diff whitespace checks passed locally.
-- The branch CI runs the complete suite against PostgreSQL 18/pgvector; consult the current commit's
-  check result for database verification. These synthetic tests do not replace corpus acceptance.
+- PostgreSQL 18/pgvector CI at `7cbc82b` passed all 222 tests, including all four new database
+  regressions, with no skipped tests. Ruff, compilation, and whitespace checks also passed.
+  Evidence: https://github.com/rhall88/PersonalDataLab/actions/runs/35247146201/job/105290126970
+- The stale project version in `uv.lock` was synchronized with pyproject.toml (0.13.0);
+  `uv lock --check --offline` passes. These synthetic tests do not replace corpus acceptance.
 
 ## Historical parser v2 scope
 
