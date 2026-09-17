@@ -14,6 +14,9 @@ from .database import create_database_engine, import_openai_export, import_parse
 from .google_importer import iter_google_exports
 from .google_takeout.inventory import inspect_google, render_inventory_table
 from .google_takeout.orchestrator import import_google_all
+from .imessages.inventory import inspect_imessages
+from .imessages.inventory import render_inventory_table as render_imessages_table
+from .imessages.orchestrator import import_imessages_all
 from .migrations import LATEST_SCHEMA_VERSION, migrate_database
 from .openai_importer import parse_openai_export
 
@@ -81,6 +84,41 @@ def _parser() -> argparse.ArgumentParser:
     )
     apple_all.add_argument("source", help="Apple export ZIP or directory of ZIPs")
     apple_all.add_argument("--database-url", help="overrides DATABASE_URL from .env")
+    inspect_imessages_parser = subparsers.add_parser(
+        "inspect-imessages",
+        help="inventory independently acquired iMazing Messages CSV exports",
+    )
+    inspect_imessages_parser.add_argument(
+        "source", help="Messages CSV or directory containing one or more exports"
+    )
+    inspect_imessages_parser.add_argument(
+        "--format",
+        dest="output_format",
+        choices=("json", "table"),
+        default="json",
+    )
+    inspect_imessages_parser.add_argument(
+        "--include-paths",
+        action="store_true",
+        help="include potentially sensitive relative paths in JSON output",
+    )
+    imessages_all = subparsers.add_parser(
+        "import-imessages-all",
+        help="import all independently acquired iMazing Messages CSV exports",
+    )
+    imessages_all.add_argument(
+        "source", help="Messages CSV or directory containing one or more exports"
+    )
+    imessages_all.add_argument(
+        "--timezone",
+        required=True,
+        help="IANA timezone used by the export's timezone-naive timestamps",
+    )
+    imessages_all.add_argument(
+        "--device-label",
+        help="optional acquisition label; no device identifier is inferred from CSV content",
+    )
+    imessages_all.add_argument("--database-url", help="overrides DATABASE_URL from .env")
     migrate = subparsers.add_parser("migrate", help="upgrade an existing database schema")
     migrate.add_argument("--database-url", help="overrides DATABASE_URL from .env")
     return parser
@@ -238,6 +276,34 @@ def _apple_member_imported(member, parsed, result) -> None:
     )
 
 
+def _imessages_member_started(member) -> None:
+    print(
+        f"[imessages] parsing member_id={member.member_id} "
+        f"records={member.records} size_bytes={member.size_bytes}",
+        file=sys.stderr,
+        flush=True,
+    )
+
+
+def _imessages_member_imported(member, parsed, result) -> None:
+    conflicts = (
+        result.conflicted_conversations
+        + result.conflicted_events
+        + result.conflicted_records
+        + result.conflicted_assets
+        + result.conflicted_relationships
+    )
+    print(
+        f"[imessages] imported member_id={member.member_id} category={parsed.category} "
+        f"conversations={result.source_conversations} events={result.source_events} "
+        f"records={result.source_records} assets={result.source_assets} "
+        f"relationships={result.source_relationships} "
+        f"short_circuited={str(result.short_circuited).lower()} conflicts={conflicts}",
+        file=sys.stderr,
+        flush=True,
+    )
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     if args.command == "import-openai":
@@ -315,6 +381,34 @@ def main(argv: Sequence[str] | None = None) -> int:
             for member_id in product.failed_member_ids:
                 print(
                     f"[apple-all] failed member_id={member_id} product={product.product_key}",
+                    file=sys.stderr,
+                    flush=True,
+                )
+        print(
+            json.dumps(summary.model_dump(mode="json") | {"exit_code": summary.exit_code}, indent=2)
+        )
+        return summary.exit_code
+    if args.command == "inspect-imessages":
+        inventory = inspect_imessages(args.source)
+        if args.output_format == "table":
+            print(render_imessages_table(inventory))
+        else:
+            print(json.dumps(inventory.public_dict(include_paths=args.include_paths), indent=2))
+        return 5 if inventory.unknown_files else 0
+    if args.command == "import-imessages-all":
+        engine = create_database_engine(database_url(args.database_url))
+        summary = import_imessages_all(
+            engine,
+            args.source,
+            timezone_name=args.timezone,
+            device_label=args.device_label,
+            on_member_start=_imessages_member_started,
+            on_member_imported=_imessages_member_imported,
+        )
+        for item in summary.coverage.values():
+            if item.failures:
+                print(
+                    f"[imessages] failed member_id={item.member_id}",
                     file=sys.stderr,
                     flush=True,
                 )

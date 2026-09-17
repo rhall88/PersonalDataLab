@@ -2,7 +2,7 @@
 
 A local, provenance-first foundation for importing personal data into PostgreSQL.
 
-This repository contains the completed foundation and its first three source importers:
+This repository contains the completed foundation and its source importers:
 
 - Docker Compose
 - PostgreSQL 18 plus pgvector
@@ -24,10 +24,13 @@ This repository contains the completed foundation and its first three source imp
 - Google long-tail semantic adapters, YouTube/Chrome product data, and external My Activity assets
 - production acceptance against the retained 146.25 GB Takeout, including restart and targeted
   idempotency evidence
+- recursive official Apple privacy-export ingestion with semantic native-format adapters
+- independent iMazing Messages CSV ingestion for conversations, participants, messages, replies,
+  reactions, edits, deletions, and attachment references
 - reconciliation tests
 - Windows/PowerShell setup instructions
 
-MCP, embeddings, other source importers, full-text search, analytics, DuckDB/Parquet, identity
+MCP, embeddings, later source importers, full-text search, analytics, DuckDB/Parquet, identity
 resolution automation, and derived claims are deliberately deferred.
 
 ## 1. Prerequisites
@@ -324,6 +327,27 @@ Notes retain text and attachment relationships, and binary media remains source-
 A fresh full-corpus acceptance run remains required. Historical parser v2 results are recorded in
 [`PR14_APPLE_PRODUCTION_ACCEPTANCE_REPORT.md`](PR14_APPLE_PRODUCTION_ACCEPTANCE_REPORT.md).
 
+### Inspect and import an independently acquired iMessages export
+
+Keep device/backup exports outside the official Apple privacy-export folder. The retained source
+uses iMazing CSV and contains timezone-naive timestamps, so import requires an explicit IANA
+timezone:
+
+```powershell
+personal-data-lab inspect-imessages data\raw\imessages --format table
+personal-data-lab import-imessages-all data\raw\imessages `
+  --timezone America/Indianapolis `
+  --device-label retained-iphone-export
+```
+
+Default inventory and progress output redact source paths. Use
+`inspect-imessages --include-paths` only for local diagnostics. Missing attachment binaries are
+retained as reference-only assets rather than silently discarded or falsely marked available.
+See [`IMESSAGES_INGESTION_SPEC.md`](IMESSAGES_INGESTION_SPEC.md) and
+[`IMESSAGES_COVERAGE.md`](IMESSAGES_COVERAGE.md). The retained corpus passed controlled
+stop/resume and exact unchanged replay; see
+[`PR15_IMESSAGES_PRODUCTION_ACCEPTANCE_REPORT.md`](PR15_IMESSAGES_PRODUCTION_ACCEPTANCE_REPORT.md).
+
 ## Permanent cumulative and lossless contract
 
 PersonalDataLab is cumulative and lossless. Raw exports are immutable evidence. Every distinct
@@ -516,6 +540,10 @@ Google ingestion is implemented through PR11 and production-accepted in PR13; se
 Official Apple privacy-export ingestion is implemented with recursive accounting and remains a
 separate provenance family from independently acquired iMessages; see
 [`PR14_APPLE_PRODUCTION_ACCEPTANCE_REPORT.md`](PR14_APPLE_PRODUCTION_ACCEPTANCE_REPORT.md).
+Independent iMazing Messages CSV ingestion preserves device-export provenance, message
+lifecycle, reply/reaction semantics, and attachment availability without mixing it into the
+official Apple source family; see
+[`PR15_IMESSAGES_PRODUCTION_ACCEPTANCE_REPORT.md`](PR15_IMESSAGES_PRODUCTION_ACCEPTANCE_REPORT.md).
 Full-text and semantic search,
 identity resolution, derived claims, MCP, and agents follow the source-ingestion phases. See
 [`ROADMAP.md`](ROADMAP.md) for the ordered program and completion gates.

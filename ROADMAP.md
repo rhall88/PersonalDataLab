@@ -33,12 +33,14 @@ found defects outside exact-replay coverage; parser v3 fixes them and requires f
 acceptance. Generic structured coverage is now explicitly partial. Do not infer support for
 products or formats absent from the retained export.
 
-### iMessages device export
+### iMessages device export — production-ready in PR15
 
-Treat independently acquired iPhone/iMazing/RSMF/CSV messages as a separate source family, even
-though the logical ecosystem is Apple. Preserve acquisition method and device provenance while
-normalizing conversations, participants, messages, replies, reactions, edits, deletions, and
-external attachments.
+The retained iMazing CSV source now has complete inventory, privacy-safe progress, explicit
+timezone handling, stable duplicate-safe identity, conversations, participants, messages,
+replies, reactions and removals, edits, deletions, and honest reference-only attachment assets.
+A complete real-data PostgreSQL import, controlled stop/resume, and exact unchanged replay passed.
+It remains separate from the official Apple privacy-export provenance family. RSMF and raw iOS
+database support are not claimed because those formats were not present.
 
 ### Existing and later providers
 
@@ -89,7 +91,7 @@ chain must never depend on an embedding model, UI, or agent remaining available.
 | PR12 | Integrate PR7–PR11 onto `main`; replace the stale roadmap | Full cumulative CI on the real default-branch base |
 | PR13 | Complete Google production acceptance and corrected differential reimport | Complete accounting, safe resume, clean affected-member replay, no unintended second-run versions |
 | PR14 | Official Apple privacy-export ingestion review fixes | v3 synthetic regressions; fresh corpus and semantic acceptance pending |
-| Following PR | Separate iMessages device-export importer | Conversation/message/attachment reconciliation and identical reimport |
+| PR15 | Separate iMessages device-export importer | Complete accounting, safe resume, exact identical replay, no unintended versions |
 | Following PRs | Provider parity, unified search, identities, claims, semantic retrieval | Each derived object cites evidence and remains reversible |
 | Final product track | Timeline, exploration, analytics, MCP, and agents | Fast normal queries, permission boundaries, and evidence-citing answers |
 
