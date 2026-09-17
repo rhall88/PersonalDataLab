@@ -7,6 +7,7 @@ from zipfile import ZipFile
 
 import pytest
 
+from personal_data_lab.fingerprints import event_fingerprint
 from personal_data_lab.google_takeout import communications, orchestrator
 from personal_data_lab.google_takeout.adapters import (
     DEFAULT_ADAPTER_REGISTRY,
@@ -110,6 +111,27 @@ def test_mbox_is_two_pass_batched_and_preserves_messages_attachments_and_threads
     assert chunks[0].assets[0].sha256 == hashlib.sha256(b"synthetic-bytes").hexdigest()
 
 
+def test_mbox_disambiguates_reused_message_ids_with_gmail_thread_id(tmp_path: Path) -> None:
+    first = _mbox_message("reused-message")
+    second = _mbox_message("reused-message").replace(
+        "X-GM-THRID: thread-1", "X-GM-THRID: thread-2"
+    ).replace("sender@example.invalid", "other@example.invalid")
+    source = _zip(
+        tmp_path / "takeout-20260916T000000Z-001.zip",
+        {"Takeout/Mail/mail.mbox": (first + second).encode()},
+    )
+    member = _member(source, "mail.mbox")
+    adapter = DEFAULT_ADAPTER_REGISTRY.resolve(member)
+    assert adapter is not None
+
+    chunks = list(adapter.iter_parsed_exports(member))
+    event_ids = [event.source_record_id for chunk in chunks for event in chunk.events]
+
+    assert len(event_ids) == 2
+    assert len(set(event_ids)) == 2
+    assert all(value.startswith("provider-thread:") for value in event_ids)
+
+
 def test_mbox_oversized_message_is_bounded_and_explicit(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -132,6 +154,36 @@ def test_mbox_oversized_message_is_bounded_and_explicit(
     assert len(chunks) == 1
     assert chunks[0].events[0].event_type == "mail_message_oversized"
     assert chunks[0].parse_warnings == ("MBOX message exceeded bounded parser limit",)
+
+
+def test_mbox_escapes_surrogate_bytes_in_malformed_headers(tmp_path: Path) -> None:
+    content = (
+        b"From sender@example.invalid Tue Sep 16 12:00:00 2026\n"
+        b"Message-ID: <malformed-header@example.invalid>\n"
+        b"Date: Tue, 16 Sep 2026 12:00:00 +0000\n"
+        b"From: sender@example.invalid\n"
+        b"X-Malformed: before-\xff-after\n"
+        b"Content-Type: text/plain; charset=utf-8\n"
+        b"\n"
+        b"Synthetic body\n"
+    )
+    source = _zip(
+        tmp_path / "takeout-20260916T000000Z-001.zip",
+        {"Takeout/Mail/All mail.mbox": content},
+    )
+    member = _member(source, ".mbox")
+    adapter = DEFAULT_ADAPTER_REGISTRY.resolve(member)
+    assert adapter is not None
+
+    chunks = list(adapter.iter_parsed_exports(member))
+
+    header = next(
+        item
+        for item in chunks[0].events[0].metadata["google"]["headers"]
+        if item["name"] == "X-Malformed"
+    )
+    assert header["value"] == "before-\\udcff-after"
+    event_fingerprint(chunks[0].events[0])
 
 
 def test_google_chat_messages_and_explicit_attachment_references(tmp_path: Path) -> None:

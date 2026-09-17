@@ -139,12 +139,16 @@ def test_notebook_documents_and_assets_share_notebook_identity(tmp_path: Path) -
             "Takeout/NotebookLM/Notebook One/source.html": (
                 "<html><body><p>Synthetic source text</p></body></html>"
             ),
+            "Takeout/NotebookLM/Notebook One/Sources/source metadata.json": json.dumps(
+                {"title": "Synthetic source", "sourceType": "web"}
+            ),
             "Takeout/NotebookLM/Notebook One/audio.wav": b"synthetic-audio-overview",
         },
     )
 
     _, notebook = _parse(source, "notebook.json")
     _, document = _parse(source, "source.html")
+    _, source_metadata = _parse(source, "source metadata.json")
     _, asset = _parse(source, "audio.wav")
 
     notebook_id = notebook.records[0].source_record_id
@@ -152,6 +156,8 @@ def test_notebook_documents_and_assets_share_notebook_identity(tmp_path: Path) -
     assert document.records[0].record_type == "document"
     assert "Synthetic source text" in (document.records[0].text or "")
     assert document.relationships[0].subject_source_id == notebook_id
+    assert source_metadata.records[0].record_type == "document"
+    assert source_metadata.relationships[0].subject_source_id == notebook_id
     assert asset.relationships[0].subject_source_id == notebook_id
 
 

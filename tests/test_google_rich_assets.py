@@ -74,11 +74,41 @@ def test_photos_sidecar_links_to_the_same_external_asset_identity(tmp_path: Path
     asset_adapter, binary = _parse(source, "photo.jpg")
 
     assert sidecar_adapter.adapter_name == "rich_asset_semantic"
+    assert sidecar.parser_version == "google-photos-v2"
     assert asset_adapter.adapter_name == "rich_binary_asset"
     assert sidecar.records[0].record_type == "photo_metadata"
     assert sidecar.records[0].metadata["google"]["future"] == {"preserved": True}
     assert sidecar.relationships[0].object_source_id == binary.assets[0].source_asset_id
     assert binary.assets[0].sha256 == hashlib.sha256(media).hexdigest()
+
+
+def test_photos_duplicate_sidecars_remain_distinct_observations(tmp_path: Path) -> None:
+    first = {
+        "title": "photo.jpg",
+        "photoTakenTime": {"timestamp": "1789560000"},
+        "url": "https://example.invalid/first",
+    }
+    second = {
+        "title": "photo.jpg",
+        "photoTakenTime": {"timestamp": "1789560001"},
+        "url": "https://example.invalid/second",
+    }
+    source = _zip(
+        tmp_path / "takeout-20260916T000000Z-001.zip",
+        {
+            "Takeout/Google Photos/Album/photo.jpg.supplemental-metadata.json": json.dumps(first),
+            "Takeout/Google Photos/Album/photo.jpg.supplemental-metadata(1).json": json.dumps(second),
+        },
+    )
+
+    _, parsed_first = _parse(source, "photo.jpg.supplemental-metadata.json")
+    _, parsed_second = _parse(source, "photo.jpg.supplemental-metadata(1).json")
+
+    assert parsed_first.records[0].source_record_id != parsed_second.records[0].source_record_id
+    assert (
+        parsed_first.relationships[0].object_source_id
+        == parsed_second.relationships[0].object_source_id
+    )
 
 
 def test_photos_album_entries_create_ordered_asset_relationships(tmp_path: Path) -> None:

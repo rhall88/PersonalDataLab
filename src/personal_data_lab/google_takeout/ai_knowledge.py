@@ -49,6 +49,17 @@ def _notebook_identity(member: TakeoutMember) -> str:
     return _path_identity(root)
 
 
+def _is_notebook_child_document(member: TakeoutMember) -> bool:
+    if member.product_key != "notebooklm":
+        return False
+    parts = PurePosixPath(_relative(member)).parts
+    return len(parts) >= 3 and parts[1].casefold() in {
+        "artifacts",
+        "discovered sources",
+        "sources",
+    }
+
+
 def _unix_time(seconds: object, nanos: object = 0) -> datetime | None:
     if not isinstance(seconds, (int, float)) or isinstance(seconds, bool):
         return None
@@ -356,7 +367,7 @@ def _document_records(
 @dataclass(frozen=True)
 class AIKnowledgeStructuredAdapter:
     adapter_name: str = "ai_knowledge_semantic"
-    parser_version: str = "google-ai-knowledge-v1"
+    parser_version: str = "google-ai-knowledge-v2"
     product_keys: tuple[str, ...] = AI_KNOWLEDGE_PRODUCTS
     supported_patterns: tuple[str, ...] = tuple(
         f"**/*{extension}" for extension in STRUCTURED_EXTENSIONS
@@ -379,7 +390,7 @@ class AIKnowledgeStructuredAdapter:
     def parse(self, stream: BinaryIO, member: TakeoutMember) -> ParsedExport:
         content = _read_bounded(stream, member)
         try:
-            if member.extension == ".json":
+            if member.extension == ".json" and not _is_notebook_child_document(member):
                 records, relationships = _json_records(content, member)
             else:
                 records, relationships = _document_records(content, member)
