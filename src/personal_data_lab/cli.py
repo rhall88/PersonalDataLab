@@ -6,6 +6,9 @@ import sys
 from collections.abc import Sequence
 
 from .anthropic_importer import parse_anthropic_export
+from .apple_export.inventory import inspect_apple
+from .apple_export.inventory import render_inventory_table as render_apple_table
+from .apple_export.orchestrator import import_apple_all
 from .config import database_url
 from .database import create_database_engine, import_openai_export, import_parsed_exports
 from .google_importer import iter_google_exports
@@ -52,8 +55,32 @@ def _parser() -> argparse.ArgumentParser:
         "import-google-all",
         help="inventory and import all members supported by registered Takeout adapters",
     )
-    google_all.add_argument("source", help="Takeout ZIP, folder of split ZIPs, or extracted Takeout")
+    google_all.add_argument(
+        "source", help="Takeout ZIP, folder of split ZIPs, or extracted Takeout"
+    )
     google_all.add_argument("--database-url", help="overrides DATABASE_URL from .env")
+    inspect_apple_parser = subparsers.add_parser(
+        "inspect-apple",
+        help="recursively inventory official Apple privacy-export ZIPs",
+    )
+    inspect_apple_parser.add_argument("source", help="Apple export ZIP or directory of ZIPs")
+    inspect_apple_parser.add_argument(
+        "--format",
+        dest="output_format",
+        choices=("json", "table"),
+        default="json",
+    )
+    inspect_apple_parser.add_argument(
+        "--include-paths",
+        action="store_true",
+        help="include potentially sensitive member paths in JSON output",
+    )
+    apple_all = subparsers.add_parser(
+        "import-apple-all",
+        help="inventory and import all official Apple privacy-export data members",
+    )
+    apple_all.add_argument("source", help="Apple export ZIP or directory of ZIPs")
+    apple_all.add_argument("--database-url", help="overrides DATABASE_URL from .env")
     migrate = subparsers.add_parser("migrate", help="upgrade an existing database schema")
     migrate.add_argument("--database-url", help="overrides DATABASE_URL from .env")
     return parser
@@ -184,6 +211,33 @@ def _google_all_member_imported(member, parsed, result) -> None:
     )
 
 
+def _apple_member_started(member, adapter) -> None:
+    print(
+        f"[apple-all] parsing member_id={member.member_id} "
+        f"product={member.product_key} adapter={adapter.adapter_name} "
+        f"size_bytes={member.uncompressed_size}",
+        file=sys.stderr,
+        flush=True,
+    )
+
+
+def _apple_member_imported(member, parsed, result) -> None:
+    conflicts = (
+        result.conflicted_records
+        + result.conflicted_events
+        + result.conflicted_assets
+        + result.conflicted_relationships
+    )
+    print(
+        f"[apple-all] imported member_id={member.member_id} product={member.product_key} "
+        f"records={result.source_records} events={result.source_events} "
+        f"assets={result.source_assets} relationships={result.source_relationships} "
+        f"short_circuited={str(result.short_circuited).lower()} conflicts={conflicts}",
+        file=sys.stderr,
+        flush=True,
+    )
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     if args.command == "import-openai":
@@ -240,6 +294,32 @@ def main(argv: Sequence[str] | None = None) -> int:
                 summary.model_dump(mode="json") | {"exit_code": summary.exit_code},
                 indent=2,
             )
+        )
+        return summary.exit_code
+    if args.command == "inspect-apple":
+        inventory = inspect_apple(args.source)
+        if args.output_format == "table":
+            print(render_apple_table(inventory))
+        else:
+            print(json.dumps(inventory.public_dict(include_paths=args.include_paths), indent=2))
+        return 5 if inventory.unknown_members_count else 0
+    if args.command == "import-apple-all":
+        engine = create_database_engine(database_url(args.database_url))
+        summary = import_apple_all(
+            engine,
+            args.source,
+            on_member_start=_apple_member_started,
+            on_member_imported=_apple_member_imported,
+        )
+        for product in summary.coverage.values():
+            for member_id in product.failed_member_ids:
+                print(
+                    f"[apple-all] failed member_id={member_id} product={product.product_key}",
+                    file=sys.stderr,
+                    flush=True,
+                )
+        print(
+            json.dumps(summary.model_dump(mode="json") | {"exit_code": summary.exit_code}, indent=2)
         )
         return summary.exit_code
     if args.command == "migrate":
