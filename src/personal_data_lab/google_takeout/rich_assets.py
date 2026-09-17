@@ -166,7 +166,12 @@ def _photo_sidecar(content: bytes, member: TakeoutMember) -> ParsedExport:
                 if target_extension in {".3gp", ".avi", ".mkv", ".mov", ".mp4", ".webm"}
                 else "photo_metadata"
             )
-            source_id = _dedupe_identity(_path_identity(target_path), seen)
+            # A Takeout export can contain multiple sidecars whose embedded title points
+            # at the same media path.  The sidecars are distinct provider observations;
+            # the relationship below is what joins each one to the shared media asset.
+            source_id = _dedupe_identity(
+                _path_identity(_member_relative_path(member)), seen
+            )
             namespace = "google_takeout/google_photos/media_metadata/json"
             records.append(
                 NormalizedRecord(
@@ -247,7 +252,7 @@ def _photo_sidecar(content: bytes, member: TakeoutMember) -> ParsedExport:
     return _parsed_export(
         member=member,
         content=content,
-        parser_version="google-photos-v1",
+        parser_version="google-photos-v2",
         category="takeout/google_photos/semantic/json",
         records=records,
         relationships=relationships,

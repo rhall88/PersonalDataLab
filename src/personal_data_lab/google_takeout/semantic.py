@@ -622,7 +622,10 @@ class CalendarAdapter:
                         text=summary_item[1] if summary_item else None,
                         metadata={
                             "google": raw,
-                            "_pdl": {"definition_source_id": event_id, "end_at": end_at},
+                            "_pdl": {
+                                "definition_source_id": event_id,
+                                "end_at": end_at.isoformat() if end_at else None,
+                            },
                         },
                         provider_updated_at=updated_at,
                         authority_at=event_authority_at,

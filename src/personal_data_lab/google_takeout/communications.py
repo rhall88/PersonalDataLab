@@ -46,6 +46,19 @@ MAX_MBOX_MESSAGE_BYTES = 128 * 1024 * 1024
 MAX_NORMALIZED_MESSAGE_TEXT = 2 * 1024 * 1024
 
 
+def _json_safe_email_text(value: str | None) -> str | None:
+    """Escape surrogate-escaped mail bytes without discarding their identity."""
+
+    if value is None:
+        return None
+    return "".join(
+        character
+        if not 0xD800 <= ord(character) <= 0xDFFF
+        else f"\\u{ord(character):04x}"
+        for character in value
+    )
+
+
 def _safe_datetime(value: str | None) -> datetime | None:
     if not value:
         return None
@@ -59,6 +72,7 @@ def _safe_datetime(value: str | None) -> datetime | None:
 
 
 def _strip_message_id(value: str | None) -> str | None:
+    value = _json_safe_email_text(value)
     if not value:
         return None
     cleaned = value.strip().strip("<>").strip()
@@ -66,10 +80,10 @@ def _strip_message_id(value: str | None) -> str | None:
 
 
 def _thread_id(message: Message, message_id: str) -> str:
-    provider_thread = message.get("X-GM-THRID")
+    provider_thread = _json_safe_email_text(message.get("X-GM-THRID"))
     if provider_thread and provider_thread.strip():
         return f"provider:{provider_thread.strip()}"
-    references = message.get("References")
+    references = _json_safe_email_text(message.get("References"))
     if references:
         first = next((item.strip("<>") for item in references.split() if item.strip("<>")), None)
         if first:
@@ -109,7 +123,7 @@ def _body_and_attachments(
             continue
         content_type = part.get_content_type()
         disposition = part.get_content_disposition()
-        filename = part.get_filename()
+        filename = _json_safe_email_text(part.get_filename())
         payload = _decoded_part(part)
         if filename or disposition == "attachment":
             safe_filename = filename or f"attachment-{index}"
@@ -129,7 +143,7 @@ def _body_and_attachments(
                     metadata={
                         "google": {
                             "content_disposition": disposition,
-                            "content_id": part.get("Content-ID"),
+                            "content_id": _json_safe_email_text(part.get("Content-ID")),
                         },
                         "_pdl": {"message_source_id": message_id, "part_index": index},
                     },
@@ -207,7 +221,17 @@ def _message_objects(
     list[str],
 ]:
     provider_message_id = _strip_message_id(message.get("Message-ID"))
-    message_id = f"provider:{provider_message_id}" if provider_message_id else f"content:{raw_sha256}"
+    provider_thread_id = _json_safe_email_text(message.get("X-GM-THRID"))
+    provider_thread_id = provider_thread_id.strip() if provider_thread_id else None
+    if provider_message_id and provider_thread_id:
+        # RFC Message-ID values are not globally reliable in real MBOX exports.
+        # Gmail's thread identifier disambiguates reused IDs without falling back
+        # to volatile parser order or discarding either provider observation.
+        message_id = f"provider-thread:{provider_thread_id}:message:{provider_message_id}"
+    elif provider_message_id:
+        message_id = f"provider:{provider_message_id}"
+    else:
+        message_id = f"content:{raw_sha256}"
     thread_id = _thread_id(message, message_id)
     occurred_at = _safe_datetime(message.get("Date"))
     body, assets, warnings = _body_and_attachments(
@@ -215,7 +239,13 @@ def _message_objects(
         member=member,
         message_id=message_id,
     )
-    headers = [{"name": name, "value": value} for name, value in message.raw_items()]
+    headers = [
+        {
+            "name": _json_safe_email_text(name) or "",
+            "value": _json_safe_email_text(value) or "",
+        }
+        for name, value in message.raw_items()
+    ]
     thread = NormalizedRecord(
         source="google",
         record_type="conversation",
@@ -234,7 +264,7 @@ def _message_objects(
         event_type="mail_message",
         source_record_namespace="google_takeout/mail/message/mbox",
         source_record_id=message_id,
-        actor_identity=message.get("From"),
+        actor_identity=_json_safe_email_text(message.get("From")),
         text=body,
         metadata={
             "google": {"headers": headers},
@@ -333,7 +363,7 @@ def _iter_mbox_messages(stream: BinaryIO) -> Iterator[tuple[Message | None, str,
 
 class MboxAdapter:
     adapter_name = "gmail_mbox"
-    parser_version = "google-gmail-mbox-v1"
+    parser_version = "google-gmail-mbox-v2"
     product_keys = ("mail", "groups")
     supported_patterns = ("**/*.mbox",)
     support_level: SupportLevel = "fully_structured"

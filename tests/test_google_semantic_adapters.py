@@ -64,6 +64,8 @@ def test_calendar_ics_preserves_definition_and_projects_only_one_off_event(tmp_p
     ]
     assert len(parsed.events) == 1
     assert parsed.events[0].occurred_at.isoformat() == "2026-09-18T13:00:00+00:00"
+    assert parsed.events[0].metadata["_pdl"]["end_at"] == "2026-09-18T14:00:00+00:00"
+    json.dumps(parsed.events[0].metadata)
     assert len(parsed.relationships) == 3
     assert len(parsed.assets) == 1
     assert parsed.assets[0].mime_type == "application/pdf"
