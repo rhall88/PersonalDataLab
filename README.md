@@ -34,6 +34,11 @@ This repository contains the completed foundation and its source importers:
 MCP, embeddings, later source importers, full-text search, analytics, DuckDB/Parquet, identity
 resolution automation, and derived claims are deliberately deferred.
 
+The audited implementation, source-by-source acceptance boundaries, merged PR state, schema,
+verification evidence, and ordered next work are summarized in
+[`PROJECT_STATE.md`](PROJECT_STATE.md). Milestone reports remain historical evidence; use the
+project-state summary and [`ROADMAP.md`](ROADMAP.md) for current sequencing.
+
 ## 1. Prerequisites
 
 - Windows with PowerShell
@@ -332,8 +337,13 @@ CSV rows are streamed in bounded chunks, Contacts and Calendars receive native V
 Notes retain text and attachment relationships, and binary media remains source-backed. See
 [`APPLE_INGESTION_SPEC.md`](APPLE_INGESTION_SPEC.md) and
 [`APPLE_PRODUCT_COVERAGE.md`](APPLE_PRODUCT_COVERAGE.md). Parser v3 corrects review findings and marks generic structured coverage as partial (exit 3).
-A fresh full-corpus acceptance run remains required. Historical parser v2 results are recorded in
-[`PR14_APPLE_PRODUCTION_ACCEPTANCE_REPORT.md`](PR14_APPLE_PRODUCTION_ACCEPTANCE_REPORT.md).
+Fresh parser-v3 real-corpus persistence, controlled interruption/resume, semantic reconciliation,
+the empty-TestFlight repair, and exact replay passed in PR16. This is operational acceptance, not
+full product-specific semantic coverage: 27 present product groups remain partially structured,
+so the honest complete replay result is exit 3 and `production_ready: false`. See
+[`PR16_APPLE_V3_PRODUCTION_ACCEPTANCE_REPORT.md`](PR16_APPLE_V3_PRODUCTION_ACCEPTANCE_REPORT.md);
+[`PR14_APPLE_PRODUCTION_ACCEPTANCE_REPORT.md`](PR14_APPLE_PRODUCTION_ACCEPTANCE_REPORT.md)
+preserves the historical parser-v2 results and review findings.
 
 ### Inspect and import an independently acquired iMessages export
 

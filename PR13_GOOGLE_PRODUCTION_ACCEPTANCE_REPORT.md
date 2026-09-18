@@ -18,7 +18,12 @@ The retained export contains:
 - 51 present products and 17 absent products from the 68-product registry;
 - zero unknown or unsupported members.
 
-All 51 present products route to fully structured adapters.
+All 51 present products route deterministically without generic fallback, raw preservation, or an
+unknown/unsupported disposition. The product-level coverage classification is more precise than
+the original “fully structured” shorthand: 43 products are fully structured, six are empty in the
+retained export, Google Wallet is asset-indexed, and Nest is partially structured because 31
+provider-malformed JSONL rows are preserved as explicit opaque events. The remaining 17 registry
+products were not present and have synthetic contract coverage only.
 
 ## Restart and complete-pass evidence
 
@@ -34,7 +39,8 @@ The subsequent complete pass processed all 25,427 data members and accounted for
 - zero unknown members;
 - zero raw-preserved members;
 - zero unsupported variants;
-- all 51 present products fully structured.
+- all 51 present products explicitly dispositioned: 43 fully structured, six empty,
+  one asset-indexed, and one partially structured; no generic/raw/unknown member remained.
 
 That pass also surfaced provider-identity collisions previously hidden by cached import results.
 Because a complete third read of 146.25 GB was intentionally avoided, PR13 used a clean,
@@ -92,8 +98,9 @@ These warnings describe intentional bounded or opaque projections, not skipped s
 
 ## Boundary and next frontier
 
-PR13 changes no canonical schema and commits no acceptance artifacts. Google ingestion is now
+PR13 changes no canonical schema and commits no acceptance artifacts. Google ingestion is
 operationally accepted for this retained export through the complete-pass plus clean differential
-replay evidence above. The next frontier is PR14: read-only inventory and complete accounting for
-the official Apple privacy export. Independently acquired iMessages remain a separate future
-source family and provenance boundary.
+replay evidence above, with the product-level semantic qualifications recorded in
+[`GOOGLE_PRODUCT_COVERAGE.md`](GOOGLE_PRODUCT_COVERAGE.md). At publication the next frontier was
+official Apple inventory; Apple, iMessages, and OpenAI have since landed in PR14–PR17. See
+[`PROJECT_STATE.md`](PROJECT_STATE.md) and [`ROADMAP.md`](ROADMAP.md) for current sequencing.

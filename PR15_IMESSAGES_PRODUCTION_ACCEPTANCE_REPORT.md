@@ -105,6 +105,8 @@ Excel, and text exports were not supplied and are not claimed. The retained CSV 
 but contains no attachment bytes; the database therefore records honest unavailable/reference-
 only assets.
 
-The next source-ingestion frontier is bringing existing OpenAI and Anthropic imports to the same
-coverage and real-export acceptance standard. Unified search and evidence-backed identity
-resolution follow source parity; neither may rewrite iMessages source truth.
+At publication the next source-ingestion frontier was bringing existing OpenAI and Anthropic
+imports to the same coverage and real-export acceptance standard. OpenAI has since completed that
+gate in PR17; Anthropic remains the immediate source-parity priority. Unified search and
+evidence-backed identity resolution follow source parity; neither may rewrite iMessages source
+truth. See [`PROJECT_STATE.md`](PROJECT_STATE.md) for the current baseline.

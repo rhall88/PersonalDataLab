@@ -1,11 +1,30 @@
 # Apple privacy-export product coverage
 
 This is the permanent observed-surface registry for the retained official Apple privacy export.
-The file counts below describe the parser v2 inventory; v3 requires a fresh corpus inventory.
-It is evidence-shaped: absent products are not claimed, and independently extracted iMessages
-are deliberately excluded.
+The per-product file counts below preserve the historical parser-v2 inventory; they are not
+parser-v3 counts. Parser v3 has since completed fresh corpus inventory and operational acceptance.
+Coverage is evidence-shaped: absent products are not claimed, and independently extracted
+iMessages are deliberately excluded.
 
-| Product key | Observed data files | Representation |
+## Current parser-v3 acceptance summary
+
+- 31 outer ZIP archives and 18 nested ZIP containers;
+- 832 recursive entries: 814 classified data leaves, 18 structural containers, and zero unknowns;
+- 1,960,490,082 logical leaf bytes processed;
+- all 814 data leaves persist, resume, and short-circuit on exact replay;
+- zero failures, unknowns, parse warnings, or conflicts;
+- 27 present product groups remain `partially_structured`; Business Chat Support, Store Credit,
+  and Voice Memos are `fully_structured`; Apple TV and Podcast Information and Siri were not
+  present;
+- complete replay exits 3 with `production_ready: false` because partial semantic coverage is an
+  explicit gate, not because persistence or accounting failed.
+
+See [`PR16_APPLE_V3_PRODUCTION_ACCEPTANCE_REPORT.md`](PR16_APPLE_V3_PRODUCTION_ACCEPTANCE_REPORT.md)
+for the accepted parser-v3 evidence.
+
+## Historical parser-v2 per-product inventory
+
+| Product key | Parser-v2 observed data files | Representation |
 |---|---:|---|
 | account_device | 11 | structured records and account/device events |
 | app_notifications | 1 | structured notification events and records |
@@ -41,8 +60,10 @@ are deliberately excluded.
 | wallet | 6 | structured cards, tokens, preferences, account, and transaction records/events |
 
 The v2 retained corpus had 29 present registry products and three absent entries. These historical
-467-member counts are not a v3 acceptance claim. In v3, generic CSV/JSON/XML members are explicitly
-`partially_structured` even when all fields are preserved; native-format support is finalized from
-actual parse/import results. Warnings, failures, unknowns, and partial support block the production
-ready gate. The revised guide classification may increase asset counts. See
-[`PR14_APPLE_PRODUCTION_ACCEPTANCE_REPORT.md`](PR14_APPLE_PRODUCTION_ACCEPTANCE_REPORT.md).
+467-member counts remain useful for comparison but are superseded as acceptance evidence by PR16.
+Parser v3 correctly reclassifies 347 PDFs as product data, accepts five valid empty TestFlight
+datasets, and uses actual parse/import results to finalize support. Generic CSV/JSON/XML coverage
+remains explicitly `partially_structured` even when every provider field is preserved. Warnings,
+failures, unknowns, and partial support continue to block the stricter `production_ready` gate.
+See [`PR14_APPLE_PRODUCTION_ACCEPTANCE_REPORT.md`](PR14_APPLE_PRODUCTION_ACCEPTANCE_REPORT.md) for
+the historical v2 results and review findings.
