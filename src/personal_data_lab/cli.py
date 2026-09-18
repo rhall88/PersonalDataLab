@@ -4,6 +4,7 @@ import argparse
 import json
 import sys
 from collections.abc import Sequence
+from pathlib import Path
 
 from .anthropic_importer import parse_anthropic_export
 from .apple_export.inventory import inspect_apple
@@ -18,15 +19,35 @@ from .imessages.inventory import inspect_imessages
 from .imessages.inventory import render_inventory_table as render_imessages_table
 from .imessages.orchestrator import import_imessages_all
 from .migrations import LATEST_SCHEMA_VERSION, migrate_database
+from .openai_export.inventory import inspect_openai
+from .openai_export.orchestrator import import_openai_all
 from .openai_importer import parse_openai_export
 
 
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="personal-data-lab")
     subparsers = parser.add_subparsers(dest="command", required=True)
-    openai = subparsers.add_parser("import-openai", help="import an OpenAI data export")
-    openai.add_argument("source", help="ZIP, extracted directory, or conversations.json")
+    openai = subparsers.add_parser("import-openai", help="import an official OpenAI data export")
+    openai.add_argument(
+        "source", help="official ZIP, extracted export, or legacy conversations.json"
+    )
     openai.add_argument("--database-url", help="overrides DATABASE_URL from .env")
+    inspect_openai_parser = subparsers.add_parser(
+        "inspect-openai",
+        help="inventory every physical and logical member of an official OpenAI export",
+    )
+    inspect_openai_parser.add_argument("source", help="official OpenAI ZIP or extracted export")
+    inspect_openai_parser.add_argument(
+        "--format",
+        dest="output_format",
+        choices=("json", "table"),
+        default="json",
+    )
+    inspect_openai_parser.add_argument(
+        "--include-paths",
+        action="store_true",
+        help="include potentially sensitive export member paths in JSON output",
+    )
     anthropic = subparsers.add_parser(
         "import-anthropic",
         help="import an Anthropic manifest and its local source archives",
@@ -304,14 +325,81 @@ def _imessages_member_imported(member, parsed, result) -> None:
     )
 
 
+def _openai_member_started(member) -> None:
+    print(
+        f"[openai] parsing member_id={member.member_id} "
+        f"category={member.accounting_category} size_bytes={member.size_bytes}",
+        file=sys.stderr,
+        flush=True,
+    )
+
+
+def _openai_member_imported(member, parsed, result) -> None:
+    conflicts = (
+        result.conflicted_conversations
+        + result.conflicted_events
+        + result.conflicted_records
+        + result.conflicted_assets
+        + result.conflicted_relationships
+    )
+    print(
+        f"[openai] imported member_id={member.member_id} category={member.accounting_category} "
+        f"conversations={result.source_conversations} events={result.source_events} "
+        f"records={result.source_records} assets={result.source_assets} "
+        f"relationships={result.source_relationships} "
+        f"short_circuited={str(result.short_circuited).lower()} conflicts={conflicts}",
+        file=sys.stderr,
+        flush=True,
+    )
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     if args.command == "import-openai":
-        parsed = parse_openai_export(args.source)
         engine = create_database_engine(database_url(args.database_url))
-        result = import_openai_export(engine, parsed)
-        print(json.dumps(result.model_dump() | {"reconciled": result.reconciled}, indent=2))
-        return 2 if result.has_conflicts else 0
+        source = Path(args.source).expanduser()
+        if source.is_file() and source.name.casefold() == "conversations.json":
+            parsed = parse_openai_export(source)
+            result = import_openai_export(engine, parsed)
+            print(json.dumps(result.model_dump() | {"reconciled": result.reconciled}, indent=2))
+            return 2 if result.has_conflicts else 0
+        summary = import_openai_all(
+            engine,
+            args.source,
+            on_member_start=_openai_member_started,
+            on_member_imported=_openai_member_imported,
+        )
+        for item in summary.coverage.values():
+            if item.failures:
+                print(
+                    f"[openai] failed member_id={item.member_id} "
+                    f"category={item.accounting_category}",
+                    file=sys.stderr,
+                    flush=True,
+                )
+        print(
+            json.dumps(summary.model_dump(mode="json") | {"exit_code": summary.exit_code}, indent=2)
+        )
+        return summary.exit_code
+    if args.command == "inspect-openai":
+        inventory = inspect_openai(args.source)
+        if args.output_format == "table":
+            print(
+                "\n".join(
+                    (
+                        f"physical members: {inventory.physical_members_total}",
+                        f"logical files: {inventory.logical_files_total}",
+                        f"conversation shards: {inventory.conversation_shards}",
+                        f"structured JSON files: {inventory.structured_json_files}",
+                        f"binary assets: {inventory.binary_asset_files}",
+                        f"rendered HTML files: {inventory.rendered_html_files}",
+                        f"unknown files: {inventory.unknown_files}",
+                    )
+                )
+            )
+        else:
+            print(json.dumps(inventory.public_dict(include_paths=args.include_paths), indent=2))
+        return 5 if inventory.unknown_files else 0
     if args.command == "import-anthropic":
         parsed_exports = parse_anthropic_export(args.manifest)
         engine = create_database_engine(database_url(args.database_url))

@@ -1,4 +1,4 @@
-# PersonalDataLab roadmap after Apple parser-v3 acceptance
+# PersonalDataLab roadmap after OpenAI production acceptance
 
 PersonalDataLab develops in four layers. Each layer depends on the evidence guarantees beneath
 it: acquire and preserve first, normalize second, derive understanding third, and expose that
@@ -45,9 +45,18 @@ A complete real-data PostgreSQL import, controlled stop/resume, and exact unchan
 It remains separate from the official Apple privacy-export provenance family. RSMF and raw iOS
 database support are not claimed because those formats were not present.
 
-### Existing and later providers
+### Official OpenAI export — production-ready in PR17
 
-Bring OpenAI and Anthropic to the same coverage, asset, relationship, and real-export acceptance
+The retained manifest-based export now has complete physical/logical accounting, sharded
+conversation ingestion, conversation-scoped mapping identities, parent and asset relationships,
+structured JSON preservation, external binary assets, explicit unavailable-asset placeholders,
+restart-safe transactions, and exact unchanged replay. A complete real-data PostgreSQL import,
+controlled stop/resume, production-defect repair, and exact replay passed with exit code 0. See
+[`PR17_OPENAI_PRODUCTION_ACCEPTANCE_REPORT.md`](PR17_OPENAI_PRODUCTION_ACCEPTANCE_REPORT.md).
+
+### Anthropic and later providers
+
+Bring Anthropic to the same inventory, asset, relationship, restart, and real-export acceptance
 standard. Add later providers only when source evidence exists; every provider starts with
 inventory and explicit disposition rather than optimistic format assumptions.
 
@@ -96,6 +105,7 @@ chain must never depend on an embedding model, UI, or agent remaining available.
 | PR14 | Official Apple privacy-export ingestion review fixes | Review defects fixed and synthetic regression gate passed |
 | PR15 | Separate iMessages device-export importer | Complete accounting, safe resume, exact identical replay, no unintended versions |
 | PR16 | Official Apple parser-v3 real-corpus acceptance | Fresh import, safe resume, empty-dataset repair, semantic reconciliation, exact replay |
-| Following PRs | Provider parity, unified search, identities, claims, semantic retrieval | Each derived object cites evidence and remains reversible |
+| PR17 | Official OpenAI production ingestion and real-corpus acceptance | Manifest accounting, safe resume, complete graph/assets, exact replay |
+| Following PRs | Anthropic parity, unified search, identities, claims, semantic retrieval | Each derived object cites evidence and remains reversible |
 | Final product track | Timeline, exploration, analytics, MCP, and agents | Fast normal queries, permission boundaries, and evidence-citing answers |
 
