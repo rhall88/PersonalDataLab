@@ -1,4 +1,4 @@
-# PersonalDataLab roadmap after Apple PR14
+# PersonalDataLab roadmap after Apple parser-v3 acceptance
 
 PersonalDataLab develops in four layers. Each layer depends on the evidence guarantees beneath
 it: acquire and preserve first, normalize second, derive understanding third, and expose that
@@ -23,15 +23,18 @@ conflict, and identical replay of the corrected affected set. See
 
 ## 2. Add source families without mixing provenance
 
-### Official Apple privacy export — PR14 review fixes; v3 acceptance pending
+### Official Apple privacy export — parser-v3 operational acceptance completed in PR16
 
 The retained export now has recursive inventory, a 32-surface registry, complete physical versus
 logical byte accounting, privacy-safe progress, structured and native-format adapters, streamed
 external assets, restart-safe transactions, and coverage reporting. A complete real-data
 PostgreSQL import, controlled resume, and exact unchanged replay passed for parser v2. Review
-found defects outside exact-replay coverage; parser v3 fixes them and requires fresh real-corpus
-acceptance. Generic structured coverage is now explicitly partial. Do not infer support for
-products or formats absent from the retained export.
+found defects outside exact-replay coverage; parser v3 fixed them. PR16 completed a fresh
+real-corpus import, controlled resume, semantic reconciliation, a real empty-TestFlight repair,
+and exact unchanged replay. Generic structured coverage remains explicitly partial, so exit 3 is
+the honest semantic-coverage result rather than a persistence failure. Do not infer support for
+products or formats absent from the retained export. See
+[`PR16_APPLE_V3_PRODUCTION_ACCEPTANCE_REPORT.md`](PR16_APPLE_V3_PRODUCTION_ACCEPTANCE_REPORT.md).
 
 ### iMessages device export — production-ready in PR15
 
@@ -90,8 +93,9 @@ chain must never depend on an embedding model, UI, or agent remaining available.
 |---|---|---|
 | PR12 | Integrate PR7–PR11 onto `main`; replace the stale roadmap | Full cumulative CI on the real default-branch base |
 | PR13 | Complete Google production acceptance and corrected differential reimport | Complete accounting, safe resume, clean affected-member replay, no unintended second-run versions |
-| PR14 | Official Apple privacy-export ingestion review fixes | v3 synthetic regressions; fresh corpus and semantic acceptance pending |
+| PR14 | Official Apple privacy-export ingestion review fixes | Review defects fixed and synthetic regression gate passed |
 | PR15 | Separate iMessages device-export importer | Complete accounting, safe resume, exact identical replay, no unintended versions |
+| PR16 | Official Apple parser-v3 real-corpus acceptance | Fresh import, safe resume, empty-dataset repair, semantic reconciliation, exact replay |
 | Following PRs | Provider parity, unified search, identities, claims, semantic retrieval | Each derived object cites evidence and remains reversible |
 | Final product track | Timeline, exploration, analytics, MCP, and agents | Fast normal queries, permission boundaries, and evidence-citing answers |
 

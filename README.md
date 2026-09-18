@@ -540,6 +540,9 @@ Google ingestion is implemented through PR11 and production-accepted in PR13; se
 Official Apple privacy-export ingestion is implemented with recursive accounting and remains a
 separate provenance family from independently acquired iMessages; see
 [`PR14_APPLE_PRODUCTION_ACCEPTANCE_REPORT.md`](PR14_APPLE_PRODUCTION_ACCEPTANCE_REPORT.md).
+Parser-v3 real-corpus persistence, interruption/resume, and exact replay are accepted in
+[`PR16_APPLE_V3_PRODUCTION_ACCEPTANCE_REPORT.md`](PR16_APPLE_V3_PRODUCTION_ACCEPTANCE_REPORT.md);
+generic structured product coverage remains explicitly partial.
 Independent iMazing Messages CSV ingestion preserves device-export provenance, message
 lifecycle, reply/reaction semantics, and attachment availability without mixing it into the
 official Apple source family; see

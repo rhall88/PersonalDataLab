@@ -534,6 +534,19 @@ def test_valid_empty_calendar_is_accepted(tmp_path: Path) -> None:
     assert _parsed(inspect_apple(source).members[0])[0].record_count == 0
 
 
+def test_whitespace_only_csv_is_retained_as_empty_dataset(tmp_path: Path) -> None:
+    source = _zip(
+        tmp_path / "TestFlight.zip",
+        [("Testflight Data History-sessions.csv", "\n")],
+    )
+
+    (parsed,) = _parsed(inspect_apple(source).members[0])
+
+    assert parsed.category.endswith("/chunk/00000001")
+    assert parsed.record_count == 0
+    assert parsed.event_count == 0
+
+
 def test_xml_preserves_root_mixed_order_whitespace_and_tail(tmp_path: Path) -> None:
     source = _zip(
         tmp_path / "Other Data.zip",
