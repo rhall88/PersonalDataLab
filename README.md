@@ -12,7 +12,8 @@ This repository contains the completed foundation and its source importers:
 - lossless distinct-version history plus narrow import-run/observation provenance
 - cumulative reconciliation for inserts, genuine updates, unchanged overlap, stale data,
   conflicts, explicit deletion, and reactivation
-- OpenAI data-export importer
+- production-accepted official OpenAI data-export ingestion with manifest accounting, sharded
+  conversations, external assets, restart, and exact replay
 - Anthropic data-export importer
 - Google Takeout My Activity importer
 - Google Takeout 68-product inventory, adapter registry, routing, and coverage framework
@@ -128,39 +129,46 @@ time.
 
 ## 6. Import OpenAI and reconcile
 
+Inspect the untouched official ZIP (or an extracted copy) before importing it:
+
+```powershell
+personal-data-lab inspect-openai data\raw\openai\2026-09-08\openai-export.zip --format table
+```
+
+Default JSON and progress output use opaque member IDs. Add `--include-paths` only when private
+member paths are acceptable in the output.
+
 ```powershell
 personal-data-lab import-openai data\raw\openai\2026-09-08\openai-export.zip
 ```
 
-The command accepts an original ZIP, an extracted export directory, or a standalone
-`conversations.json`. It runs in one database transaction, performs idempotent
-canonical upserts, records source-file membership, and reconciles parsed counts against
-membership rows for that particular export. A count mismatch raises an error and rolls
-the entire transaction back.
+Official ZIP and directory imports validate the provider manifest, account for every physical
+and logical member, and process each asset, structured JSON file, and bounded conversation chunk
+in a separate restart-safe transaction. Conversation graph nodes use conversation-scoped
+identity, parent edges remain queryable, and every `sediment://` reference becomes a
+message-to-asset relationship. Missing provider assets are retained as explicit unavailable
+placeholders rather than silently discarded. Binary bytes and rendered HTML stay external;
+PostgreSQL stores their hashes, sizes, paths, metadata, and provenance only.
 
-Successful output includes per-entity reconciliation and version-deduplication metrics:
+Successful output includes whole-export accounting and semantic totals:
 
 ```json
 {
-  "source_file_id": 1,
-  "source_conversations": 100,
-  "database_conversations": 100,
-  "source_events": 2500,
-  "database_events": 2500,
-  "inserted_events": 25,
-  "updated_events": 4,
-  "unchanged_events": 2471,
-  "stale_events": 0,
-  "conflicted_events": 0,
-  "new_event_versions": 29,
-  "reused_event_versions": 2471,
-  "reconciled": true
+  "physical_members_total": 1724,
+  "files_processed": 1724,
+  "files_failed": 0,
+  "conversations": 1187,
+  "messages": 25510,
+  "production_ready": true,
+  "exit_code": 0
 }
 ```
 
-`database_conversations` and `database_events` are the numbers of conversation and
-event membership rows persisted for this `source_file_id`; they are not corpus-wide
-canonical totals.
+Exact reruns reuse completed source/parser/category identities and create no unintended canonical
+objects or versions. The legacy standalone `conversations.json` input remains available through
+the original single-file path, but it cannot provide manifest-level completeness or asset
+accounting. See [`OPENAI_INGESTION_SPEC.md`](OPENAI_INGESTION_SPEC.md) and
+[`PR17_OPENAI_PRODUCTION_ACCEPTANCE_REPORT.md`](PR17_OPENAI_PRODUCTION_ACCEPTANCE_REPORT.md).
 
 ## 7. Import Anthropic and reconcile
 
@@ -427,11 +435,10 @@ questions additionally query observations, import runs, source files, and source
 Agents should not compare raw exports or scan every provenance layer to answer normal questions;
 canonical data is the default fast query surface.
 
-For OpenAI messages, `source_record_id` contains `message.id`, `source_node_id` contains
-the mapping-node ID, and `parent_source_node_id` contains the structural parent-node ID.
-This keeps the message and graph identifier namespaces distinct. If a message lacks an
-ID, the importer explicitly falls back to its mapping-node ID and marks that fallback in
-event metadata.
+For production OpenAI imports, `source_record_id` and `source_node_id` contain the
+conversation-scoped mapping-node identity, while `parent_source_node_id` contains the matching
+conversation-scoped parent identity. The provider message ID remains separately preserved in
+metadata. This prevents provider message IDs reused across conversations from collapsing events.
 
 ## 9. Run tests
 
@@ -467,7 +474,8 @@ non-sensitive CI-only password.
 - Raw exports are never modified by the importer.
 - Every logical conversation and event exists once in the canonical corpus.
 - Join tables link each canonical record to every export that contained it.
-- OpenAI message IDs, mapping-node IDs, and parent-node IDs remain distinct.
+- OpenAI mapping nodes are conversation-scoped; provider message IDs and parent-node evidence
+  remain separately preserved.
 - Anthropic message UUIDs and parent-message UUIDs remain available for graph traversal.
 - Anthropic provider content blocks, attachment metadata, and file references remain
   traceable without copying binary attachments into PostgreSQL.
@@ -505,7 +513,7 @@ FROM source_files sf
 JOIN source_file_events sfe ON sfe.source_file_id = sf.id
 JOIN events e ON e.id = sfe.event_id
 WHERE e.source = 'openai'
-  AND e.source_record_id = :message_id;
+  AND e.metadata -> 'openai' ->> 'provider_message_id' = :message_id;
 ```
 
 Reconstruct OpenAI parent relationships:
@@ -547,6 +555,8 @@ Independent iMazing Messages CSV ingestion preserves device-export provenance, m
 lifecycle, reply/reaction semantics, and attachment availability without mixing it into the
 official Apple source family; see
 [`PR15_IMESSAGES_PRODUCTION_ACCEPTANCE_REPORT.md`](PR15_IMESSAGES_PRODUCTION_ACCEPTANCE_REPORT.md).
+Official OpenAI ingestion is production-accepted against the retained manifest-based, sharded
+export; see [`PR17_OPENAI_PRODUCTION_ACCEPTANCE_REPORT.md`](PR17_OPENAI_PRODUCTION_ACCEPTANCE_REPORT.md).
 Full-text and semantic search,
 identity resolution, derived claims, MCP, and agents follow the source-ingestion phases. See
 [`ROADMAP.md`](ROADMAP.md) for the ordered program and completion gates.
