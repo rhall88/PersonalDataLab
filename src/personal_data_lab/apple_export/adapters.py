@@ -463,9 +463,11 @@ class StructuredAdapter:
                 except csv.Error:
                     dialect = csv.excel
                 reader = csv.reader(text_stream, dialect=dialect, strict=True)
-                headers = next(reader, None)
-                if headers is None or not headers:
-                    raise AppleAdapterError("Apple CSV has no header")
+                # Apple emits newline-only CSVs for valid empty datasets (observed in
+                # TestFlight). Skip leading blank rows and retain a wholly blank file as
+                # one empty parsed export so its source identity and successful
+                # observation are not lost.
+                headers = next((cells for cells in reader if cells), [])
                 rows: list[object] = []
                 for cells in reader:
                     if not cells:

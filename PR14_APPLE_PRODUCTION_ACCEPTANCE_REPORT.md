@@ -1,9 +1,16 @@
 # PR14 official Apple privacy-export production acceptance report
 
-## Current status: parser v3 requires fresh corpus acceptance
+## Current status: parser v3 accepted in PR16
+
+Fresh parser-v3 real-corpus persistence, controlled interruption/resume, semantic reconciliation,
+the empty-TestFlight repair, and exact unchanged replay are recorded in
+[`PR16_APPLE_V3_PRODUCTION_ACCEPTANCE_REPORT.md`](PR16_APPLE_V3_PRODUCTION_ACCEPTANCE_REPORT.md).
+The remainder of this report preserves the historical parser-v2 evidence and the review gate that
+PR16 has now completed.
 
 The corpus results below are historical evidence for parser v2 at `c4bfb4c`, not acceptance of the
-current parser. Review reproduced nine classes of correctness/provenance/privacy defects despite
+parser-v3 implementation by themselves. Review reproduced nine classes of
+correctness/provenance/privacy defects despite
 that successful exact replay. Parser v3 fixes those cases and adds synthetic regression coverage.
 
 Changes include context-aware replay categories, packaging-independent canonical metadata,
