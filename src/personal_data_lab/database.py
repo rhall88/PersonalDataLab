@@ -50,6 +50,23 @@ def create_database_engine(database_url: str) -> Engine:
     return create_engine(database_url, pool_pre_ping=True)
 
 
+def list_sibling_databases(engine: Engine) -> list[tuple[str, int]]:
+    """List every non-template database on this Postgres instance with its size in bytes.
+
+    pg_database is global to the server, so this reports every database
+    visible on the instance the engine is connected to, not just the one
+    the engine's URL names.
+    """
+    with engine.connect() as connection:
+        rows = connection.execute(
+            text(
+                "SELECT datname, pg_database_size(datname) AS size_bytes "
+                "FROM pg_database WHERE datistemplate = false ORDER BY datname"
+            )
+        ).all()
+    return [(row.datname, int(row.size_bytes)) for row in rows]
+
+
 @contextmanager
 def _transaction(engine: Engine) -> Iterator[Connection]:
     with engine.begin() as connection:

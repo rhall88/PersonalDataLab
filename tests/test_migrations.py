@@ -5,6 +5,7 @@ from collections.abc import Iterator
 
 import pytest
 from sqlalchemy import Engine, create_engine, text
+from sqlalchemy.engine import make_url
 
 from personal_data_lab.fingerprints import event_fingerprint
 from personal_data_lab.migrations import (
@@ -12,6 +13,7 @@ from personal_data_lab.migrations import (
     _backfill_legacy_observations,
     _ensure_migration_table,
     _read_migration,
+    current_schema_version,
     migrate_database,
 )
 from personal_data_lab.models import NormalizedEvent
@@ -328,3 +330,49 @@ def test_v5_preserves_unreconstructable_observation_as_fingerprint_only(
         (old_fingerprint, "fingerprint_only", None),
     }
     assert (bytes(observed[0]), observed[1]) == (old_fingerprint, "fingerprint_only")
+
+
+@pytest.fixture
+def fresh_database_engine() -> Iterator[Engine]:
+    # A schema-scoped fixture isn't enough here: to_regclass()/unqualified
+    # lookups fall back through the rest of the search_path, so if the real
+    # TEST_DATABASE_URL database already has a migrated public.schema_migrations
+    # (it does, in normal use), an isolated *schema* would still "see" it.
+    # A genuinely separate database avoids that ambiguity entirely.
+    admin_url = os.getenv("TEST_DATABASE_URL")
+    if not admin_url:
+        pytest.skip("TEST_DATABASE_URL is not set")
+    db_name = "pdl_doctor_fresh_test"
+    admin_engine = create_engine(admin_url, isolation_level="AUTOCOMMIT")
+    with admin_engine.connect() as connection:
+        connection.execute(text(f"DROP DATABASE IF EXISTS {db_name}"))
+        connection.execute(text(f"CREATE DATABASE {db_name}"))
+    fresh_url = make_url(admin_url).set(database=db_name)
+    engine = create_engine(fresh_url)
+    try:
+        yield engine
+    finally:
+        engine.dispose()
+        with admin_engine.connect() as connection:
+            connection.execute(text(f"DROP DATABASE IF EXISTS {db_name}"))
+        admin_engine.dispose()
+
+
+def test_current_schema_version_returns_none_for_unmigrated_database(
+    fresh_database_engine: Engine,
+) -> None:
+    assert current_schema_version(fresh_database_engine) is None
+
+
+def test_current_schema_version_reads_max_applied_version(
+    fresh_database_engine: Engine,
+) -> None:
+    with fresh_database_engine.begin() as connection:
+        connection.exec_driver_sql(PR2_SCHEMA)
+
+    # PR2_SCHEMA has canonical tables but no schema_migrations table yet.
+    assert current_schema_version(fresh_database_engine) is None
+
+    migrate_database(fresh_database_engine)
+
+    assert current_schema_version(fresh_database_engine) == 7

@@ -169,3 +169,101 @@ def test_import_google_all_refuses_test_like_database_without_pdl_env(
 
     with pytest.raises(DatabaseTargetGuardError, match="test/acceptance naming pattern"):
         cli.main(["import-google-all", "takeout"])
+
+
+def test_doctor_reports_canonical_target_with_clean_json(monkeypatch, capsys) -> None:
+    monkeypatch.delenv("PDL_ENV", raising=False)
+    monkeypatch.delenv("PDL_CANONICAL_DB_NAME", raising=False)
+    monkeypatch.setattr(
+        cli, "database_url", lambda override: "postgresql://user:pass@localhost:5432/personaldata"
+    )
+    monkeypatch.setattr(cli, "create_database_engine", lambda url: object())
+    monkeypatch.setattr(cli, "current_schema_version", lambda engine: 7)
+    monkeypatch.setattr(
+        cli,
+        "list_sibling_databases",
+        lambda engine: [
+            ("personaldata", 1000),
+            ("personaldata_google_acceptance_test", 2000),
+            ("postgres", 300),
+        ],
+    )
+
+    assert cli.main(["doctor"]) == 0
+
+    captured = capsys.readouterr()
+    report = json.loads(captured.out)
+    assert report["target_database"] == "personaldata"
+    assert report["target_classification"] == "canonical"
+    assert report["schema_version"] == 7
+    assert report["schema_up_to_date"] is True
+    assert report["suspicious_config"] == []
+    classifications = {row["name"]: row["classification"] for row in report["sibling_databases"]}
+    assert classifications == {
+        "personaldata": "canonical",
+        "personaldata_google_acceptance_test": "test-like",
+        "postgres": "unclassified",
+    }
+    assert report["test_like_sibling_count"] == 1
+
+
+def test_doctor_flags_unclassified_target_and_bad_pdl_env(monkeypatch, capsys) -> None:
+    monkeypatch.setenv("PDL_ENV", "typo")
+    monkeypatch.delenv("PDL_CANONICAL_DB_NAME", raising=False)
+    monkeypatch.setattr(
+        cli, "database_url", lambda override: "postgresql://user:pass@localhost:5432/some_other_db"
+    )
+    monkeypatch.setattr(cli, "create_database_engine", lambda url: object())
+    monkeypatch.setattr(cli, "current_schema_version", lambda engine: 5)
+    monkeypatch.setattr(cli, "list_sibling_databases", lambda engine: [])
+
+    assert cli.main(["doctor"]) == 0
+
+    captured = capsys.readouterr()
+    report = json.loads(captured.out)
+    assert report["target_classification"] == "unclassified"
+    assert report["schema_up_to_date"] is False
+    assert len(report["suspicious_config"]) == 2
+    assert any("PDL_ENV" in item for item in report["suspicious_config"])
+    assert any("neither the configured canonical" in item for item in report["suspicious_config"])
+
+
+def test_doctor_table_format_includes_sibling_databases(monkeypatch, capsys) -> None:
+    monkeypatch.delenv("PDL_ENV", raising=False)
+    monkeypatch.delenv("PDL_CANONICAL_DB_NAME", raising=False)
+    monkeypatch.setattr(
+        cli, "database_url", lambda override: "postgresql://user:pass@localhost:5432/personaldata"
+    )
+    monkeypatch.setattr(cli, "create_database_engine", lambda url: object())
+    monkeypatch.setattr(cli, "current_schema_version", lambda engine: 7)
+    monkeypatch.setattr(cli, "list_sibling_databases", lambda engine: [("personaldata", 1000)])
+
+    assert cli.main(["doctor", "--format", "table"]) == 0
+
+    captured = capsys.readouterr()
+    assert "target classification: canonical" in captured.out
+    assert "personaldata" in captured.out
+    assert "THIS TARGET" in captured.out
+    assert "suspicious config: none" in captured.out
+
+
+def test_doctor_does_not_apply_import_guards_to_test_like_target(monkeypatch, capsys) -> None:
+    # doctor must be able to report on any target, including one the import
+    # guards would refuse — it never calls _resolve_guarded_engine.
+    monkeypatch.delenv("PDL_ENV", raising=False)
+    monkeypatch.setattr(
+        cli,
+        "database_url",
+        lambda override: (
+            "postgresql://user:pass@localhost:5432/personaldata_google_acceptance_test"
+        ),
+    )
+    monkeypatch.setattr(cli, "create_database_engine", lambda url: object())
+    monkeypatch.setattr(cli, "current_schema_version", lambda engine: 7)
+    monkeypatch.setattr(cli, "list_sibling_databases", lambda engine: [])
+
+    assert cli.main(["doctor"]) == 0
+
+    captured = capsys.readouterr()
+    report = json.loads(captured.out)
+    assert report["target_classification"] == "test-like"

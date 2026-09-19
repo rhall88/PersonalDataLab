@@ -18,6 +18,7 @@ from personal_data_lab.database import (
     create_database_engine,
     import_openai_export,
     import_parsed_exports,
+    list_sibling_databases,
 )
 from personal_data_lab.google_importer import GoogleExportError, parse_google_export
 from personal_data_lab.models import (
@@ -1796,3 +1797,20 @@ def test_apple_csv_interruption_resumes_committed_chunks_and_replays(
     assert complete["import_runs"] == 3
     assert import_apple_all(database_engine, str(source)).members_short_circuited == 1
     assert _apple_counts(database_engine) == complete
+
+
+def test_list_sibling_databases_includes_current_target_and_excludes_templates(
+    database_engine: Engine,
+) -> None:
+    with database_engine.connect() as connection:
+        current_name = str(connection.execute(text("SELECT current_database()")).scalar_one())
+
+    siblings = list_sibling_databases(database_engine)
+    names = [name for name, _size_bytes in siblings]
+
+    assert current_name in names
+    assert "template0" not in names
+    assert "template1" not in names
+    assert names == sorted(names)
+    for _name, size_bytes in siblings:
+        assert size_bytes > 0

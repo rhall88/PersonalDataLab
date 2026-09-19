@@ -30,6 +30,25 @@ class MigrationError(RuntimeError):
     """Raised when the database cannot be upgraded safely."""
 
 
+def current_schema_version(engine: Engine) -> int | None:
+    """Read the database's current schema version without any side effects.
+
+    Returns None if schema_migrations doesn't exist yet (unmigrated database).
+    """
+    with engine.connect() as connection:
+        has_migrations = bool(
+            connection.execute(
+                text("SELECT to_regclass('schema_migrations') IS NOT NULL")
+            ).scalar_one()
+        )
+        if not has_migrations:
+            return None
+        version = connection.execute(
+            text("SELECT MAX(version) FROM schema_migrations")
+        ).scalar_one()
+        return int(version) if version is not None else None
+
+
 def _ensure_migration_table(connection: Connection) -> None:
     connection.execute(
         text(
