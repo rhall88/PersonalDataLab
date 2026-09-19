@@ -319,7 +319,9 @@ def test_cli_inventory_is_private_and_import_uses_opaque_progress(
     assert payload["archive_members_total"] == 7
     assert "private" not in captured.out.casefold()
 
-    monkeypatch.setattr(cli, "database_url", lambda override: "ignored")
+    monkeypatch.setattr(
+        cli, "database_url", lambda override: "postgresql://user:pass@localhost/ignored"
+    )
     monkeypatch.setattr(cli, "create_database_engine", lambda url: object())
 
     def fake_import(engine, batch):

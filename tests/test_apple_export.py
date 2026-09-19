@@ -310,7 +310,9 @@ def test_apple_cli_defaults_are_private_and_machine_readable(
             ),
         ),
     )
-    monkeypatch.setattr(cli, "database_url", lambda override: "ignored")
+    monkeypatch.setattr(
+        cli, "database_url", lambda override: "postgresql://user:pass@localhost/ignored"
+    )
     monkeypatch.setattr(cli, "create_database_engine", lambda url: object())
     assert cli.main(["import-apple-all", str(source)]) == 0
     captured = capsys.readouterr()

@@ -1440,7 +1440,9 @@ def test_google_cli_keeps_completed_members_when_a_later_member_is_invalid(
             '[{"title":"truncated"}',
         )
     monkeypatch.setattr(cli, "create_database_engine", lambda url: database_engine)
-    monkeypatch.setattr(cli, "database_url", lambda override: "ignored")
+    monkeypatch.setattr(
+        cli, "database_url", lambda override: "postgresql://user:pass@localhost/ignored"
+    )
 
     with pytest.raises(GoogleExportError, match="ended unexpectedly"):
         cli.main(["import-google", str(source)])
