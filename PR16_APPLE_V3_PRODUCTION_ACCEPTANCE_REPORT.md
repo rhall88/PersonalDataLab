@@ -117,5 +117,7 @@ Information, and Siri). Exit 3 is the semantic-coverage gate, not a persistence 
 
 Apple parser-v3 operational acceptance is complete for this retained corpus. Product-specific
 semantic adapters and fixtures can replace generic structured coverage incrementally without
-weakening the accepted evidence layer. The next source-parity work is the retained sharded OpenAI
-export, followed by repair and re-acceptance of the incomplete Anthropic raw manifest.
+weakening the accepted evidence layer. At publication the next source-parity work was the retained
+sharded OpenAI export; that work has since completed in PR17. Repair and re-acceptance of the
+incomplete Anthropic raw manifest is now the immediate source-ingestion priority. See
+[`PROJECT_STATE.md`](PROJECT_STATE.md) for the current baseline.

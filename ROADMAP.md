@@ -4,10 +4,15 @@ PersonalDataLab develops in four layers. Each layer depends on the evidence guar
 it: acquire and preserve first, normalize second, derive understanding third, and expose that
 understanding to products and agents last.
 
+The audited implementation baseline, merged PR state, schema, and verification summary are in
+[`PROJECT_STATE.md`](PROJECT_STATE.md). This roadmap is the authority for current sequencing;
+implementation and acceptance reports preserve the state and “next frontier” at their publication
+time.
+
 ## 1. Google operational acceptance — completed in PR13
 
 The PR5–PR11 implementation covers the 68-product contract and routes every retained Takeout
-member. Production acceptance remains a separate gate:
+member. PR13 completed the separate operational gate:
 
 1. import the complete retained Takeout into a fresh production-shaped local database;
 2. reconcile all discovered members, bytes, normalized objects, assets, and relationships;
@@ -20,6 +25,10 @@ member. Production acceptance remains a separate gate:
 PR13 completed the full read, restart/resume proof, clean differential replay of every discovered
 conflict, and identical replay of the corrected affected set. See
 [`PR13_GOOGLE_PRODUCTION_ACCEPTANCE_REPORT.md`](PR13_GOOGLE_PRODUCTION_ACCEPTANCE_REPORT.md).
+The retained 51 present products are explicitly dispositioned as 43 fully structured, six empty,
+one asset-indexed, and one partially structured (Nest); no unknown, generic-fallback,
+raw-preserved, or unsupported member remains. The other 17 registry products were absent and are
+not claimed as empirically validated.
 
 ## 2. Add source families without mixing provenance
 
@@ -56,9 +65,14 @@ controlled stop/resume, production-defect repair, and exact replay passed with e
 
 ### Anthropic and later providers
 
-Bring Anthropic to the same inventory, asset, relationship, restart, and real-export acceptance
-standard. Add later providers only when source evidence exists; every provider starts with
-inventory and explicit disposition rather than optimistic format assumptions.
+Anthropic is the immediate source-ingestion priority. Its v1 importer supports the five observed
+manifest categories and atomic reconciliation, but it still needs the same privacy-safe inventory,
+complete disposition, bounded restart, asset/relationship graph, and real-export acceptance
+standard as the later importers. Preserve a safe upgrade boundary from `anthropic-v1` so new
+semantics do not silently reuse old completed runs.
+
+Add later providers only when source evidence exists; every provider starts with inventory and
+explicit disposition rather than optimistic format assumptions.
 
 ## 3. Build query and understanding layers
 
@@ -96,16 +110,18 @@ incremental import scheduling, restart monitoring, sensitive-field controls, per
 derived-data invalidation, and exportability. The raw corpus, canonical history, and evidence
 chain must never depend on an embedding model, UI, or agent remaining available.
 
-## Ordered next PRs
+## Milestone record and ordered next work
 
-| PR | Outcome | Required completion gate |
+| Status | Outcome | Required completion gate |
 |---|---|---|
-| PR12 | Integrate PR7–PR11 onto `main`; replace the stale roadmap | Full cumulative CI on the real default-branch base |
-| PR13 | Complete Google production acceptance and corrected differential reimport | Complete accounting, safe resume, clean affected-member replay, no unintended second-run versions |
-| PR14 | Official Apple privacy-export ingestion review fixes | Review defects fixed and synthetic regression gate passed |
-| PR15 | Separate iMessages device-export importer | Complete accounting, safe resume, exact identical replay, no unintended versions |
-| PR16 | Official Apple parser-v3 real-corpus acceptance | Fresh import, safe resume, empty-dataset repair, semantic reconciliation, exact replay |
-| PR17 | Official OpenAI production ingestion and real-corpus acceptance | Manifest accounting, safe resume, complete graph/assets, exact replay |
-| Following PRs | Anthropic parity, unified search, identities, claims, semantic retrieval | Each derived object cites evidence and remains reversible |
-| Final product track | Timeline, exploration, analytics, MCP, and agents | Fast normal queries, permission boundaries, and evidence-citing answers |
+| Completed PR12 | Integrate PR7–PR11 onto `main`; replace the stale roadmap | Full cumulative CI on the real default-branch base |
+| Completed PR13 | Google production acceptance and corrected differential reimport | Complete accounting, safe resume, clean affected-member replay, no unintended second-run versions |
+| Completed PR14 | Official Apple privacy-export ingestion and review fixes | Recursive accounting, review defects fixed, synthetic regression gate passed |
+| Completed PR15 | Separate iMessages device-export importer | Complete accounting, safe resume, exact identical replay, no unintended versions |
+| Completed PR16 | Official Apple parser-v3 real-corpus operational acceptance | Fresh import, safe resume, empty-dataset repair, semantic reconciliation, exact replay |
+| Completed PR17 | Official OpenAI production ingestion and real-corpus acceptance | Manifest accounting, safe resume, complete graph/assets, exact replay |
+| Next | Anthropic source-parity importer and acceptance | Privacy-safe inventory, complete disposition, bounded restart, graph/assets, safe v1 upgrade, exact replay |
+| Then | Unified canonical full-text query | Fast source-spanning queries with direct observation/version provenance and regression coverage |
+| Then | Reversible identity resolution, claims, correlation, and semantic retrieval | Every derived object cites evidence, is versioned, and can be removed without changing source truth |
+| Final product track | Timeline, exploration, analytics, read-only MCP, and agents | Fast normal queries, permission boundaries, and evidence-citing answers |
 

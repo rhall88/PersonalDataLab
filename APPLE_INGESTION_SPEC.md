@@ -7,8 +7,10 @@ This importer accepts untouched ZIP archives delivered by Apple's privacy portal
 `account/apple_privacy/`.
 
 Independently acquired iPhone, iMazing, RSMF, CSV, or Messages database exports are not inputs.
-They remain a separate future source family with device-extraction provenance. A provider product
-name never overrides acquisition provenance.
+The retained iMazing CSV corpus is implemented by the separate `imessages` source family with
+device-extraction provenance; RSMF and raw Messages database formats remain unclaimed. A provider
+product name never overrides acquisition provenance. See
+[`IMESSAGES_INGESTION_SPEC.md`](IMESSAGES_INGESTION_SPEC.md).
 
 ## Source safety
 
@@ -109,8 +111,18 @@ Production-ready means all of the following are true for the retained corpus:
 
 ## Parser v3 acceptance and upgrade boundary
 
-The original corpus report measures parser v2. Parser v3 changes identity, replay categories,
-calendar semantics, and XML payloads. Its fresh full-corpus acceptance is pending; v2 counts cannot
-be reused as v3 evidence. Re-importing v3 into an existing v2 database preserves historical rows
-and may add identities/versions or report conflicts; it is not a destructive migration or cleanup.
-Validate in a fresh isolated database first. Preserve the original corpus and historical database.
+Parser v3 completed fresh real-corpus persistence, controlled interruption/resume, semantic
+reconciliation, repair of valid newline-only TestFlight datasets, and exact unchanged replay in
+PR16. It processed all 814 data leaves with zero failures, unknowns, warnings, or conflicts. See
+[`PR16_APPLE_V3_PRODUCTION_ACCEPTANCE_REPORT.md`](PR16_APPLE_V3_PRODUCTION_ACCEPTANCE_REPORT.md).
+
+This is operational corpus acceptance, not the stricter full-semantic `production_ready` gate
+above. Twenty-seven present product groups still use the generic partially structured adapter;
+Business Chat Support, Store Credit, and Voice Memos are fully structured; Apple TV and Podcast
+Information and Siri were absent. Complete replay therefore remains persistence-complete and
+exactly idempotent while exiting 3 with `production_ready` set to `false`.
+
+The historical PR14 corpus report measures parser v2 and cannot substitute for v3 evidence.
+Re-importing v3 into an existing v2 database preserves historical rows and may add identities or
+versions or report conflicts; it is not a destructive migration or cleanup. Validate upgrades in
+a fresh isolated database first, and preserve the original corpus and historical database.
