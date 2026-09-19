@@ -1,9 +1,9 @@
 # PersonalDataLab project state
 
-Audited 2026-09-18 against `origin/main` at `df6ae3b` (version `0.16.0`), after PR17
-merged. PRs 1–17 are merged and no pull request was open at the audit boundary. PR7–PR11 were
-stacked Google changes that reached `main` through PR12. The remote feature branches remain as
-history; they are not evidence of unfinished PRs.
+Updated 2026-09-18 from `origin/main` at `22f24b3`, after the project-state documentation in PR18
+merged. PRs 1–18 are merged and PR19 is open. Version `0.17.0` adds the Anthropic v2 production path
+and completes retained-corpus acceptance. PR7–PR11 were stacked Google changes that reached `main`
+through PR12. Their remote feature branches remain history, not evidence of unfinished PRs.
 
 This file is the current implementation summary. Specifications define contracts, coverage pages
 record format support, and PR reports preserve milestone evidence from the time each PR landed.
@@ -18,7 +18,7 @@ this file and the roadmap are authoritative for current sequencing.
 | Official Apple privacy export | Parser-v3 operational acceptance completed in PR16 | All 814 data leaves across 31 outer ZIPs and 18 nested containers persist, resume, and replay exactly with zero failures, unknowns, warnings, or conflicts. Semantic coverage is intentionally incomplete: 27 present product groups are partially structured; Business Chat Support, Store Credit, and Voice Memos are fully structured; Apple TV and Podcast Information and Siri were absent. The honest full replay result is exit 3 and `production_ready: false`. See [`APPLE_PRODUCT_COVERAGE.md`](APPLE_PRODUCT_COVERAGE.md) and [`PR16_APPLE_V3_PRODUCTION_ACCEPTANCE_REPORT.md`](PR16_APPLE_V3_PRODUCTION_ACCEPTANCE_REPORT.md). |
 | iMessages device export | Production-ready for the retained iMazing CSV corpus in PR15 | Two CSVs, 67,917 message rows, message/reply/reaction/edit/deletion semantics, explicit timezone input, controlled resume, and exact replay passed. The source contains attachment references but no attachment bytes. RSMF, raw iOS `sms.db`, PDF, Excel, and text exports are not claimed. See [`IMESSAGES_COVERAGE.md`](IMESSAGES_COVERAGE.md). |
 | Official OpenAI export | Production-ready for the retained manifest-based export in PR17 | All 1,724 physical members, 1,187 conversations, 25,510 message events, structured JSON, retained and unavailable assets, parent edges, and message-asset edges are accounted. Controlled resume and exact replay pass with exit 0. The legacy standalone `conversations.json` path remains compatibility-only and does not provide whole-export acceptance. See [`OPENAI_INGESTION_SPEC.md`](OPENAI_INGESTION_SPEC.md) and [`PR17_OPENAI_PRODUCTION_ACCEPTANCE_REPORT.md`](PR17_OPENAI_PRODUCTION_ACCEPTANCE_REPORT.md). |
-| Anthropic export | Functional v1 importer from PR2; not at source-parity acceptance | The importer validates the manifest and the five observed categories (`conversations`, `design_chats`, `light_metadata`, `memories`, and `projects`), preserves provider fields, and reconciles all named archives atomically. It has no inventory command, whole-export disposition report, external-asset graph, bounded member/chunk restart, privacy-safe progress contract, or fresh real-corpus acceptance at the standard reached by the later importers. Anthropic parity is the immediate source-ingestion priority. |
+| Anthropic export | Production-ready for the retained official account export in PR19 | All six physical source files and eight JSON members are accounted. A controlled stop after the first committed conversation chunk, resume, and exact replay passed with exit 0: 269 conversations, 9,748 events, 601 explicit unavailable assets, and 10,014 relationships, with zero failures, warnings, unknowns, or conflicts. All 18 bounded units short-circuit on replay without changing run, version, or observation counts. See [`ANTHROPIC_INGESTION_SPEC.md`](ANTHROPIC_INGESTION_SPEC.md) and [`PR19_ANTHROPIC_PRODUCTION_ACCEPTANCE_REPORT.md`](PR19_ANTHROPIC_PRODUCTION_ACCEPTANCE_REPORT.md). |
 
 ## Implemented architecture
 
@@ -54,10 +54,9 @@ The canonical database is deliberately split from provenance:
   a canonical object, and a later authoritative reappearance can reactivate it;
 - binary content stays in immutable source files. PostgreSQL retains hashes, byte counts, media
   metadata, source-backed locators, availability state, and relationships;
-- completed or conflicted run identities short-circuit exactly. Google, Apple, iMessages, and
-  OpenAI use restart-safe member or bounded-chunk transactions. The current Anthropic importer
-  intentionally uses one transaction for all five manifest archives and therefore lacks partial
-  restart.
+- completed or conflicted run identities short-circuit exactly. Google, Apple, iMessages, OpenAI,
+  and the Anthropic v2 production path use restart-safe member or bounded-chunk transactions. The
+  legacy Anthropic v1 compatibility parser retains its historical all-archive transaction boundary.
 
 The database takes a PostgreSQL advisory transaction lock per `(source, snapshot_scope)` and
 refuses a fingerprint-version mismatch until an explicit migration is supplied. These rules keep
@@ -76,39 +75,44 @@ PR2 database idempotently through the tracked migrations:
 | 6 | universal durable records and external assets, each with versions and observations |
 | 7 | provenance-bearing, versioned relationships |
 
-Apple, iMessages, and OpenAI required no later schema migration because the version-7 universal
-record, event, asset, and relationship model already expresses their data.
+Apple, iMessages, OpenAI, and Anthropic v2 required no later schema migration because the version-7
+universal record, event, asset, and relationship model already expresses their data.
 
 ## Verification state
 
-- The repository currently collects 242 tests: 202 non-integration tests and 40 PostgreSQL-marked
+- The repository currently collects 249 tests: 208 non-integration tests and 41 PostgreSQL-marked
   integration tests.
-- This audit reran the 202 non-integration tests successfully, plus repository-wide Ruff and
-  Python byte-compilation.
+- The current Anthropic-v2 change passed all 249 tests against the local PostgreSQL 18/pgvector
+  test service after migrating it to schema version 7. The guarded Anthropic test proves a
+  committed 25-conversation chunk survives interruption, resume reaches the complete 30-item
+  synthetic fixture, and exact replay leaves observation/version counts stable.
+- Fresh Anthropic retained-corpus acceptance processed 6 source files, 8 members, 269 conversations,
+  9,748 events, 601 unavailable assets, and 10,014 relationships with exit 0. A controlled stop,
+  resume, and all-short-circuited replay left all run/version/observation counts unchanged.
 - The latest merged PR17 acceptance evidence records all 242 tests passing against PostgreSQL
   18/pgvector, with Ruff and compilation clean.
 - Source-specific real-corpus reports record Google PR13, Apple parser-v3 PR16, iMessages PR15,
-  and OpenAI PR17 acceptance. Private source data, generated inventories, logs, and databases are
-  intentionally not committed.
+  OpenAI PR17, and Anthropic PR19 acceptance. Private source data, generated inventories, logs, and
+  databases are intentionally not committed.
 
 ## Outstanding work in priority order
 
-1. **Bring Anthropic to parity.** Add privacy-safe `inspect-anthropic` inventory and exact manifest
-   accounting, explicit disposition for every member, bounded restart-safe persistence, external
-   assets and relationships, a safe upgrade boundary from `anthropic-v1`, and fresh retained-corpus
-   stop/resume/replay evidence.
-2. **Add a unified query foundation.** Build provenance-aware full-text search over canonical
+1. **Complete Apple semantic production readiness.** Parser-v3 already accounts, resumes, and
+   replays all retained bytes, but 27 present product groups remain partially structured and the
+   honest gate is still exit 3. Replace raw-preserved fallback only with evidence-backed adapters,
+   keep every provider field, and rerun the complete real corpus until the remaining semantic gate
+   is explicit and justified.
+2. **Close remaining Google semantic gaps.** Preserve the accepted 68-product accounting while
+   completing or explicitly bounding the retained Nest partial surface and the asset-indexed surface.
+3. **Add a unified query foundation.** Build provenance-aware full-text search over canonical
    conversations, events, records, document text, and asset metadata before introducing agents or
    embeddings.
-3. **Add reversible identity resolution.** Provider identities may be linked to people/accounts/
+4. **Add reversible identity resolution.** Provider identities may be linked to people/accounts/
    devices only with inspectable evidence and manual merge/split controls. Never rewrite provider
    identity or source truth.
-4. **Add derived understanding.** Claims, cross-source correlations, OCR/transcription, chunks,
+5. **Add derived understanding.** Claims, cross-source correlations, OCR/transcription, chunks,
    and embeddings belong in separately versioned, disposable layers whose outputs cite immutable
    observations.
-5. **Deepen known partial coverage.** Replace Apple's 27 generic product groups with dedicated
-   semantic adapters as evidence and fixtures permit, and improve Google's partial Nest handling
-   without fabricating repairs for malformed provider rows.
 6. **Continue the operational track.** Encrypted backup/restore, integrity audits, sensitive-field
    controls, incremental scheduling, performance budgets, derived-data invalidation, and corpus
    exportability remain permanent requirements.
