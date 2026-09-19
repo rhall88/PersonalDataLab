@@ -14,7 +14,8 @@ This repository contains the completed foundation and its source importers:
   conflicts, explicit deletion, and reactivation
 - production-accepted official OpenAI data-export ingestion with manifest accounting, sharded
   conversations, external assets, restart, and exact replay
-- Anthropic data-export importer
+- production-accepted Anthropic account-export ingestion with privacy-safe inventory, bounded
+  restart, assets/relationships, controlled resume, and exact replay
 - Google Takeout My Activity importer
 - Google Takeout 68-product inventory, adapter registry, routing, and coverage framework
 - Google Timeline/Maps/Saved, Calendar, Contacts, and Tasks semantic adapters
@@ -28,8 +29,6 @@ This repository contains the completed foundation and its source importers:
 - recursive official Apple privacy-export ingestion with semantic native-format adapters
 - independent iMazing Messages CSV ingestion for conversations, participants, messages, replies,
   reactions, edits, deletions, and attachment references
-- privacy-safe Anthropic manifest inventory, restart-safe v2 ingestion, external assets, and
-  provider-evidenced relationships; retained-corpus acceptance remains pending
 - reconciliation tests
 - Windows/PowerShell setup instructions
 
@@ -209,8 +208,9 @@ importer does not guess paths, fetch remote objects, or perform automatic person
 resolution.
 
 See [`ANTHROPIC_INGESTION_SPEC.md`](ANTHROPIC_INGESTION_SPEC.md) for the inventory, privacy,
-restart, identity, exit-code, and acceptance contract. Synthetic implementation coverage is
-complete; fresh retained-corpus inventory/import/resume/replay evidence is still required.
+restart, identity, exit-code, and acceptance contract. Retained-corpus inventory, controlled
+stop/resume, complete import, and exact replay passed with exit 0; the sanitized evidence is in
+[`PR19_ANTHROPIC_PRODUCTION_ACCEPTANCE_REPORT.md`](PR19_ANTHROPIC_PRODUCTION_ACCEPTANCE_REPORT.md).
 
 Previously generated normalized ZIPs are useful as independent reconciliation oracles,
 but they are derived data and are not importer inputs. The untouched manifest and

@@ -89,8 +89,12 @@ failures, zero parse warnings, zero conflicts, and exact asset availability acco
 The synthetic regression suite covers all five observed categories, private output defaults,
 unsafe member paths, undeclared archives, conversation chunking, available and unavailable assets,
 and provider-evidenced relationships. A PostgreSQL integration test covers committed interruption,
-resume, exact replay, and version-count stability. Fresh retained-corpus inventory/import/replay
-evidence remains required before Anthropic can be described as empirically production-ready.
+resume, exact replay, and version-count stability.
+
+PR19 completed fresh retained-corpus acceptance with six source files, eight members, 269
+conversations, 9,748 events, 601 unavailable assets, and 10,014 relationships. The controlled stop,
+resume, and exact replay passed with exit 0, and every run/version/observation count remained stable.
+See [`PR19_ANTHROPIC_PRODUCTION_ACCEPTANCE_REPORT.md`](PR19_ANTHROPIC_PRODUCTION_ACCEPTANCE_REPORT.md).
 
 ## Schema boundary
 

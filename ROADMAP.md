@@ -63,7 +63,7 @@ restart-safe transactions, and exact unchanged replay. A complete real-data Post
 controlled stop/resume, production-defect repair, and exact replay passed with exit code 0. See
 [`PR17_OPENAI_PRODUCTION_ACCEPTANCE_REPORT.md`](PR17_OPENAI_PRODUCTION_ACCEPTANCE_REPORT.md).
 
-### Anthropic v2 — implementation complete, retained-corpus acceptance next
+### Anthropic v2 — production-ready in PR19
 
 The v2 production path now supplies privacy-safe manifest/archive/member inventory, complete byte
 disposition, deterministic conversation chunks, restart-safe persistence, source-backed and
@@ -72,11 +72,11 @@ separate from historical `anthropic-v1` runs. Synthetic coverage spans all five 
 categories, private output, unsafe and undeclared inputs, graph construction, and interruption /
 resume / replay behavior.
 
-The immediate gate is fresh retained-corpus acceptance: inventory the real manifest and archives,
-repair only observed defects, run a fresh PostgreSQL import, interrupt after a committed chunk,
-resume, replay exactly, and publish sanitized reconciliation evidence. Until that passes, the v2
-path is implementation-complete but not empirically production-ready. See
-[`ANTHROPIC_INGESTION_SPEC.md`](ANTHROPIC_INGESTION_SPEC.md).
+Fresh retained-corpus acceptance then reconciled six source files and eight members into 269
+conversations, 9,748 events, 601 explicit unavailable assets, and 10,014 relationships. A controlled
+stop after a committed chunk, resume, and exact replay passed with exit 0; all 18 bounded units
+short-circuited without count or version drift. See [`ANTHROPIC_INGESTION_SPEC.md`](ANTHROPIC_INGESTION_SPEC.md)
+and [`PR19_ANTHROPIC_PRODUCTION_ACCEPTANCE_REPORT.md`](PR19_ANTHROPIC_PRODUCTION_ACCEPTANCE_REPORT.md).
 
 Add later providers only when source evidence exists; every provider starts with inventory and
 explicit disposition rather than optimistic format assumptions.
@@ -127,8 +127,9 @@ chain must never depend on an embedding model, UI, or agent remaining available.
 | Completed PR15 | Separate iMessages device-export importer | Complete accounting, safe resume, exact identical replay, no unintended versions |
 | Completed PR16 | Official Apple parser-v3 real-corpus operational acceptance | Fresh import, safe resume, empty-dataset repair, semantic reconciliation, exact replay |
 | Completed PR17 | Official OpenAI production ingestion and real-corpus acceptance | Manifest accounting, safe resume, complete graph/assets, exact replay |
-| Current | Anthropic v2 source-parity implementation | Privacy-safe inventory, complete disposition, bounded restart, graph/assets, safe v1 upgrade, synthetic regression coverage |
-| Next | Anthropic retained-corpus acceptance | Fresh inventory/import, controlled stop/resume, exact replay, reconciled counts, sanitized acceptance report |
+| Open PR19 | Anthropic production ingestion and retained-corpus acceptance | Privacy-safe inventory, complete disposition, bounded restart, graph/assets, controlled resume, exact replay |
+| Next | Apple semantic production readiness | Evidence-backed adapters for retained partial groups, lossless fields, full-corpus replay, honest readiness gate |
+| Then | Remaining Google semantic gaps | Complete or explicitly bound retained Nest and asset-indexed surfaces without regressing accepted accounting |
 | Then | Unified canonical full-text query | Fast source-spanning queries with direct observation/version provenance and regression coverage |
 | Then | Reversible identity resolution, claims, correlation, and semantic retrieval | Every derived object cites evidence, is versioned, and can be removed without changing source truth |
 | Final product track | Timeline, exploration, analytics, read-only MCP, and agents | Fast normal queries, permission boundaries, and evidence-citing answers |
