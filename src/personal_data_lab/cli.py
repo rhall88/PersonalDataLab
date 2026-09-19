@@ -6,13 +6,19 @@ import sys
 from collections.abc import Sequence
 from pathlib import Path
 
+from sqlalchemy.engine import Engine
+
 from .anthropic_export.inventory import inspect_anthropic
 from .anthropic_export.inventory import render_inventory_table as render_anthropic_table
 from .anthropic_export.orchestrator import import_anthropic_all
 from .apple_export.inventory import inspect_apple
 from .apple_export.inventory import render_inventory_table as render_apple_table
 from .apple_export.orchestrator import import_apple_all
-from .config import database_url
+from .config import (
+    database_url,
+    guard_acceptance_run_not_canonical,
+    guard_canonical_import_not_test_like,
+)
 from .database import create_database_engine, import_openai_export, import_parsed_exports
 from .google_importer import iter_google_exports
 from .google_takeout.inventory import inspect_google, render_inventory_table
@@ -409,10 +415,18 @@ def _anthropic_member_imported(source_id: str, parsed, result) -> None:
     )
 
 
+def _resolve_guarded_engine(explicit_url: str | None, *, canonical_import: bool) -> Engine:
+    url = database_url(explicit_url)
+    guard_acceptance_run_not_canonical(url)
+    if canonical_import:
+        guard_canonical_import_not_test_like(url)
+    return create_database_engine(url)
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     if args.command == "import-openai":
-        engine = create_database_engine(database_url(args.database_url))
+        engine = _resolve_guarded_engine(args.database_url, canonical_import=True)
         source = Path(args.source).expanduser()
         if source.is_file() and source.name.casefold() == "conversations.json":
             parsed = parse_openai_export(source)
@@ -457,7 +471,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             print(json.dumps(inventory.public_dict(include_paths=args.include_paths), indent=2))
         return 5 if inventory.unknown_files else 0
     if args.command in {"import-anthropic", "import-anthropic-all"}:
-        engine = create_database_engine(database_url(args.database_url))
+        engine = _resolve_guarded_engine(args.database_url, canonical_import=True)
         summary = import_anthropic_all(
             engine,
             args.manifest,
@@ -474,7 +488,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             print(json.dumps(inventory.public_dict(include_paths=args.include_paths), indent=2))
         return 5 if inventory.unknown_files else 0
     if args.command == "import-google":
-        engine = create_database_engine(database_url(args.database_url))
+        engine = _resolve_guarded_engine(args.database_url, canonical_import=True)
         parsed_exports = []
         results = []
         for parsed in iter_google_exports(
@@ -496,7 +510,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             print(json.dumps(inventory.model_dump(mode="json"), indent=2))
         return 5 if inventory.unknown_members_count else 0
     if args.command == "import-google-all":
-        engine = create_database_engine(database_url(args.database_url))
+        engine = _resolve_guarded_engine(args.database_url, canonical_import=True)
         summary = import_google_all(
             engine,
             args.source,
@@ -525,7 +539,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             print(json.dumps(inventory.public_dict(include_paths=args.include_paths), indent=2))
         return 5 if inventory.unknown_members_count else 0
     if args.command == "import-apple-all":
-        engine = create_database_engine(database_url(args.database_url))
+        engine = _resolve_guarded_engine(args.database_url, canonical_import=True)
         summary = import_apple_all(
             engine,
             args.source,
@@ -551,7 +565,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             print(json.dumps(inventory.public_dict(include_paths=args.include_paths), indent=2))
         return 5 if inventory.unknown_files else 0
     if args.command == "import-imessages-all":
-        engine = create_database_engine(database_url(args.database_url))
+        engine = _resolve_guarded_engine(args.database_url, canonical_import=True)
         summary = import_imessages_all(
             engine,
             args.source,
@@ -572,7 +586,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
         return summary.exit_code
     if args.command == "migrate":
-        engine = create_database_engine(database_url(args.database_url))
+        engine = _resolve_guarded_engine(args.database_url, canonical_import=False)
         applied = migrate_database(engine)
         print(
             json.dumps(

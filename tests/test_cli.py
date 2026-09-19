@@ -8,6 +8,7 @@ from zipfile import ZipFile
 import pytest
 
 from personal_data_lab import cli
+from personal_data_lab.config import DatabaseTargetGuardError
 from personal_data_lab.google_importer import GoogleExportError
 from personal_data_lab.models import ImportResult, NormalizedEvent, ParsedExport
 
@@ -49,8 +50,11 @@ def test_google_cli_reports_provenance_and_returns_two_for_conflicts(
         conflicted_events=1,
         new_event_versions=1,
     )
-    monkeypatch.setattr(cli, "database_url", lambda override: "ignored")
+    monkeypatch.setattr(
+        cli, "database_url", lambda override: "postgresql://user:pass@localhost/ignored"
+    )
     monkeypatch.setattr(cli, "create_database_engine", lambda url: object())
+
     def fake_google_exports(source, *, on_member_start):
         on_member_start(parsed.original_path, parsed.category, parsed.size_bytes)
         yield parsed
@@ -132,7 +136,9 @@ def test_google_cli_parse_failure_identifies_member_without_payload(
     member = "Takeout/My Activity/Search/MyActivity.json"
     with ZipFile(source, "w") as archive:
         archive.writestr(member, '[{"title":"PRIVATE FAILURE TEXT"}')
-    monkeypatch.setattr(cli, "database_url", lambda override: "ignored")
+    monkeypatch.setattr(
+        cli, "database_url", lambda override: "postgresql://user:pass@localhost/ignored"
+    )
     monkeypatch.setattr(cli, "create_database_engine", lambda url: object())
 
     with pytest.raises(GoogleExportError, match="ended unexpectedly"):
@@ -144,3 +150,22 @@ def test_google_cli_parse_failure_identifies_member_without_payload(
     assert member in captured.err
     assert "category=my_activity/search/json" in captured.err
     assert "PRIVATE FAILURE TEXT" not in captured.err
+
+
+def test_import_google_all_refuses_test_like_database_without_pdl_env(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(
+        cli,
+        "database_url",
+        lambda override: "postgresql://user:pass@localhost/personaldata_google_acceptance_test",
+    )
+    monkeypatch.setattr(
+        cli,
+        "create_database_engine",
+        lambda url: pytest.fail("guard did not short-circuit before engine creation"),
+    )
+    monkeypatch.delenv("PDL_ENV", raising=False)
+
+    with pytest.raises(DatabaseTargetGuardError, match="test/acceptance naming pattern"):
+        cli.main(["import-google-all", "takeout"])

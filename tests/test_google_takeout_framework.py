@@ -436,7 +436,9 @@ def test_import_google_all_cli_does_not_log_source_content(
         )
 
     monkeypatch.setattr(orchestrator, "import_parsed_exports", imported)
-    monkeypatch.setattr(cli, "database_url", lambda override: "ignored")
+    monkeypatch.setattr(
+        cli, "database_url", lambda override: "postgresql://user:pass@localhost/ignored"
+    )
     monkeypatch.setattr(cli, "create_database_engine", lambda url: object())
     assert cli.main(["import-google-all", str(source)]) == 0
     captured = capsys.readouterr()

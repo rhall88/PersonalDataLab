@@ -302,7 +302,9 @@ def test_cli_output_is_private_and_requires_timezone(tmp_path: Path, monkeypatch
             ),
         ),
     )
-    monkeypatch.setattr(cli, "database_url", lambda override: "ignored")
+    monkeypatch.setattr(
+        cli, "database_url", lambda override: "postgresql://user:pass@localhost/ignored"
+    )
     monkeypatch.setattr(cli, "create_database_engine", lambda url: object())
     assert (
         cli.main(
