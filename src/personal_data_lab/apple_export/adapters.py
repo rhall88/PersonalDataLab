@@ -38,6 +38,7 @@ class AppleAdapter(Protocol):
     adapter_name: str
     parser_version: str
     support_level: str
+    interpretation_level: str
 
     def parse(self, stream: BinaryIO, member: AppleMember) -> ParsedExport: ...
 
@@ -360,7 +361,16 @@ def _export(
 
 
 class StructuredAdapter:
-    support_level = "partially_structured"
+    """Losslessly normalize Apple CSV, JSON, and XML without inventing a schema.
+
+    This is a production representation contract, not a claim of product-specific
+    interpretation. CSV cells (including duplicate headers and surplus columns),
+    complete JSON values, and complete XML trees are retained in provider metadata.
+    Unknown file formats never reach this adapter and malformed documents fail closed.
+    """
+
+    support_level = "losslessly_structured"
+    interpretation_level = "generic_lossless"
     adapter_name = "apple_structured"
     parser_version = f"{PARSER_VERSION}/structured"
 
@@ -625,6 +635,7 @@ def _calendar_time(lines: list[str], warnings: list[str]) -> datetime | None:
 
 class ContactsAdapter:
     support_level = "fully_structured"
+    interpretation_level = "provider_specific"
     adapter_name = "apple_contacts"
     parser_version = f"{PARSER_VERSION}/contacts"
 
@@ -679,6 +690,7 @@ class ContactsAdapter:
 
 class CalendarAdapter:
     support_level = "fully_structured"
+    interpretation_level = "provider_specific"
     adapter_name = "apple_calendar"
     parser_version = f"{PARSER_VERSION}/calendar"
 
@@ -775,6 +787,7 @@ class CalendarAdapter:
 
 class NotesAdapter:
     support_level = "fully_structured"
+    interpretation_level = "provider_specific"
     adapter_name = "apple_notes"
     parser_version = f"{PARSER_VERSION}/notes"
 
@@ -828,6 +841,7 @@ class NotesAdapter:
 
 class TextAdapter:
     support_level = "fully_structured"
+    interpretation_level = "provider_specific"
     adapter_name = "apple_text"
     parser_version = f"{PARSER_VERSION}/text"
 
@@ -855,6 +869,7 @@ class TextAdapter:
 
 class AssetAdapter:
     support_level = "fully_structured"
+    interpretation_level = "provider_specific"
     adapter_name = "apple_asset"
     parser_version = f"{PARSER_VERSION}/asset"
 

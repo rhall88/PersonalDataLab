@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterator
 from time import perf_counter
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, computed_field
 from sqlalchemy.engine import Engine
@@ -12,13 +13,25 @@ from .adapters import ADAPTERS, AppleAdapter, AppleAdapterError
 from .inventory import AppleInventory, AppleMember, inspect_apple, open_apple_member
 from .products import PRODUCT_REGISTRY
 
+AppleInterpretationStatus = Literal[
+    "provider_specific", "generic_lossless", "not_present_in_export", "failed"
+]
+AppleRepresentationStatus = Literal[
+    "fully_structured",
+    "losslessly_structured",
+    "partially_structured",
+    "not_present_in_export",
+    "failed",
+]
+
 
 class AppleProductCoverage(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     product: str
     product_key: str
-    status: str
+    status: AppleRepresentationStatus
+    interpretation_status: AppleInterpretationStatus
     members_discovered: int = 0
     members_processed: int = 0
     members_short_circuited: int = 0
@@ -74,7 +87,12 @@ class AppleImportSummary(BaseModel):
             and not self.members_unknown
             and not any(item.conflicts or item.parse_warnings for item in self.coverage.values())
             and all(
-                item.status in {"fully_structured", "not_present_in_export"}
+                item.status
+                in {
+                    "fully_structured",
+                    "losslessly_structured",
+                    "not_present_in_export",
+                }
                 for item in self.coverage.values()
             )
         )
@@ -109,6 +127,7 @@ def _coverage(inventory: AppleInventory) -> dict[str, dict[str, object]]:
             "product": product.display_name,
             "product_key": key,
             "status": "pending" if observed else "not_present_in_export",
+            "interpretation_status": "pending" if observed else "not_present_in_export",
             "members_discovered": observed.data_members if observed else 0,
             "members_processed": 0,
             "members_short_circuited": 0,
@@ -122,6 +141,7 @@ def _coverage(inventory: AppleInventory) -> dict[str, dict[str, object]]:
             "conflicts": 0,
             "failures": 0,
             "adapters": set(),
+            "interpretation_levels": set(),
             "formats": set(observed.formats if observed else ()),
             "failed_member_ids": [],
             "elapsed_seconds": 0.0,
@@ -176,6 +196,7 @@ def import_apple_all(
             failed += 1
             continue
         coverage["adapters"].add(adapter.adapter_name)
+        coverage["interpretation_levels"].add(adapter.interpretation_level)
         if on_member_start is not None:
             on_member_start(member, adapter)
         try:
@@ -201,11 +222,17 @@ def import_apple_all(
                 raise AppleAdapterError("adapter produced no parsed exports")
             if coverage["status"] != "failed":
                 if (
-                    adapter.support_level != "fully_structured"
+                    adapter.support_level
+                    not in {"fully_structured", "losslessly_structured"}
                     or coverage["parse_warnings"]
                     or coverage["status"] == "partially_structured"
                 ):
                     coverage["status"] = "partially_structured"
+                elif (
+                    adapter.support_level == "losslessly_structured"
+                    or coverage["status"] == "losslessly_structured"
+                ):
+                    coverage["status"] = "losslessly_structured"
                 else:
                     coverage["status"] = "fully_structured"
             imported += 1
@@ -228,6 +255,15 @@ def import_apple_all(
             )
     finalized: dict[str, AppleProductCoverage] = {}
     for key, values in mutable.items():
+        interpretation_levels = values.pop("interpretation_levels")
+        if values["status"] == "failed":
+            values["interpretation_status"] = "failed"
+        elif values["status"] == "not_present_in_export":
+            values["interpretation_status"] = "not_present_in_export"
+        elif "generic_lossless" in interpretation_levels:
+            values["interpretation_status"] = "generic_lossless"
+        else:
+            values["interpretation_status"] = "provider_specific"
         values["adapters"] = tuple(sorted(values["adapters"]))
         values["formats"] = tuple(sorted(values["formats"]))
         values["failed_member_ids"] = tuple(values["failed_member_ids"])
