@@ -349,12 +349,19 @@ private content; `inspect-apple --include-paths` is an explicit diagnostic opt-i
 CSV rows are streamed in bounded chunks, Contacts and Calendars receive native VCF/ICS semantics,
 Notes retain text and attachment relationships, and binary media remains source-backed. See
 [`APPLE_INGESTION_SPEC.md`](APPLE_INGESTION_SPEC.md) and
-[`APPLE_PRODUCT_COVERAGE.md`](APPLE_PRODUCT_COVERAGE.md). Parser v3 corrects review findings and marks generic structured coverage as partial (exit 3).
-Fresh parser-v3 real-corpus persistence, controlled interruption/resume, semantic reconciliation,
-the empty-TestFlight repair, and exact replay passed in PR16. This is operational acceptance, not
-full product-specific semantic coverage: 27 present product groups remain partially structured,
-so the honest complete replay result is exit 3 and `production_ready: false`. See
-[`PR16_APPLE_V3_PRODUCTION_ACCEPTANCE_REPORT.md`](PR16_APPLE_V3_PRODUCTION_ACCEPTANCE_REPORT.md);
+[`APPLE_PRODUCT_COVERAGE.md`](APPLE_PRODUCT_COVERAGE.md). Coverage reports production
+representation separately from interpretation depth: schema-agnostic CSV/JSON/XML is
+`losslessly_structured` only when every decoded provider field is retained, while
+`interpretation_status: generic_lossless` makes clear that no product-specific meaning is being
+claimed. Purpose-built surfaces remain `fully_structured`. Unknown formats, malformed data,
+warnings, and failures still fail the gate.
+
+Fresh parser-v3 persistence, controlled interruption/resume, semantic reconciliation, the
+empty-TestFlight repair, and exact replay passed in PR16. The subsequent production-readiness run
+qualifies the already lossless structured adapter, adds the interpretation dimension, and reaches
+exit 0 with `production_ready: true` across all 30 present groups. See
+[`APPLE_PRODUCTION_READINESS_ACCEPTANCE_REPORT.md`](APPLE_PRODUCTION_READINESS_ACCEPTANCE_REPORT.md)
+and [`PR16_APPLE_V3_PRODUCTION_ACCEPTANCE_REPORT.md`](PR16_APPLE_V3_PRODUCTION_ACCEPTANCE_REPORT.md);
 [`PR14_APPLE_PRODUCTION_ACCEPTANCE_REPORT.md`](PR14_APPLE_PRODUCTION_ACCEPTANCE_REPORT.md)
 preserves the historical parser-v2 results and review findings.
 
@@ -573,7 +580,8 @@ separate provenance family from independently acquired iMessages; see
 [`PR14_APPLE_PRODUCTION_ACCEPTANCE_REPORT.md`](PR14_APPLE_PRODUCTION_ACCEPTANCE_REPORT.md).
 Parser-v3 real-corpus persistence, interruption/resume, and exact replay are accepted in
 [`PR16_APPLE_V3_PRODUCTION_ACCEPTANCE_REPORT.md`](PR16_APPLE_V3_PRODUCTION_ACCEPTANCE_REPORT.md);
-generic structured product coverage remains explicitly partial.
+the current representation gate and interpretation boundary are accepted in
+[`APPLE_PRODUCTION_READINESS_ACCEPTANCE_REPORT.md`](APPLE_PRODUCTION_READINESS_ACCEPTANCE_REPORT.md).
 Independent iMazing Messages CSV ingestion preserves device-export provenance, message
 lifecycle, reply/reaction semantics, and attachment availability without mixing it into the
 official Apple source family; see

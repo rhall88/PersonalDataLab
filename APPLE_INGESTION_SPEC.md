@@ -40,7 +40,7 @@ containers), and logical leaf bytes (excluding container bytes). Nested compress
 without being double-counted as physical source data. Complete accounting requires
 `classified + structural + unknown == recursive entries` and exact recursive and leaf byte sums.
 
-## Semantic contract
+## Representation and interpretation contract
 
 The permanent registry contains the 32 Apple surfaces observed in the retained export. Present
 surfaces route to one of these representations:
@@ -79,6 +79,22 @@ evidence and a provider time produce both a durable record and a normalized even
 the provider object while making activity queryable. Unknown time formats remain in provider
 metadata rather than being guessed.
 
+Coverage deliberately reports two independent dimensions:
+
+- `status` is the production representation gate. `fully_structured` identifies purpose-built
+  representations; `losslessly_structured` identifies schema-agnostic structured representations.
+  Both require every provider field to be retained in a deterministic normalized object (or a
+  source-backed external asset), malformed input to fail closed, inspectable provenance, and exact
+  replay safety.
+- `interpretation_status` says how much provider meaning is projected. `provider_specific` is a
+  purpose-built native/text/asset model; `generic_lossless` is the schema-agnostic CSV/JSON/XML
+  representation described above. A product that mixes the two reports `generic_lossless`.
+
+Generic lossless coverage is intentionally not a claim that every Apple product field has a
+hand-written domain model. Those richer projections belong in the derived-understanding layer and
+must cite the retained provider record. This distinction lets ingestion become production-ready
+without relabeling inference as source truth.
+
 ## Restart and reconciliation
 
 `import-apple-all` inventories before importing. Each data member, or each bounded chunk of a
@@ -92,8 +108,10 @@ warnings, `4` for failed classified members, and `5` for unknown members. Preced
 unknown, conflict, partial/warning, success. Data represented with partial support is still persisted.
 
 Coverage starts pending and is finalized from adapter support, parse warnings, and import outcome.
-The generic CSV/JSON/XML adapter is explicitly `partially_structured`; preserving fields and
-heuristically identifying events is not proof of complete product-specific semantics.
+The generic CSV/JSON/XML adapter satisfies the production representation contract because it is
+schema-agnostic and retains all decoded fields while the immutable source remains lexical truth.
+It reports `status: losslessly_structured` and `interpretation_status: generic_lossless`, so callers
+never confuse production-safe ingestion with complete product-specific interpretation.
 
 ## Production acceptance gate
 
@@ -101,7 +119,7 @@ Production-ready means all of the following are true for the retained corpus:
 
 1. every recursive entry and byte is accounted;
 2. unknown members and parse failures are zero;
-3. all present products are fully structured;
+3. all present products satisfy the production representation contract;
 4. real-data parsing emits no undisposed warning;
 5. a controlled interruption resumes without losing completed work;
 6. a complete unchanged rerun short-circuits every data member and creates no new versions;
@@ -116,11 +134,13 @@ reconciliation, repair of valid newline-only TestFlight datasets, and exact unch
 PR16. It processed all 814 data leaves with zero failures, unknowns, warnings, or conflicts. See
 [`PR16_APPLE_V3_PRODUCTION_ACCEPTANCE_REPORT.md`](PR16_APPLE_V3_PRODUCTION_ACCEPTANCE_REPORT.md).
 
-This is operational corpus acceptance, not the stricter full-semantic `production_ready` gate
-above. Twenty-seven present product groups still use the generic partially structured adapter;
-Business Chat Support, Store Credit, and Voice Memos are fully structured; Apple TV and Podcast
-Information and Siri were absent. Complete replay therefore remains persistence-complete and
-exactly idempotent while exiting 3 with `production_ready` set to `false`.
+PR16 is operational corpus evidence for the same parser bytes, but it predates the explicit split
+between representation readiness and interpretation depth. At that milestone, 27 present product
+groups were conservatively labeled partial solely because they used the generic structured
+adapter; Business Chat Support, Store Credit, and Voice Memos were fully structured; Apple TV and
+Podcast Information and Siri were absent. The later production-readiness acceptance reuses no
+claim from an unparsed format: it qualifies the already tested CSV/JSON/XML representation and
+keeps the 27 groups visibly `generic_lossless` rather than calling them provider-specific.
 
 The historical PR14 corpus report measures parser v2 and cannot substitute for v3 evidence.
 Re-importing v3 into an existing v2 database preserves historical rows and may add identities or

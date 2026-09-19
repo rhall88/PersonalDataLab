@@ -1,4 +1,4 @@
-# PersonalDataLab roadmap after OpenAI production acceptance
+# PersonalDataLab roadmap toward complete source readiness
 
 PersonalDataLab develops in four layers. Each layer depends on the evidence guarantees beneath
 it: acquire and preserve first, normalize second, derive understanding third, and expose that
@@ -32,7 +32,7 @@ not claimed as empirically validated.
 
 ## 2. Add source families without mixing provenance
 
-### Official Apple privacy export — parser-v3 operational acceptance completed in PR16
+### Official Apple privacy export — production-ready for the retained corpus
 
 The retained export now has recursive inventory, a 32-surface registry, complete physical versus
 logical byte accounting, privacy-safe progress, structured and native-format adapters, streamed
@@ -40,10 +40,12 @@ external assets, restart-safe transactions, and coverage reporting. A complete r
 PostgreSQL import, controlled resume, and exact unchanged replay passed for parser v2. Review
 found defects outside exact-replay coverage; parser v3 fixed them. PR16 completed a fresh
 real-corpus import, controlled resume, semantic reconciliation, a real empty-TestFlight repair,
-and exact unchanged replay. Generic structured coverage remains explicitly partial, so exit 3 is
-the honest semantic-coverage result rather than a persistence failure. Do not infer support for
-products or formats absent from the retained export. See
-[`PR16_APPLE_V3_PRODUCTION_ACCEPTANCE_REPORT.md`](PR16_APPLE_V3_PRODUCTION_ACCEPTANCE_REPORT.md).
+and exact unchanged replay. The production-readiness change formalizes lossless CSV/JSON/XML as a
+representation contract and reports interpretation depth separately. All 30 present product
+groups now pass the ingestion gate, 27 remain visibly `losslessly_structured` / `generic_lossless`,
+and complete replay exits 0. Do not infer support for products or formats absent from the retained export. See
+[`APPLE_PRODUCTION_READINESS_ACCEPTANCE_REPORT.md`](APPLE_PRODUCTION_READINESS_ACCEPTANCE_REPORT.md)
+and [`PR16_APPLE_V3_PRODUCTION_ACCEPTANCE_REPORT.md`](PR16_APPLE_V3_PRODUCTION_ACCEPTANCE_REPORT.md).
 
 ### iMessages device export — production-ready in PR15
 
@@ -105,10 +107,18 @@ claims express what multiple observations may mean together.
 - unified personal timeline;
 - people, place, project, topic, conversation, and document views;
 - geographic and communication exploration;
+- a question-driven visual canvas that can fluidly transform among timelines, relationship
+  topology, geography, topic structure, and evidence detail as the user asks follow-up questions;
 - DuckDB/Parquet analytical projections without creating a second source of truth;
 - evidence-citing question answering;
 - read-only, permission-scoped MCP access;
 - agent workflows only after normal queries are fast, provenance-aware, and access-controlled.
+
+The visual layer may use ambitious motion, dimensional transitions, and novel interactive
+encodings, but it must remain an evidence view rather than a second analytical truth. Every visual
+mark must resolve to canonical objects and immutable observations; animation must preserve mental
+map and selection state; large corpora need performance budgets and progressive detail; and every
+experience needs reduced-motion, keyboard, screen-reader, and inspectable static alternatives.
 
 ## Permanent operational track
 
@@ -128,8 +138,8 @@ chain must never depend on an embedding model, UI, or agent remaining available.
 | Completed PR16 | Official Apple parser-v3 real-corpus operational acceptance | Fresh import, safe resume, empty-dataset repair, semantic reconciliation, exact replay |
 | Completed PR17 | Official OpenAI production ingestion and real-corpus acceptance | Manifest accounting, safe resume, complete graph/assets, exact replay |
 | Open PR19 | Anthropic production ingestion and retained-corpus acceptance | Privacy-safe inventory, complete disposition, bounded restart, graph/assets, controlled resume, exact replay |
-| Next | Apple semantic production readiness | Evidence-backed adapters for retained partial groups, lossless fields, full-corpus replay, honest readiness gate |
-| Then | Remaining Google semantic gaps | Complete or explicitly bound retained Nest and asset-indexed surfaces without regressing accepted accounting |
+| Current stacked PR | Apple production readiness | Lossless representation contract, separate interpretation depth, full-corpus import and exact replay, exit 0 |
+| Next stacked PR | Remaining Google semantic gaps | Complete or explicitly bound retained Nest and asset-indexed surfaces without regressing accepted accounting |
 | Then | Unified canonical full-text query | Fast source-spanning queries with direct observation/version provenance and regression coverage |
 | Then | Reversible identity resolution, claims, correlation, and semantic retrieval | Every derived object cites evidence, is versioned, and can be removed without changing source truth |
 | Final product track | Timeline, exploration, analytics, read-only MCP, and agents | Fast normal queries, permission boundaries, and evidence-citing answers |

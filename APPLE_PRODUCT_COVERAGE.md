@@ -6,21 +6,24 @@ parser-v3 counts. Parser v3 has since completed fresh corpus inventory and opera
 Coverage is evidence-shaped: absent products are not claimed, and independently extracted
 iMessages are deliberately excluded.
 
-## Current parser-v3 acceptance summary
+## Current production-readiness summary
 
 - 31 outer ZIP archives and 18 nested ZIP containers;
 - 832 recursive entries: 814 classified data leaves, 18 structural containers, and zero unknowns;
 - 1,960,490,082 logical leaf bytes processed;
 - all 814 data leaves persist, resume, and short-circuit on exact replay;
 - zero failures, unknowns, parse warnings, or conflicts;
-- 27 present product groups remain `partially_structured`; Business Chat Support, Store Credit,
-  and Voice Memos are `fully_structured`; Apple TV and Podcast Information and Siri were not
-  present;
-- complete replay exits 3 with `production_ready: false` because partial semantic coverage is an
-  explicit gate, not because persistence or accounting failed.
+- all 30 present product groups satisfy the production representation contract; 27 report
+  `status: losslessly_structured`, Business Chat Support, Store Credit, and Voice Memos report
+  `status: fully_structured`, and Apple TV and Podcast Information and Siri were not present;
+- the same 27 groups report `interpretation_status: generic_lossless`, while the three fully
+  structured groups are entirely `provider_specific` in this retained corpus;
+- complete replay exits 0 with `production_ready: true` while preserving the distinction between
+  lossless provider representation and hand-written product interpretation.
 
-See [`PR16_APPLE_V3_PRODUCTION_ACCEPTANCE_REPORT.md`](PR16_APPLE_V3_PRODUCTION_ACCEPTANCE_REPORT.md)
-for the accepted parser-v3 evidence.
+See [`APPLE_PRODUCTION_READINESS_ACCEPTANCE_REPORT.md`](APPLE_PRODUCTION_READINESS_ACCEPTANCE_REPORT.md)
+for the current gate and [`PR16_APPLE_V3_PRODUCTION_ACCEPTANCE_REPORT.md`](PR16_APPLE_V3_PRODUCTION_ACCEPTANCE_REPORT.md)
+for the preceding parser-v3 operational evidence.
 
 ## Historical parser-v2 per-product inventory
 
@@ -63,7 +66,8 @@ The v2 retained corpus had 29 present registry products and three absent entries
 467-member counts remain useful for comparison but are superseded as acceptance evidence by PR16.
 Parser v3 correctly reclassifies 347 PDFs as product data, accepts five valid empty TestFlight
 datasets, and uses actual parse/import results to finalize support. Generic CSV/JSON/XML coverage
-remains explicitly `partially_structured` even when every provider field is preserved. Warnings,
-failures, unknowns, and partial support continue to block the stricter `production_ready` gate.
+is now recognized as a production-safe, lossless representation while remaining explicitly
+`generic_lossless` in the separate interpretation dimension. Warnings, failures, unknowns, and
+unsupported formats continue to block the `production_ready` gate.
 See [`PR14_APPLE_PRODUCTION_ACCEPTANCE_REPORT.md`](PR14_APPLE_PRODUCTION_ACCEPTANCE_REPORT.md) for
 the historical v2 results and review findings.
