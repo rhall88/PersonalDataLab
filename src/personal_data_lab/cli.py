@@ -6,7 +6,9 @@ import sys
 from collections.abc import Sequence
 from pathlib import Path
 
-from .anthropic_importer import parse_anthropic_export
+from .anthropic_export.inventory import inspect_anthropic
+from .anthropic_export.inventory import render_inventory_table as render_anthropic_table
+from .anthropic_export.orchestrator import import_anthropic_all
 from .apple_export.inventory import inspect_apple
 from .apple_export.inventory import render_inventory_table as render_apple_table
 from .apple_export.orchestrator import import_apple_all
@@ -50,10 +52,36 @@ def _parser() -> argparse.ArgumentParser:
     )
     anthropic = subparsers.add_parser(
         "import-anthropic",
-        help="import an Anthropic manifest and its local source archives",
+        help="inventory and import an Anthropic manifest and its local source archives",
     )
     anthropic.add_argument("manifest", help="manifest JSON beside the untouched ZIP archives")
     anthropic.add_argument("--database-url", help="overrides DATABASE_URL from .env")
+    anthropic_all = subparsers.add_parser(
+        "import-anthropic-all",
+        help="alias for the production Anthropic manifest importer",
+    )
+    anthropic_all.add_argument(
+        "manifest", help="manifest JSON beside the untouched ZIP archives"
+    )
+    anthropic_all.add_argument("--database-url", help="overrides DATABASE_URL from .env")
+    inspect_anthropic_parser = subparsers.add_parser(
+        "inspect-anthropic",
+        help="inventory an Anthropic manifest and every local archive member",
+    )
+    inspect_anthropic_parser.add_argument(
+        "manifest", help="manifest JSON beside the untouched ZIP archives"
+    )
+    inspect_anthropic_parser.add_argument(
+        "--format",
+        dest="output_format",
+        choices=("json", "table"),
+        default="json",
+    )
+    inspect_anthropic_parser.add_argument(
+        "--include-paths",
+        action="store_true",
+        help="include potentially sensitive archive and member paths in JSON output",
+    )
     google = subparsers.add_parser(
         "import-google",
         help="import Google My Activity from Takeout ZIPs or an extracted export",
@@ -353,6 +381,34 @@ def _openai_member_imported(member, parsed, result) -> None:
     )
 
 
+def _anthropic_member_started(source_id: str, category: str, size_bytes: int) -> None:
+    print(
+        f"[anthropic] parsing source_id={source_id} "
+        f"category={category} size_bytes={size_bytes}",
+        file=sys.stderr,
+        flush=True,
+    )
+
+
+def _anthropic_member_imported(source_id: str, parsed, result) -> None:
+    conflicts = (
+        result.conflicted_conversations
+        + result.conflicted_events
+        + result.conflicted_records
+        + result.conflicted_assets
+        + result.conflicted_relationships
+    )
+    print(
+        f"[anthropic] imported source_id={source_id} category={parsed.category} "
+        f"conversations={result.source_conversations} events={result.source_events} "
+        f"records={result.source_records} assets={result.source_assets} "
+        f"relationships={result.source_relationships} "
+        f"short_circuited={str(result.short_circuited).lower()} conflicts={conflicts}",
+        file=sys.stderr,
+        flush=True,
+    )
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     if args.command == "import-openai":
@@ -400,12 +456,23 @@ def main(argv: Sequence[str] | None = None) -> int:
         else:
             print(json.dumps(inventory.public_dict(include_paths=args.include_paths), indent=2))
         return 5 if inventory.unknown_files else 0
-    if args.command == "import-anthropic":
-        parsed_exports = parse_anthropic_export(args.manifest)
+    if args.command in {"import-anthropic", "import-anthropic-all"}:
         engine = create_database_engine(database_url(args.database_url))
-        results = import_parsed_exports(engine, parsed_exports)
-        print(json.dumps(_batch_summary(parsed_exports, results), indent=2))
-        return 2 if any(result.has_conflicts for result in results) else 0
+        summary = import_anthropic_all(
+            engine,
+            args.manifest,
+            on_member_start=_anthropic_member_started,
+            on_member_imported=_anthropic_member_imported,
+        )
+        print(json.dumps(summary.model_dump(mode="json") | {"exit_code": summary.exit_code}, indent=2))
+        return summary.exit_code
+    if args.command == "inspect-anthropic":
+        inventory = inspect_anthropic(args.manifest)
+        if args.output_format == "table":
+            print(render_anthropic_table(inventory))
+        else:
+            print(json.dumps(inventory.public_dict(include_paths=args.include_paths), indent=2))
+        return 5 if inventory.unknown_files else 0
     if args.command == "import-google":
         engine = create_database_engine(database_url(args.database_url))
         parsed_exports = []

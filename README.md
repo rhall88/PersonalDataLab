@@ -28,6 +28,8 @@ This repository contains the completed foundation and its source importers:
 - recursive official Apple privacy-export ingestion with semantic native-format adapters
 - independent iMazing Messages CSV ingestion for conversations, participants, messages, replies,
   reactions, edits, deletions, and attachment references
+- privacy-safe Anthropic manifest inventory, restart-safe v2 ingestion, external assets, and
+  provider-evidenced relationships; retained-corpus acceptance remains pending
 - reconciliation tests
 - Windows/PowerShell setup instructions
 
@@ -178,26 +180,37 @@ accounting. See [`OPENAI_INGESTION_SPEC.md`](OPENAI_INGESTION_SPEC.md) and
 ## 7. Import Anthropic and reconcile
 
 Place the untouched Anthropic manifest beside every `*-000.zip` file it names, then
-pass the local manifest to the importer:
+inspect it before connecting to PostgreSQL:
 
 ```powershell
+personal-data-lab inspect-anthropic data\raw\anthropic\2026-09-09\manifest-....json --format table
 personal-data-lab import-anthropic data\raw\anthropic\2026-09-09\manifest-....json
 ```
 
-The importer supports the `conversations`, `design_chats`, `light_metadata`, `memories`,
-and `projects` categories. It reads only the sibling archives named by the manifest. It
-does not call, log, or persist the manifest's signed download endpoints, so an expired
-endpoint does not matter after the source files have been downloaded.
+`import-anthropic-all` is an explicit alias for the same production path. The inspector and
+importer support the `conversations`, `design_chats`, `light_metadata`, `memories`, and `projects`
+categories. They read only local source bytes and never call or persist the manifest's signed
+download endpoints, so an expired endpoint does not matter after the archives are downloaded.
 
-Each archive becomes its own `source_files` row. All five archives are imported in one
-database transaction, and the command reports per-file and total reconciliation. A
-failure in any archive rolls back the complete batch.
+The manifest, every declared archive, and every ZIP member receive exact byte accounting with
+opaque IDs in default output. The production parser uses the separate `anthropic-v2` run identity:
+the manifest, binary assets, JSON members, and deterministic 25-conversation chunks commit in
+restart-safe transactions. A stopped import therefore resumes completed work instead of rolling
+back or repeating the entire export. The legacy `anthropic-v1` parser remains available only as a
+compatibility API for historical evidence.
 
 For ordinary Claude messages, canonical event text comes only from
 `content[type=text]` blocks, joined with newlines. Provider content blocks, attachment
 metadata, file references, and any differing top-level export text remain in the event's
-`metadata.anthropic` object. This slice does not invent attachment filesystem paths or
-perform automatic person/identity resolution.
+`metadata.anthropic` object. Explicit parent, attachment/file, project-document, and
+design-chat/project relationships enter the v7 relationship graph. Missing attachment bytes are
+honest unavailable assets; exact provider-path matches can reference retained binary members. The
+importer does not guess paths, fetch remote objects, or perform automatic person/identity
+resolution.
+
+See [`ANTHROPIC_INGESTION_SPEC.md`](ANTHROPIC_INGESTION_SPEC.md) for the inventory, privacy,
+restart, identity, exit-code, and acceptance contract. Synthetic implementation coverage is
+complete; fresh retained-corpus inventory/import/resume/replay evidence is still required.
 
 Previously generated normalized ZIPs are useful as independent reconciliation oracles,
 but they are derived data and are not importer inputs. The untouched manifest and
