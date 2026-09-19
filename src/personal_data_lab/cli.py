@@ -2,12 +2,14 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from collections.abc import Sequence
 from pathlib import Path
 
-from sqlalchemy.engine import Engine
+from sqlalchemy.engine import Engine, make_url
 
+from . import __version__
 from .anthropic_export.inventory import inspect_anthropic
 from .anthropic_export.inventory import render_inventory_table as render_anthropic_table
 from .anthropic_export.orchestrator import import_anthropic_all
@@ -15,18 +17,25 @@ from .apple_export.inventory import inspect_apple
 from .apple_export.inventory import render_inventory_table as render_apple_table
 from .apple_export.orchestrator import import_apple_all
 from .config import (
+    canonical_database_name,
     database_url,
     guard_acceptance_run_not_canonical,
     guard_canonical_import_not_test_like,
+    is_test_like_database_name,
 )
-from .database import create_database_engine, import_openai_export, import_parsed_exports
+from .database import (
+    create_database_engine,
+    import_openai_export,
+    import_parsed_exports,
+    list_sibling_databases,
+)
 from .google_importer import iter_google_exports
 from .google_takeout.inventory import inspect_google, render_inventory_table
 from .google_takeout.orchestrator import import_google_all
 from .imessages.inventory import inspect_imessages
 from .imessages.inventory import render_inventory_table as render_imessages_table
 from .imessages.orchestrator import import_imessages_all
-from .migrations import LATEST_SCHEMA_VERSION, migrate_database
+from .migrations import LATEST_SCHEMA_VERSION, current_schema_version, migrate_database
 from .openai_export.inventory import inspect_openai
 from .openai_export.orchestrator import import_openai_all
 from .openai_importer import parse_openai_export
@@ -176,6 +185,19 @@ def _parser() -> argparse.ArgumentParser:
     imessages_all.add_argument("--database-url", help="overrides DATABASE_URL from .env")
     migrate = subparsers.add_parser("migrate", help="upgrade an existing database schema")
     migrate.add_argument("--database-url", help="overrides DATABASE_URL from .env")
+    doctor = subparsers.add_parser(
+        "doctor",
+        help="report the configured database target, schema version, and every "
+        "sibling database on the same Postgres instance",
+    )
+    doctor.add_argument(
+        "--format",
+        dest="output_format",
+        choices=("json", "table"),
+        default="json",
+        help="output machine-readable JSON (default) or a human-readable table",
+    )
+    doctor.add_argument("--database-url", help="overrides DATABASE_URL from .env")
     return parser
 
 
@@ -423,6 +445,99 @@ def _resolve_guarded_engine(explicit_url: str | None, *, canonical_import: bool)
     return create_database_engine(url)
 
 
+def _classify_database_name(name: str) -> str:
+    if name == canonical_database_name():
+        return "canonical"
+    if is_test_like_database_name(name):
+        return "test-like"
+    return "unclassified"
+
+
+def _build_doctor_report(explicit_url: str | None) -> dict:
+    # Deliberately does not call _resolve_guarded_engine: doctor must be able
+    # to report on any target, including one the import guards would refuse.
+    url = database_url(explicit_url)
+    parsed = make_url(url)
+    target_name = parsed.database or ""
+    target_classification = _classify_database_name(target_name)
+    pdl_env = os.getenv("PDL_ENV", "production")
+
+    engine = create_database_engine(url)
+    schema_version = current_schema_version(engine)
+    siblings = [
+        {
+            "name": name,
+            "size_bytes": size_bytes,
+            "classification": _classify_database_name(name),
+            "is_target": name == target_name,
+        }
+        for name, size_bytes in list_sibling_databases(engine)
+    ]
+
+    suspicious: list[str] = []
+    if pdl_env not in {"production", "acceptance"}:
+        suspicious.append(f"PDL_ENV={pdl_env!r} is not 'production' or 'acceptance'")
+    if target_classification == "unclassified":
+        suspicious.append(
+            f"target database '{target_name}' is neither the configured canonical "
+            f"name ('{canonical_database_name()}') nor a recognized test/acceptance "
+            f"naming pattern"
+        )
+
+    return {
+        "repo_version": __version__,
+        "pdl_env": pdl_env,
+        "target_host": parsed.host,
+        "target_port": parsed.port,
+        "target_database": target_name,
+        "target_classification": target_classification,
+        "canonical_database_name": canonical_database_name(),
+        "schema_version": schema_version,
+        "latest_schema_version": LATEST_SCHEMA_VERSION,
+        "schema_up_to_date": schema_version == LATEST_SCHEMA_VERSION,
+        "sibling_databases": siblings,
+        "test_like_sibling_count": sum(
+            1 for sibling in siblings if sibling["classification"] == "test-like"
+        ),
+        "suspicious_config": suspicious,
+    }
+
+
+def _render_doctor_table(report: dict) -> str:
+    lines = [
+        f"personal-data-lab doctor - repo version {report['repo_version']}",
+        f"PDL_ENV: {report['pdl_env']}",
+        f"target: {report['target_database']} @ {report['target_host']}:{report['target_port']}",
+        (
+            f"target classification: {report['target_classification']} "
+            f"(canonical name configured as '{report['canonical_database_name']}')"
+        ),
+        (
+            f"schema version: {report['schema_version']} "
+            f"({'up to date' if report['schema_up_to_date'] else 'OUTDATED'}, "
+            f"latest={report['latest_schema_version']})"
+        ),
+        "",
+        (
+            f"sibling databases on this instance ({len(report['sibling_databases'])} found, "
+            f"{report['test_like_sibling_count']} test-like):"
+        ),
+    ]
+    for sibling in report["sibling_databases"]:
+        marker = " <- THIS TARGET" if sibling["is_target"] else ""
+        lines.append(
+            f"  {sibling['name']:<50} {sibling['classification']:<12} "
+            f"{sibling['size_bytes']:>14,} bytes{marker}"
+        )
+    lines.append("")
+    if report["suspicious_config"]:
+        lines.append("suspicious config:")
+        lines.extend(f"  - {item}" for item in report["suspicious_config"])
+    else:
+        lines.append("suspicious config: none")
+    return "\n".join(lines)
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     if args.command == "import-openai":
@@ -598,6 +713,13 @@ def main(argv: Sequence[str] | None = None) -> int:
                 indent=2,
             )
         )
+        return 0
+    if args.command == "doctor":
+        report = _build_doctor_report(args.database_url)
+        if args.output_format == "table":
+            print(_render_doctor_table(report))
+        else:
+            print(json.dumps(report, indent=2))
         return 0
     raise AssertionError(f"unhandled command: {args.command}")
 
