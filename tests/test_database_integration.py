@@ -1710,7 +1710,11 @@ def test_apple_changed_packaging_and_smaller_exports_do_not_conflict_or_delete(
     header = "Device Identifier,Event Date,Action\n"
     a, b, c = "d1,2026-01-01,play\n", "d1,2026-01-02,stop\n", "d1,2026-01-03,play\n"
     source = _apple_zip(tmp_path / "Other Data Part 1.zip", [("history.csv", header + a + b)])
-    assert import_apple_all(database_engine, str(source)).exit_code == 3
+    first = import_apple_all(database_engine, str(source))
+    assert first.exit_code == 0
+    assert first.production_ready
+    assert first.coverage["other_apple_data"].status == "losslessly_structured"
+    assert first.coverage["other_apple_data"].interpretation_status == "generic_lossless"
     source = _apple_zip(
         tmp_path / "Other Data Part 2.zip",
         [

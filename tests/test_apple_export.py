@@ -54,6 +54,17 @@ def test_registry_has_stable_observed_product_contract() -> None:
     assert PRODUCT_REGISTRY["voice_memos"].display_name == "Voice Memos"
 
 
+def test_adapter_contract_separates_representation_from_interpretation() -> None:
+    structured = ADAPTERS["apple_structured"]
+    assert structured.support_level == "losslessly_structured"
+    assert structured.interpretation_level == "generic_lossless"
+    assert {
+        adapter.interpretation_level
+        for name, adapter in ADAPTERS.items()
+        if name != "apple_structured"
+    } == {"provider_specific"}
+
+
 def test_recursive_inventory_accounts_for_nested_data_guides_and_bytes(tmp_path: Path) -> None:
     nested = _nested(
         [
@@ -240,7 +251,9 @@ def test_malformed_structured_error_never_contains_payload(tmp_path: Path) -> No
     assert secret not in str(raised.value)
 
 
-def test_orchestrator_complete_coverage_and_short_circuit(tmp_path: Path, monkeypatch) -> None:
+def test_orchestrator_lossless_structured_coverage_is_production_ready(
+    tmp_path: Path, monkeypatch
+) -> None:
     source = _zip(
         tmp_path / "Apple Account and device information.zip",
         [
@@ -274,10 +287,12 @@ def test_orchestrator_complete_coverage_and_short_circuit(tmp_path: Path, monkey
     summary = orchestrator.import_apple_all(object(), str(source))
     assert summary.members_imported == summary.members_short_circuited == 1
     assert summary.complete_accounting
-    assert not summary.production_ready
-    assert summary.exit_code == 3
-    assert summary.coverage["account_device"].status == "partially_structured"
+    assert summary.production_ready
+    assert summary.exit_code == 0
+    assert summary.coverage["account_device"].status == "losslessly_structured"
+    assert summary.coverage["account_device"].interpretation_status == "generic_lossless"
     assert summary.coverage["notes"].status == "not_present_in_export"
+    assert summary.coverage["notes"].interpretation_status == "not_present_in_export"
 
 
 def test_apple_cli_defaults_are_private_and_machine_readable(
