@@ -20,3 +20,4 @@ services:
 
 volumes:
   postgres_data:
+    name: pdl_canonical_postgres_data

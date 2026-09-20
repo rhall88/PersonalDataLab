@@ -1,5 +1,31 @@
 # Database & Local State — Ground Truth (as of 2026-09-19)
 
+## Update 2026-09-19 (later same day): canonical rebuild executed for all five sources
+
+Everything below this note describes the state **before** the rebuild this section records. Steps
+4 and 5 of the "Proposed sequence" below are now done: `pdl_canonical_postgres_data` was created as
+the new dedicated volume, `compose.yaml`/`.env` were pointed at it, and `personaldata` was rebuilt
+from raw exports only, one source at a time. Anthropic, OpenAI, and iMessages were already correct
+and complete (verified against their PR19/PR17/PR15 accepted baselines with zero discrepancy) before
+Apple and Google were added today:
+
+- **Apple**: 897/897 import runs completed, `production_ready: true`, exit 0. 476,444 records,
+  162,318 events, 380 assets, 161 relationships — exact match to
+  [`APPLE_PRODUCTION_READINESS_ACCEPTANCE_REPORT.md`](APPLE_PRODUCTION_READINESS_ACCEPTANCE_REPORT.md).
+  This resumed cleanly after an unrelated local power interruption stopped it at 772/897 runs; the
+  restart-safe per-member transaction design meant no row was left partially written, and the
+  identical command completed the remaining 125 members.
+- **Google**: one fresh complete pass, 25,427/25,427 data members, 51/51 registry products routed,
+  zero failed/unknown members, all 146,248,662,729 bytes accounted, exit 0, in 1h19m34s. 122,293
+  records, 164,032 events, 13,983 assets, 115,221 relationships. This differs from the
+  `google_acceptance_test` snapshot recorded below by +657 records, +657 relationships, and +1
+  event — expected, because that snapshot predates PR13's later differential-replay fixes and this
+  run used the fully-fixed current importer directly against the canonical database.
+
+See [`PROJECT_STATE.md`](PROJECT_STATE.md) for the consolidated table. Step 6 (idempotency check —
+re-running every importer a second time against this now-combined canonical database) has not yet
+been executed; it is the immediate next step before this baseline is called fully proven.
+
 This file exists because local operational state (Docker volumes, databases,
 raw export locations) had drifted into something no one — human or model —
 could read correctly on first contact.
@@ -309,12 +335,14 @@ something later mistaken for having always been canonical.
    database around to prove it.
 3. **Extract `personaldata`'s evidence, then leave it frozen.** Per the firm
    decision above — this is no longer conditional.
-4. **Create `pdl_canonical_postgres_data`** as a new, dedicated Docker
-   volume — never reuse `repo_postgres_data`.
-5. **Rebuild `personaldata` from raw exports only**, via current importer
-   code, one source at a time: Google → Apple → iMessages → Anthropic →
-   OpenAI. Not by copying acceptance-DB rows.
-6. **Idempotency check.** Re-run each importer a second time against the
+4. ~~**Create `pdl_canonical_postgres_data`** as a new, dedicated Docker
+   volume — never reuse `repo_postgres_data`.~~ **Done — see "Update 2026-09-19" near the top of
+   this file.**
+5. ~~**Rebuild `personaldata` from raw exports only**, via current importer
+   code, one source at a time.~~ **Done — executed in the order Anthropic → OpenAI → iMessages →
+   Apple → Google, not the Google-first order originally proposed here. Not by copying
+   acceptance-DB rows.**
+6. **Idempotency check — the immediate next step.** Re-run each importer a second time against the
    same raw exports; canonical counts/provenance must not change
    (this project's own reobservation/exact-replay guarantee, already proven
    per-source in each PR's acceptance report — this step just proves it
