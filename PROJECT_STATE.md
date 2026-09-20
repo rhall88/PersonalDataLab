@@ -43,6 +43,12 @@ This completes the canonical-rebuild sequence that document proposed: a dedicate
 source at a time from raw exports only, with the old `repo_postgres_data` databases retained
 un-migrated as comparison evidence rather than merged forward.
 
+Both Apple and Google were then re-run a second time, identically, against this now-combined
+canonical database to verify the exact-replay guarantee holds with all five sources present at
+once, not just per-source in isolation. Zero drift: Apple's 814/814 members and Google's
+25,427/25,427 members all short-circuited, both exited 0, and every canonical count above was
+unchanged before and after.
+
 ## Current source-family coverage
 
 | Source family | Current status | Accepted evidence and boundary |
@@ -132,25 +138,22 @@ universal record, event, asset, and relationship model already expresses their d
 
 ## Outstanding work in priority order
 
-1. **Verify canonical-database idempotency.** DATABASE_STATE.md's rebuild plan calls for re-running
-   each importer a second time against the now-combined canonical database to prove the exact-replay
-   guarantee holds with all five sources coexisting, not just per-source in isolation. Not yet run.
-2. **Add official Facebook export ingestion.** A retained "Download Your Information" export
+1. **Add official Facebook export ingestion.** A retained "Download Your Information" export
    (`facebook-ryanhallgarth-2026-09-19-50agb3vj.zip`, 788 MB) is present under `DataLabData\Facebook\`
    but no `facebook_export` module, product registry, adapters, or tests exist yet. This is a new
    source family, not a refinement — scope it like the original Apple/iMessages ingestion PRs.
-3. **Close remaining Google semantic gaps.** Preserve the accepted 68-product accounting while
+2. **Close remaining Google semantic gaps.** Preserve the accepted 68-product accounting while
    completing or explicitly bounding the retained Nest partial surface and the asset-indexed surface.
-4. **Add a unified query foundation.** Build provenance-aware full-text search over canonical
+3. **Add a unified query foundation.** Build provenance-aware full-text search over canonical
    conversations, events, records, document text, and asset metadata before introducing agents or
    embeddings.
-5. **Add reversible identity resolution.** Provider identities may be linked to people/accounts/
+4. **Add reversible identity resolution.** Provider identities may be linked to people/accounts/
    devices only with inspectable evidence and manual merge/split controls. Never rewrite provider
    identity or source truth.
-6. **Add derived understanding.** Claims, cross-source correlations, OCR/transcription, chunks,
+5. **Add derived understanding.** Claims, cross-source correlations, OCR/transcription, chunks,
    and embeddings belong in separately versioned, disposable layers whose outputs cite immutable
    observations.
-7. **Continue the operational track.** Encrypted backup/restore, integrity audits, sensitive-field
+6. **Continue the operational track.** Encrypted backup/restore, integrity audits, sensitive-field
    controls, incremental scheduling, performance budgets, derived-data invalidation, and corpus
    exportability remain permanent requirements.
 
