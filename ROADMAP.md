@@ -92,9 +92,21 @@ for the exact counts. A second identical-replay pass against this combined canon
 since confirmed zero drift for both: Apple's 814/814 members and Google's 25,427/25,427 members all
 short-circuited, both exiting 0.
 
+### Official Facebook export — production-ready for the retained corpus
+
+A new `facebook_export` module covers all 74 observed product categories across the retained
+"Download Your Information" export: bespoke Messenger-thread conversations, content-addressed
+media assets (linked back to their thread when one applies), and a generic lossless JSON adapter
+for every other category. Three defects surfaced only by real corpus data were found and fixed
+before acceptance: PostgreSQL's rejection of embedded NUL bytes, a cross-thread event-identity
+collision, and false conflicts from duplicate media/multi-part threads leaking occurrence-specific
+data into fields meant to stay stable per canonical identity. A complete real-data import and exact
+unchanged replay both passed with exit 0 and `production_ready: true`; see
+[`FACEBOOK_PRODUCTION_ACCEPTANCE_REPORT.md`](FACEBOOK_PRODUCTION_ACCEPTANCE_REPORT.md). It has not
+yet been imported into the canonical database.
+
 Add later providers only when source evidence exists; every provider starts with inventory and
-explicit disposition rather than optimistic format assumptions. Facebook is next: a retained export
-is present locally but no importer exists yet.
+explicit disposition rather than optimistic format assumptions.
 
 ## 3. Build query and understanding layers
 
@@ -154,7 +166,8 @@ chain must never depend on an embedding model, UI, or agent remaining available.
 | Completed PR23 | Apple production readiness | Lossless representation contract, separate interpretation depth, full-corpus import and exact replay, exit 0 |
 | Completed 2026-09-19 | Canonical database rebuild: all five sources imported fresh from raw exports into one dedicated-volume database | Apple resumed to its accepted 897-run baseline after an unrelated interruption; Google ran one fresh complete pass, 25,427/25,427 members, zero failed/unknown, exit 0 |
 | Completed 2026-09-19 | Canonical-database idempotency verification | Apple and Google each re-run a second time against the combined canonical database: all members short-circuited, zero drift, exit 0 for both |
-| Next | Official Facebook export ingestion | New source family: inventory, product registry, adapters, orchestrator, and tests for the retained "Download Your Information" export, to the same restart-safe/exact-replay bar as the other sources |
+| Completed 2026-09-20 | Official Facebook export ingestion | New source family: inventory, product registry, adapters, orchestrator, and tests for the retained "Download Your Information" export; 2,673/2,673 members, exit 0, `production_ready: true`, exact replay verified against an isolated database |
+| Next | Import Facebook into the canonical database | Run `import-facebook-all` against `personaldata`, then re-run the idempotency check across all six sources together |
 | Then | Remaining Google semantic gaps | Complete or explicitly bound retained Nest and asset-indexed surfaces without regressing accepted accounting |
 | Then | Unified canonical full-text query | Fast source-spanning queries with direct observation/version provenance and regression coverage |
 | Then | Reversible identity resolution, claims, correlation, and semantic retrieval | Every derived object cites evidence, is versioned, and can be removed without changing source truth |

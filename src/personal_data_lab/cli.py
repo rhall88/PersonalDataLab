@@ -29,6 +29,9 @@ from .database import (
     import_parsed_exports,
     list_sibling_databases,
 )
+from .facebook_export.inventory import inspect_facebook
+from .facebook_export.inventory import render_inventory_table as render_facebook_table
+from .facebook_export.orchestrator import import_facebook_all
 from .google_importer import iter_google_exports
 from .google_takeout.inventory import inspect_google, render_inventory_table
 from .google_takeout.orchestrator import import_google_all
@@ -148,6 +151,28 @@ def _parser() -> argparse.ArgumentParser:
     )
     apple_all.add_argument("source", help="Apple export ZIP or directory of ZIPs")
     apple_all.add_argument("--database-url", help="overrides DATABASE_URL from .env")
+    inspect_facebook_parser = subparsers.add_parser(
+        "inspect-facebook",
+        help='inventory an official Facebook "Download Your Information" export ZIP',
+    )
+    inspect_facebook_parser.add_argument("source", help="Facebook export ZIP or directory of ZIPs")
+    inspect_facebook_parser.add_argument(
+        "--format",
+        dest="output_format",
+        choices=("json", "table"),
+        default="json",
+    )
+    inspect_facebook_parser.add_argument(
+        "--include-paths",
+        action="store_true",
+        help="include potentially sensitive member paths in JSON output",
+    )
+    facebook_all = subparsers.add_parser(
+        "import-facebook-all",
+        help="inventory and import all official Facebook export data members",
+    )
+    facebook_all.add_argument("source", help="Facebook export ZIP or directory of ZIPs")
+    facebook_all.add_argument("--database-url", help="overrides DATABASE_URL from .env")
     inspect_imessages_parser = subparsers.add_parser(
         "inspect-imessages",
         help="inventory independently acquired iMazing Messages CSV exports",
@@ -347,6 +372,35 @@ def _apple_member_imported(member, parsed, result) -> None:
         f"[apple-all] imported member_id={member.member_id} product={member.product_key} "
         f"records={result.source_records} events={result.source_events} "
         f"assets={result.source_assets} relationships={result.source_relationships} "
+        f"short_circuited={str(result.short_circuited).lower()} conflicts={conflicts}",
+        file=sys.stderr,
+        flush=True,
+    )
+
+
+def _facebook_member_started(member, adapter) -> None:
+    print(
+        f"[facebook-all] parsing member_id={member.member_id} "
+        f"product={member.product_key} adapter={adapter.adapter_name} "
+        f"size_bytes={member.uncompressed_size}",
+        file=sys.stderr,
+        flush=True,
+    )
+
+
+def _facebook_member_imported(member, parsed, result) -> None:
+    conflicts = (
+        result.conflicted_conversations
+        + result.conflicted_records
+        + result.conflicted_events
+        + result.conflicted_assets
+        + result.conflicted_relationships
+    )
+    print(
+        f"[facebook-all] imported member_id={member.member_id} product={member.product_key} "
+        f"conversations={result.source_conversations} records={result.source_records} "
+        f"events={result.source_events} assets={result.source_assets} "
+        f"relationships={result.source_relationships} "
         f"short_circuited={str(result.short_circuited).lower()} conflicts={conflicts}",
         file=sys.stderr,
         flush=True,
@@ -665,6 +719,32 @@ def main(argv: Sequence[str] | None = None) -> int:
             for member_id in product.failed_member_ids:
                 print(
                     f"[apple-all] failed member_id={member_id} product={product.product_key}",
+                    file=sys.stderr,
+                    flush=True,
+                )
+        print(
+            json.dumps(summary.model_dump(mode="json") | {"exit_code": summary.exit_code}, indent=2)
+        )
+        return summary.exit_code
+    if args.command == "inspect-facebook":
+        inventory = inspect_facebook(args.source)
+        if args.output_format == "table":
+            print(render_facebook_table(inventory))
+        else:
+            print(json.dumps(inventory.public_dict(include_paths=args.include_paths), indent=2))
+        return 5 if inventory.unknown_members_count else 0
+    if args.command == "import-facebook-all":
+        engine = _resolve_guarded_engine(args.database_url, canonical_import=True)
+        summary = import_facebook_all(
+            engine,
+            args.source,
+            on_member_start=_facebook_member_started,
+            on_member_imported=_facebook_member_imported,
+        )
+        for product in summary.coverage.values():
+            for member_id in product.failed_member_ids:
+                print(
+                    f"[facebook-all] failed member_id={member_id} product={product.product_key}",
                     file=sys.stderr,
                     flush=True,
                 )

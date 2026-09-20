@@ -29,6 +29,9 @@ This repository contains the completed foundation and its source importers:
 - recursive official Apple privacy-export ingestion with semantic native-format adapters
 - independent iMazing Messages CSV ingestion for conversations, participants, messages, replies,
   reactions, edits, deletions, and attachment references
+- production-accepted official Facebook "Download Your Information" export ingestion covering all
+  74 observed categories, with bespoke Messenger-thread conversations, content-addressed media
+  assets, and a generic lossless adapter for every other category
 - reconciliation tests
 - Windows/PowerShell setup instructions
 
@@ -385,6 +388,30 @@ See [`IMESSAGES_INGESTION_SPEC.md`](IMESSAGES_INGESTION_SPEC.md) and
 [`IMESSAGES_COVERAGE.md`](IMESSAGES_COVERAGE.md). The retained corpus passed controlled
 stop/resume and exact unchanged replay; see
 [`PR15_IMESSAGES_PRODUCTION_ACCEPTANCE_REPORT.md`](PR15_IMESSAGES_PRODUCTION_ACCEPTANCE_REPORT.md).
+
+### Inspect and import an official Facebook export
+
+Keep the untouched "Download Your Information" ZIP (modern JSON format, not the legacy HTML
+export) in its own acquisition folder:
+
+```powershell
+personal-data-lab inspect-facebook data\raw\facebook\2026-09-19 --format table
+personal-data-lab import-facebook-all data\raw\facebook\2026-09-19
+```
+
+The export has 9 top-level roots and 74 observed product categories. Messenger threads become
+conversations with one event per message; photos, videos, audio, and documents become
+content-addressed external assets, linked back to their thread when one applies; every other
+category is losslessly normalized generic JSON. Facebook's own UTF-8-as-Latin-1 double-encoding
+bug is undone in derived display text (never in raw metadata), and embedded NUL bytes some fields
+contain are escaped rather than rejected by PostgreSQL. Default inventory and progress output
+redact source and member paths; `inspect-facebook --include-paths` is an explicit diagnostic
+opt-in. See [`FACEBOOK_INGESTION_SPEC.md`](FACEBOOK_INGESTION_SPEC.md) and
+[`FACEBOOK_PRODUCT_COVERAGE.md`](FACEBOOK_PRODUCT_COVERAGE.md).
+
+A complete real-data PostgreSQL import and exact unchanged replay both passed with exit 0 and
+`production_ready: true` across all 74 present products; see
+[`FACEBOOK_PRODUCTION_ACCEPTANCE_REPORT.md`](FACEBOOK_PRODUCTION_ACCEPTANCE_REPORT.md).
 
 ## Permanent cumulative and lossless contract
 
