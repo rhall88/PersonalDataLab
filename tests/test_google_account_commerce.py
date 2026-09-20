@@ -226,3 +226,54 @@ def test_nest_csv_wrapped_jsonl_and_malformed_provider_rows_are_explicit(
     assert parsed.events[0].metadata["google"]["id"] == "event-1"
     assert "raw_provider_line" in parsed.events[1].metadata["google"]
     assert len(parsed.parse_warnings) == 1
+
+
+def _doubly_escaped_nest_line(inner: dict) -> str:
+    """Build a Nest JSONL line reproducing the real provider double-escaping bug.
+
+    The retained export's Nest CSV-wrapped JSONL nests a JSON document as a string value
+    using one extra layer of backslash-escaped quotes (`\\\\"` instead of `\\"`), which
+    prematurely closes the JSON string and breaks the row.
+    """
+    inner_json = json.dumps(inner, separators=(",", ":"))
+    properly_escaped = json.dumps(inner_json)
+    buggy_value = properly_escaped.replace('\\"', '\\\\"')
+    outer = '{"value":' + buggy_value + "}"
+    return '"' + outer.replace('"', '""') + '"'
+
+
+def test_nest_recovers_doubly_escaped_provider_rows_without_warnings(tmp_path: Path) -> None:
+    inner = {"name": "Ada", "structures": [], "is_merged_with_gaia": True}
+    source = _zip(
+        tmp_path / "takeout-20260916T000000Z-001.zip",
+        {"Takeout/Nest/deltaforce_bucket_data.jsonl": _doubly_escaped_nest_line(inner) + "\n"},
+    )
+
+    _, parsed = _parse(source, "deltaforce_bucket_data.jsonl")
+
+    assert parsed.event_count == 1
+    assert "raw_provider_line" not in parsed.events[0].metadata["google"]
+    assert parsed.events[0].metadata["google"]["value"] == inner
+    assert parsed.parse_warnings == ()
+
+
+def test_nest_double_escape_recovery_does_not_mask_genuine_syntax_errors(
+    tmp_path: Path,
+) -> None:
+    # A genuinely malformed row (missing comma) that happens to contain the doubled
+    # escape sequence must still fall through to the explicit opaque fallback rather
+    # than being silently "recovered" into something incorrect.
+    broken = '{"value":"{\\\\"a\\\\":1" "b":2}'
+    source = _zip(
+        tmp_path / "takeout-20260916T000000Z-001.zip",
+        {
+            "Takeout/Nest/events.jsonl": (
+                '"' + broken.replace('"', '""') + '"\n'
+            )
+        },
+    )
+
+    _, parsed = _parse(source, "events.jsonl")
+
+    assert "raw_provider_line" in parsed.events[0].metadata["google"]
+    assert len(parsed.parse_warnings) == 1

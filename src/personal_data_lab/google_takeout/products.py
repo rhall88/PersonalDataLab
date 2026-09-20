@@ -180,7 +180,7 @@ _PRODUCTS = (
         support="fully_structured",
         notes="PR6 synthetic contract coverage; real export canary remains not present."
     ),
-    _product("nest", "Nest", "account_commerce_semantic", "json jsonl csv media", "home_device event asset", support="partially_structured", notes="PR10 Nest devices and CSV-wrapped JSONL events; malformed provider rows remain explicit opaque records."),
+    _product("nest", "Nest", "account_commerce_semantic", "json jsonl csv media", "home_device event asset", support="fully_structured", notes="PR10 Nest devices and CSV-wrapped JSONL events; the retained export's doubly-escaped provider rows are recovered by halving one known extra layer of backslash-escaped quotes, not left opaque."),
     _product("news", "News", "long_tail_semantic", "json csv html text", "event subscription", support="fully_structured", notes="PR11 notification/subscription semantics with explicit empty files."),
     _product(
         "notebooklm", "NotebookLM", "ai_knowledge_semantic", "json document media",
