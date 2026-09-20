@@ -22,9 +22,20 @@ Apple and Google were added today:
   event — expected, because that snapshot predates PR13's later differential-replay fixes and this
   run used the fully-fixed current importer directly against the canonical database.
 
-See [`PROJECT_STATE.md`](PROJECT_STATE.md) for the consolidated table. Step 6 (idempotency check —
-re-running every importer a second time against this now-combined canonical database) has not yet
-been executed; it is the immediate next step before this baseline is called fully proven.
+See [`PROJECT_STATE.md`](PROJECT_STATE.md) for the consolidated table.
+
+**Update, same day: step 6 (idempotency check) is now done.** Apple and Google were each re-run a
+second time, identically, against this combined canonical database (all five sources present, not
+one in isolation):
+
+- Apple: all 814/814 members short-circuited, zero new records, exit 0, `production_ready: true`.
+  Canonical counts unchanged: 897 runs, 476,444 records, 162,318 events, 380 assets,
+  161 relationships.
+- Google: all 25,427/25,427 members short-circuited, zero failed/unknown, exit 0. Canonical counts
+  unchanged: 23,333 runs, 122,293 records, 164,032 events, 13,983 assets, 115,221 relationships.
+
+Zero drift in either source. The canonical-rebuild proposal below is now fully executed and
+verified, not just executed.
 
 This file exists because local operational state (Docker volumes, databases,
 raw export locations) had drifted into something no one — human or model —
@@ -342,8 +353,8 @@ something later mistaken for having always been canonical.
    code, one source at a time.~~ **Done — executed in the order Anthropic → OpenAI → iMessages →
    Apple → Google, not the Google-first order originally proposed here. Not by copying
    acceptance-DB rows.**
-6. **Idempotency check — the immediate next step.** Re-run each importer a second time against the
-   same raw exports; canonical counts/provenance must not change
+6. ~~**Idempotency check.**~~ **Done — see the "Update, same day" note above.** Re-run each importer
+   a second time against the same raw exports; canonical counts/provenance must not change
    (this project's own reobservation/exact-replay guarantee, already proven
    per-source in each PR's acceptance report — this step just proves it
    holds for the *combined* canonical DB too).
