@@ -48,6 +48,22 @@ verification already done for Apple and Google above. All six source families (A
 iMessages, Apple, Google, Facebook) now coexist in this one canonical database. See
 [`PROJECT_STATE.md`](PROJECT_STATE.md) for the consolidated table.
 
+## Update 2026-09-20: Google Nest recovery fix landed in the canonical database
+
+A provider double-escaping bug in Nest's CSV-wrapped JSONL (see [`ROADMAP.md`](ROADMAP.md)) was
+fixed and re-imported against this canonical database: all 25,427 Google data members, exit 0,
+zero failures/unknowns/conflicts. `nest_event` rows went from 35 (31 stored as opaque text) to 66
+— the original 31 opaque rows are still there, untouched, and 31 new rows now carry the recovered
+structured content, per the immutable-version contract (corrected content is added, never
+overwritten). Reprocessing required bumping `AccountCommerceStructuredAdapter`'s parser version
+first, because the restart-safe run-key includes it — the first re-import attempt short-circuited
+every member and silently did not apply the fix.
+
+**Not done**: a second idempotency-verification pass (re-running again to confirm exact replay)
+was explicitly deferred as low priority for this fix, unlike Apple, Google's original import, and
+Facebook, all of which have that verification. If Google's exact-replay guarantee needs to be
+re-confirmed for another reason, do that pass then.
+
 This file exists because local operational state (Docker volumes, databases,
 raw export locations) had drifted into something no one — human or model —
 could read correctly on first contact.
