@@ -419,7 +419,7 @@ def _structured(
 @dataclass(frozen=True)
 class AccountCommerceStructuredAdapter:
     adapter_name: str = "account_commerce_semantic"
-    parser_version: str = "google-account-commerce-v1"
+    parser_version: str = "google-account-commerce-v2"
     product_keys: tuple[str, ...] = ACCOUNT_COMMERCE_PRODUCTS
     supported_patterns: tuple[str, ...] = tuple(
         f"**/*{extension}" for extension in STRUCTURED_EXTENSIONS
