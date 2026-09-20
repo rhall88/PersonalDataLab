@@ -30,6 +30,25 @@ one asset-indexed, and one partially structured (Nest); no unknown, generic-fall
 raw-preserved, or unsupported member remains. The other 17 registry products were absent and are
 not claimed as empirically validated.
 
+### Nest semantic gap closed 2026-09-20
+
+PR13's Nest disposition retained 31 of 35 real rows as explicit opaque text because they failed
+both direct and CSV-unwrapped JSON decoding. The actual cause was a provider encoding bug: Nest
+doubly JSON-escapes a nested document, using one extra layer of backslash-escaped quotes
+(`\\"` instead of `\"`), which prematurely closes the enclosing JSON string. Halving that one
+specific doubled sequence — only as a fallback after both existing decode attempts fail, and only
+accepted when the full row then parses cleanly — recovers all 31 rows' real structured content.
+A row that still fails to parse after this recovery remains an explicit opaque record with a
+warning, exactly as before; nothing is silently repaired. Nest moves from `partially_structured` to
+`fully_structured`. The `asset_indexed` Wallet surface (one content-addressed PDF) needed no change:
+it was already the correct, final disposition for a single presentation document, not a gap.
+
+This changes decoded content for real rows already present in the canonical database from an
+earlier import, so it mints new canonical records/events for the corrected content rather than
+editing the old opaque ones in place — consistent with the immutable-version contract that absence
+or superseding content is never deletion. Re-running Google against the canonical database is the
+immediate next step.
+
 ## 2. Add source families without mixing provenance
 
 ### Official Apple privacy export — production-ready for the retained corpus
@@ -170,7 +189,8 @@ chain must never depend on an embedding model, UI, or agent remaining available.
 | Completed 2026-09-19 | Canonical-database idempotency verification | Apple and Google each re-run a second time against the combined canonical database: all members short-circuited, zero drift, exit 0 for both |
 | Completed 2026-09-20 | Official Facebook export ingestion | New source family: inventory, product registry, adapters, orchestrator, and tests for the retained "Download Your Information" export; 2,673/2,673 members, exit 0, `production_ready: true`, exact replay verified against an isolated database |
 | Completed 2026-09-20 | Import Facebook into the canonical database | 2,673/2,673 members, exit 0, zero conflicts, identical to the isolated acceptance run; a second identical pass short-circuited all members with zero drift |
-| Then | Remaining Google semantic gaps | Complete or explicitly bound retained Nest and asset-indexed surfaces without regressing accepted accounting |
+| Completed 2026-09-20 | Remaining Google semantic gaps | Nest's 31 doubly-escaped rows recovered to real structured content (`partially_structured` -> `fully_structured`); Wallet's `asset_indexed` disposition confirmed already correct, not a gap |
+| Next | Re-run Google against the canonical database | The Nest fix mints new canonical records/events for corrected content; re-import and re-verify idempotency |
 | Then | Unified canonical full-text query | Fast source-spanning queries with direct observation/version provenance and regression coverage |
 | Then | Reversible identity resolution, claims, correlation, and semantic retrieval | Every derived object cites evidence, is versioned, and can be removed without changing source truth |
 | Final product track | Timeline, exploration, analytics, read-only MCP, and agents | Fast normal queries, permission boundaries, and evidence-citing answers |

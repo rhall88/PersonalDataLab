@@ -66,7 +66,7 @@ verified stable under a second identical import pass against the shared canonica
 
 | Source family | Current status | Accepted evidence and boundary |
 |---|---|---|
-| Google Takeout | Operationally accepted in PR13 | The 68-product registry has 51 present and 17 absent products in the retained 146.25 GB export. All 25,427 data members route without unknown, generic-fallback, unsupported, or raw-preserved members. Current product status is 43 fully structured, six empty, one asset-indexed, one partially structured (Nest), and 17 not present. See [`GOOGLE_PRODUCT_COVERAGE.md`](GOOGLE_PRODUCT_COVERAGE.md) and [`PR13_GOOGLE_PRODUCTION_ACCEPTANCE_REPORT.md`](PR13_GOOGLE_PRODUCTION_ACCEPTANCE_REPORT.md). |
+| Google Takeout | Operationally accepted in PR13; Nest semantic gap closed 2026-09-20 | The 68-product registry has 51 present and 17 absent products in the retained 146.25 GB export. All 25,427 data members route without unknown, generic-fallback, unsupported, or raw-preserved members. Current product status is 44 fully structured, six empty, one asset-indexed, and 17 not present. Nest's 31 rows that PR13 retained as explicit opaque text (one extra layer of provider backslash-escaping) are now mechanically recovered into their real structured content; the asset-indexed Wallet surface (one content-addressed PDF) was already a correct, final disposition rather than a gap. See [`GOOGLE_PRODUCT_COVERAGE.md`](GOOGLE_PRODUCT_COVERAGE.md) and [`PR13_GOOGLE_PRODUCTION_ACCEPTANCE_REPORT.md`](PR13_GOOGLE_PRODUCTION_ACCEPTANCE_REPORT.md). |
 | Official Apple privacy export | Production-ready for the retained official export | All 814 data leaves across 31 outer ZIPs and 18 nested containers persist, resume, and replay exactly with zero failures, unknowns, warnings, or conflicts. All 30 present product groups satisfy the production representation gate: 27 are explicitly losslessly structured/generic-lossless and three are fully structured/provider-specific in this corpus. Apple TV and Podcast Information and Siri were absent. Complete replay exits 0 with `production_ready: true`. See [`APPLE_PRODUCT_COVERAGE.md`](APPLE_PRODUCT_COVERAGE.md) and [`APPLE_PRODUCTION_READINESS_ACCEPTANCE_REPORT.md`](APPLE_PRODUCTION_READINESS_ACCEPTANCE_REPORT.md). |
 | iMessages device export | Production-ready for the retained iMazing CSV corpus in PR15 | Two CSVs, 67,917 message rows, message/reply/reaction/edit/deletion semantics, explicit timezone input, controlled resume, and exact replay passed. The source contains attachment references but no attachment bytes. RSMF, raw iOS `sms.db`, PDF, Excel, and text exports are not claimed. See [`IMESSAGES_COVERAGE.md`](IMESSAGES_COVERAGE.md). |
 | Official OpenAI export | Production-ready for the retained manifest-based export in PR17 | All 1,724 physical members, 1,187 conversations, 25,510 message events, structured JSON, retained and unavailable assets, parent edges, and message-asset edges are accounted. Controlled resume and exact replay pass with exit 0. The legacy standalone `conversations.json` path remains compatibility-only and does not provide whole-export acceptance. See [`OPENAI_INGESTION_SPEC.md`](OPENAI_INGESTION_SPEC.md) and [`PR17_OPENAI_PRODUCTION_ACCEPTANCE_REPORT.md`](PR17_OPENAI_PRODUCTION_ACCEPTANCE_REPORT.md). |
@@ -156,8 +156,10 @@ version-7 universal record, event, asset, and relationship model already express
 
 ## Outstanding work in priority order
 
-1. **Close remaining Google semantic gaps.** Preserve the accepted 68-product accounting while
-   completing or explicitly bounding the retained Nest partial surface and the asset-indexed surface.
+1. **Re-run Google against the canonical database.** The Nest recovery fix changes decoded content
+   for 31 previously-opaque rows, which will mint new canonical records/events alongside the old
+   opaque ones (never deleting them, per the immutable-version contract) rather than editing them in
+   place. Re-import and re-verify idempotency so the canonical database reflects the fix.
 2. **Add a unified query foundation.** Build provenance-aware full-text search over canonical
    conversations, events, records, document text, and asset metadata before introducing agents or
    embeddings.

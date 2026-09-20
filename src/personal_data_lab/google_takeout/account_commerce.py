@@ -62,6 +62,56 @@ _DEFAULT_RECORD_TYPES = {
 }
 
 
+_DOUBLED_ESCAPE = "\\\\\""
+_SINGLE_ESCAPE = "\\\""
+
+
+def _unwrap_stringified_json(value: object, depth: int = 0) -> object:
+    """Recursively decode Nest fields the provider JSON-encoded more than once.
+
+    Observed only on Nest CSV-wrapped JSONL: a field's value is itself a complete JSON
+    document (object, array, or scalar) serialized as a string. Only a string that fully
+    round-trips through `json.loads` is replaced, so unrelated text is never touched.
+    """
+    if depth > 5 or not isinstance(value, (str, dict, list)):
+        return value
+    if isinstance(value, dict):
+        return {key: _unwrap_stringified_json(item, depth + 1) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_unwrap_stringified_json(item, depth + 1) for item in value]
+    stripped = value.strip()
+    if stripped[:1] not in "{[" and stripped not in ("true", "false", "null"):
+        return value
+    try:
+        decoded = json.loads(stripped)
+    except json.JSONDecodeError:
+        return value
+    return _unwrap_stringified_json(decoded, depth + 1)
+
+
+_NOT_RECOVERED = object()
+
+
+def _recover_doubly_escaped_json(text: str) -> object:
+    """Recover Nest rows broken by one extra layer of backslash-escaped quotes.
+
+    Observed only on Nest CSV-wrapped JSONL: nesting a JSON document as a string value
+    requires escaping its quotes as `\\"`, but some provider rows escape them as `\\\\"`
+    instead, which prematurely closes the enclosing JSON string and breaks the whole row.
+    Halving that one specific doubled sequence is a mechanical fix for a known provider
+    encoding bug, not an inferred correction, and only ever applies after the direct and
+    CSV-unwrapped decodes have both already failed. Returns the `_NOT_RECOVERED` sentinel,
+    not `None`, on failure, because a legitimately recovered row can itself decode to `null`.
+    """
+    if _DOUBLED_ESCAPE not in text:
+        return _NOT_RECOVERED
+    try:
+        decoded = json.loads(text.replace(_DOUBLED_ESCAPE, _SINGLE_ESCAPE))
+    except json.JSONDecodeError:
+        return _NOT_RECOVERED
+    return _unwrap_stringified_json(decoded)
+
+
 def _decode(content: bytes, extension: str) -> tuple[list[object], list[str]]:
     if extension != ".jsonl":
         return _decode_structured(content, extension), []
@@ -81,6 +131,10 @@ def _decode(content: bytes, extension: str) -> tuple[list[object], list[str]]:
                 values.append(json.loads(row[0]))
                 continue
             except json.JSONDecodeError as error:
+                recovered = _recover_doubly_escaped_json(row[0])
+                if recovered is not _NOT_RECOVERED:
+                    values.append(recovered)
+                    continue
                 decode_error = error
         else:
             decode_error = json.JSONDecodeError("CSV-wrapped JSON has multiple fields", raw_line, 0)
