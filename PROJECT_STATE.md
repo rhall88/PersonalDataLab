@@ -1,10 +1,11 @@
 # PersonalDataLab project state
 
-Updated 2026-09-19 from `origin/main` at `fdb9aca`, after PR23 (Apple production-readiness) merged
-and the canonical database was rebuilt fresh with all five accepted source families. PRs 1–23 are
-merged. Version `0.18.0` qualifies Apple lossless structured ingestion and reports interpretation
-depth separately. PR7–PR11 were stacked Google changes that reached `main` through PR12. Their
-remote feature branches remain history, not evidence of unfinished PRs.
+Updated 2026-09-20, after the canonical database was rebuilt fresh with all five accepted source
+families and official Facebook export ingestion was added as a sixth source family. Version
+`0.19.0` adds the `facebook_export` module; version `0.18.0` qualified Apple lossless structured
+ingestion and reported interpretation depth separately. PR7–PR11 were stacked Google changes that
+reached `main` through PR12. Their remote feature branches remain history, not evidence of
+unfinished PRs.
 
 This file is the current implementation summary. Specifications define contracts, coverage pages
 record format support, and PR reports preserve milestone evidence from the time each PR landed.
@@ -49,6 +50,12 @@ once, not just per-source in isolation. Zero drift: Apple's 814/814 members and 
 25,427/25,427 members all short-circuited, both exited 0, and every canonical count above was
 unchanged before and after.
 
+Official Facebook export ingestion (a sixth source family) was added and accepted on 2026-09-20
+against an isolated acceptance database — 2,673/2,673 members, `production_ready: true`, exit 0,
+zero conflicts, exact replay verified. It has not yet been imported into this canonical database;
+that import is the immediate next step. See
+[`FACEBOOK_PRODUCTION_ACCEPTANCE_REPORT.md`](FACEBOOK_PRODUCTION_ACCEPTANCE_REPORT.md).
+
 ## Current source-family coverage
 
 | Source family | Current status | Accepted evidence and boundary |
@@ -58,6 +65,7 @@ unchanged before and after.
 | iMessages device export | Production-ready for the retained iMazing CSV corpus in PR15 | Two CSVs, 67,917 message rows, message/reply/reaction/edit/deletion semantics, explicit timezone input, controlled resume, and exact replay passed. The source contains attachment references but no attachment bytes. RSMF, raw iOS `sms.db`, PDF, Excel, and text exports are not claimed. See [`IMESSAGES_COVERAGE.md`](IMESSAGES_COVERAGE.md). |
 | Official OpenAI export | Production-ready for the retained manifest-based export in PR17 | All 1,724 physical members, 1,187 conversations, 25,510 message events, structured JSON, retained and unavailable assets, parent edges, and message-asset edges are accounted. Controlled resume and exact replay pass with exit 0. The legacy standalone `conversations.json` path remains compatibility-only and does not provide whole-export acceptance. See [`OPENAI_INGESTION_SPEC.md`](OPENAI_INGESTION_SPEC.md) and [`PR17_OPENAI_PRODUCTION_ACCEPTANCE_REPORT.md`](PR17_OPENAI_PRODUCTION_ACCEPTANCE_REPORT.md). |
 | Anthropic export | Production-ready for the retained official account export in PR19 | All six physical source files and eight JSON members are accounted. A controlled stop after the first committed conversation chunk, resume, and exact replay passed with exit 0: 269 conversations, 9,748 events, 601 explicit unavailable assets, and 10,014 relationships, with zero failures, warnings, unknowns, or conflicts. All 18 bounded units short-circuit on replay without changing run, version, or observation counts. See [`ANTHROPIC_INGESTION_SPEC.md`](ANTHROPIC_INGESTION_SPEC.md) and [`PR19_ANTHROPIC_PRODUCTION_ACCEPTANCE_REPORT.md`](PR19_ANTHROPIC_PRODUCTION_ACCEPTANCE_REPORT.md). |
+| Official Facebook export | Production-ready for the retained "Download Your Information" export | All 2,673 entries across all 74 registered categories are accounted with zero unknown, generic-fallback, or unsupported members. 73 categories are `losslessly_structured`/`generic_lossless`; one (`files`) is `fully_structured`/`provider_specific`. Complete replay exits 0 with `production_ready: true`. Not yet imported into the canonical database. See [`FACEBOOK_PRODUCT_COVERAGE.md`](FACEBOOK_PRODUCT_COVERAGE.md) and [`FACEBOOK_PRODUCTION_ACCEPTANCE_REPORT.md`](FACEBOOK_PRODUCTION_ACCEPTANCE_REPORT.md). |
 
 ## Implemented architecture
 
@@ -93,9 +101,10 @@ The canonical database is deliberately split from provenance:
   a canonical object, and a later authoritative reappearance can reactivate it;
 - binary content stays in immutable source files. PostgreSQL retains hashes, byte counts, media
   metadata, source-backed locators, availability state, and relationships;
-- completed or conflicted run identities short-circuit exactly. Google, Apple, iMessages, OpenAI,
-  and the Anthropic v2 production path use restart-safe member or bounded-chunk transactions. The
-  legacy Anthropic v1 compatibility parser retains its historical all-archive transaction boundary.
+- completed or conflicted run identities short-circuit exactly. Google, Apple, Facebook, iMessages,
+  OpenAI, and the Anthropic v2 production path use restart-safe member or bounded-chunk
+  transactions. The legacy Anthropic v1 compatibility parser retains its historical all-archive
+  transaction boundary.
 
 The database takes a PostgreSQL advisory transaction lock per `(source, snapshot_scope)` and
 refuses a fingerprint-version mismatch until an explicit migration is supplied. These rules keep
@@ -114,14 +123,16 @@ PR2 database idempotently through the tracked migrations:
 | 6 | universal durable records and external assets, each with versions and observations |
 | 7 | provenance-bearing, versioned relationships |
 
-Apple, iMessages, OpenAI, and Anthropic v2 required no later schema migration because the version-7
-universal record, event, asset, and relationship model already expresses their data.
+Apple, Facebook, iMessages, OpenAI, and Anthropic v2 required no later schema migration because the
+version-7 universal record, event, asset, and relationship model already expresses their data.
 
 ## Verification state
 
-- The repository currently collects 250 tests: 209 non-integration tests and 41 PostgreSQL-marked
-  integration tests.
-- The Apple production-readiness change passes all 250 tests against the local PostgreSQL
+- The repository currently collects 285 tests: non-integration tests plus PostgreSQL-marked
+  integration tests, including the 13-test focused Facebook suite.
+- The Facebook production-readiness change passes all 285 tests against the local PostgreSQL
+  18/pgvector test service.
+- The Apple production-readiness change passed all 250 tests against the local PostgreSQL
   18/pgvector test service, including restart/replay and changed-packaging integration coverage.
 - The current Anthropic-v2 change passed all 249 tests against the local PostgreSQL 18/pgvector
   test service after migrating it to schema version 7. The guarded Anthropic test proves a
@@ -132,16 +143,18 @@ universal record, event, asset, and relationship model already expresses their d
   resume, and all-short-circuited replay left all run/version/observation counts unchanged.
 - The latest merged PR17 acceptance evidence records all 242 tests passing against PostgreSQL
   18/pgvector, with Ruff and compilation clean.
-- Source-specific real-corpus reports record Google PR13, Apple parser-v3 PR16 plus the current
-  production-readiness acceptance, iMessages PR15, OpenAI PR17, and Anthropic PR19 acceptance.
-  Private source data, generated inventories, logs, and databases are intentionally not committed.
+- Source-specific real-corpus reports record Google PR13, Apple parser-v3 PR16 plus its
+  production-readiness acceptance, iMessages PR15, OpenAI PR17, Anthropic PR19, and Facebook
+  acceptance. Private source data, generated inventories, logs, and databases are intentionally
+  not committed.
 
 ## Outstanding work in priority order
 
-1. **Add official Facebook export ingestion.** A retained "Download Your Information" export
-   (`facebook-ryanhallgarth-2026-09-19-50agb3vj.zip`, 788 MB) is present under `DataLabData\Facebook\`
-   but no `facebook_export` module, product registry, adapters, or tests exist yet. This is a new
-   source family, not a refinement — scope it like the original Apple/iMessages ingestion PRs.
+1. **Import Facebook into the canonical database.** The new `facebook_export` module is accepted
+   against an isolated database (2,673/2,673 members, `production_ready: true`, exit 0, exact
+   replay verified) but has not yet been run against the canonical `personaldata` database used by
+   the other five sources. Re-run the canonical-database idempotency check afterward so all six
+   sources are verified together, not just five.
 2. **Close remaining Google semantic gaps.** Preserve the accepted 68-product accounting while
    completing or explicitly bounding the retained Nest partial surface and the asset-indexed surface.
 3. **Add a unified query foundation.** Build provenance-aware full-text search over canonical
