@@ -1,16 +1,47 @@
 # PersonalDataLab project state
 
-Updated 2026-09-19 from `origin/main` at `22f24b3`, after the project-state documentation in PR18
-merged. PRs 1–18 are merged; PR19 is open, and the current stacked Apple readiness change is ready
-for review. Version `0.17.0` adds the Anthropic v2 production path and retained-corpus acceptance;
-version `0.18.0` qualifies Apple lossless structured ingestion and reports interpretation depth
-separately. PR7–PR11 were stacked Google changes that reached `main` through PR12. Their remote
-feature branches remain history, not evidence of unfinished PRs.
+Updated 2026-09-19 from `origin/main` at `fdb9aca`, after PR23 (Apple production-readiness) merged
+and the canonical database was rebuilt fresh with all five accepted source families. PRs 1–23 are
+merged. Version `0.18.0` qualifies Apple lossless structured ingestion and reports interpretation
+depth separately. PR7–PR11 were stacked Google changes that reached `main` through PR12. Their
+remote feature branches remain history, not evidence of unfinished PRs.
 
 This file is the current implementation summary. Specifications define contracts, coverage pages
 record format support, and PR reports preserve milestone evidence from the time each PR landed.
 When a historical report's “next frontier” differs from this file or [`ROADMAP.md`](ROADMAP.md),
 this file and the roadmap are authoritative for current sequencing.
+
+## Canonical database baseline (2026-09-19)
+
+For the first time, one durable database — `personaldata`, on the dedicated `pdl_canonical_postgres_data`
+Docker volume (never `repo_postgres_data`, which still carries pre-rebuild acceptance/dev residue) —
+holds all five accepted source families at once, imported directly from the immutable raw exports
+under `DataLabData\` by the current importer code, not copied from any historical acceptance
+database. Schema version 7, current size 6,495 MB. Every `import_runs` row across every source is
+`completed`; zero `staging`/`finalizing`/`partial`/`failed`/`conflicted` rows exist.
+
+| Source | Import runs | Records | Events | Assets | Relationships | Exit |
+|---|---:|---:|---:|---:|---:|---:|
+| Anthropic | 18 | — | 9,748 | 601 | 10,014 | 0 |
+| OpenAI | 1,760 | — | 25,510 | 2,639 | — | 0 |
+| iMessages | 35 | — | 71,789 | 3,136 | 75,928 | 0 |
+| Apple | 897 | 476,444 | 162,318 | 380 | 161 | 0 (`production_ready: true`) |
+| Google | 23,333 | 122,293 | 164,032 | 13,983 | 115,221 | 0 |
+
+Apple and Google were imported into this canonical database on 2026-09-19: Apple resumed cleanly
+after an unrelated local power interruption (the 772 members already committed before the
+interruption short-circuited exactly; the remaining 125 completed the accepted 897-run baseline),
+and Google ran as one fresh complete pass — 25,427/25,427 data members, 51/51 registry products
+present and routed, zero failed/unknown members, all 146,248,662,729 bytes accounted, in 1h19m34s.
+Google's canonical counts differ from the `google_acceptance_test` snapshot recorded in
+[`DATABASE_STATE.md`](DATABASE_STATE.md) by a small, explained margin (+657 records, +657
+relationships, +1 event) because that snapshot predated PR13's later differential-replay fixes;
+this run used the fully-fixed current importer against the canonical database directly. See
+[`DATABASE_STATE.md`](DATABASE_STATE.md) for the full inventory this baseline supersedes.
+
+This completes the canonical-rebuild sequence that document proposed: a dedicated volume, one
+source at a time from raw exports only, with the old `repo_postgres_data` databases retained
+un-migrated as comparison evidence rather than merged forward.
 
 ## Current source-family coverage
 
@@ -101,18 +132,25 @@ universal record, event, asset, and relationship model already expresses their d
 
 ## Outstanding work in priority order
 
-1. **Close remaining Google semantic gaps.** Preserve the accepted 68-product accounting while
+1. **Verify canonical-database idempotency.** DATABASE_STATE.md's rebuild plan calls for re-running
+   each importer a second time against the now-combined canonical database to prove the exact-replay
+   guarantee holds with all five sources coexisting, not just per-source in isolation. Not yet run.
+2. **Add official Facebook export ingestion.** A retained "Download Your Information" export
+   (`facebook-ryanhallgarth-2026-09-19-50agb3vj.zip`, 788 MB) is present under `DataLabData\Facebook\`
+   but no `facebook_export` module, product registry, adapters, or tests exist yet. This is a new
+   source family, not a refinement — scope it like the original Apple/iMessages ingestion PRs.
+3. **Close remaining Google semantic gaps.** Preserve the accepted 68-product accounting while
    completing or explicitly bounding the retained Nest partial surface and the asset-indexed surface.
-2. **Add a unified query foundation.** Build provenance-aware full-text search over canonical
+4. **Add a unified query foundation.** Build provenance-aware full-text search over canonical
    conversations, events, records, document text, and asset metadata before introducing agents or
    embeddings.
-3. **Add reversible identity resolution.** Provider identities may be linked to people/accounts/
+5. **Add reversible identity resolution.** Provider identities may be linked to people/accounts/
    devices only with inspectable evidence and manual merge/split controls. Never rewrite provider
    identity or source truth.
-4. **Add derived understanding.** Claims, cross-source correlations, OCR/transcription, chunks,
+6. **Add derived understanding.** Claims, cross-source correlations, OCR/transcription, chunks,
    and embeddings belong in separately versioned, disposable layers whose outputs cite immutable
    observations.
-5. **Continue the operational track.** Encrypted backup/restore, integrity audits, sensitive-field
+7. **Continue the operational track.** Encrypted backup/restore, integrity audits, sensitive-field
    controls, incremental scheduling, performance budgets, derived-data invalidation, and corpus
    exportability remain permanent requirements.
 

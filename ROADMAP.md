@@ -80,8 +80,20 @@ stop after a committed chunk, resume, and exact replay passed with exit 0; all 1
 short-circuited without count or version drift. See [`ANTHROPIC_INGESTION_SPEC.md`](ANTHROPIC_INGESTION_SPEC.md)
 and [`PR19_ANTHROPIC_PRODUCTION_ACCEPTANCE_REPORT.md`](PR19_ANTHROPIC_PRODUCTION_ACCEPTANCE_REPORT.md).
 
+### Canonical database rebuild — Apple and Google imported 2026-09-19
+
+All five accepted source families (Anthropic, OpenAI, iMessages, Apple, Google) now coexist in one
+durable canonical `personaldata` database on a dedicated Docker volume, imported directly from raw
+exports by the current importer code rather than assembled from historical acceptance databases.
+Apple resumed cleanly after an unrelated local interruption to reach its accepted 897-run baseline;
+Google ran as one fresh complete pass over the full 146.25 GB retained export with zero failed or
+unknown members. See [`PROJECT_STATE.md`](PROJECT_STATE.md) and [`DATABASE_STATE.md`](DATABASE_STATE.md)
+for the exact counts. A second identical-replay pass against this combined canonical database, to
+prove the exact-replay guarantee holds with all five sources present at once, has not yet been run.
+
 Add later providers only when source evidence exists; every provider starts with inventory and
-explicit disposition rather than optimistic format assumptions.
+explicit disposition rather than optimistic format assumptions. Facebook is next: a retained export
+is present locally but no importer exists yet.
 
 ## 3. Build query and understanding layers
 
@@ -137,9 +149,12 @@ chain must never depend on an embedding model, UI, or agent remaining available.
 | Completed PR15 | Separate iMessages device-export importer | Complete accounting, safe resume, exact identical replay, no unintended versions |
 | Completed PR16 | Official Apple parser-v3 real-corpus operational acceptance | Fresh import, safe resume, empty-dataset repair, semantic reconciliation, exact replay |
 | Completed PR17 | Official OpenAI production ingestion and real-corpus acceptance | Manifest accounting, safe resume, complete graph/assets, exact replay |
-| Open PR19 | Anthropic production ingestion and retained-corpus acceptance | Privacy-safe inventory, complete disposition, bounded restart, graph/assets, controlled resume, exact replay |
-| Current stacked PR | Apple production readiness | Lossless representation contract, separate interpretation depth, full-corpus import and exact replay, exit 0 |
-| Next stacked PR | Remaining Google semantic gaps | Complete or explicitly bound retained Nest and asset-indexed surfaces without regressing accepted accounting |
+| Completed PR19 | Anthropic production ingestion and retained-corpus acceptance | Privacy-safe inventory, complete disposition, bounded restart, graph/assets, controlled resume, exact replay |
+| Completed PR23 | Apple production readiness | Lossless representation contract, separate interpretation depth, full-corpus import and exact replay, exit 0 |
+| Completed 2026-09-19 | Canonical database rebuild: all five sources imported fresh from raw exports into one dedicated-volume database | Apple resumed to its accepted 897-run baseline after an unrelated interruption; Google ran one fresh complete pass, 25,427/25,427 members, zero failed/unknown, exit 0 |
+| Next | Canonical-database idempotency verification | Re-run every importer a second time against the combined canonical database; prove zero drift with all five sources present at once |
+| Then | Official Facebook export ingestion | New source family: inventory, product registry, adapters, orchestrator, and tests for the retained "Download Your Information" export, to the same restart-safe/exact-replay bar as the other sources |
+| Then | Remaining Google semantic gaps | Complete or explicitly bound retained Nest and asset-indexed surfaces without regressing accepted accounting |
 | Then | Unified canonical full-text query | Fast source-spanning queries with direct observation/version provenance and regression coverage |
 | Then | Reversible identity resolution, claims, correlation, and semantic retrieval | Every derived object cites evidence, is versioned, and can be removed without changing source truth |
 | Final product track | Timeline, exploration, analytics, read-only MCP, and agents | Fast normal queries, permission boundaries, and evidence-citing answers |
