@@ -1,25 +1,24 @@
 # PersonalDataLab project state
 
-Updated 2026-09-20, after the canonical database was rebuilt fresh with all five accepted source
-families and official Facebook export ingestion was added as a sixth source family. Version
-`0.19.0` adds the `facebook_export` module; version `0.18.0` qualified Apple lossless structured
-ingestion and reported interpretation depth separately. PR7–PR11 were stacked Google changes that
-reached `main` through PR12. Their remote feature branches remain history, not evidence of
-unfinished PRs.
+Updated 2026-09-20, after the canonical database was rebuilt fresh with all six accepted source
+families, including official Facebook export ingestion. Version `0.19.0` adds the `facebook_export`
+module; version `0.18.0` qualified Apple lossless structured ingestion and reported interpretation
+depth separately. PR7–PR11 were stacked Google changes that reached `main` through PR12. Their
+remote feature branches remain history, not evidence of unfinished PRs.
 
 This file is the current implementation summary. Specifications define contracts, coverage pages
 record format support, and PR reports preserve milestone evidence from the time each PR landed.
 When a historical report's “next frontier” differs from this file or [`ROADMAP.md`](ROADMAP.md),
 this file and the roadmap are authoritative for current sequencing.
 
-## Canonical database baseline (2026-09-19)
+## Canonical database baseline (2026-09-20)
 
-For the first time, one durable database — `personaldata`, on the dedicated `pdl_canonical_postgres_data`
-Docker volume (never `repo_postgres_data`, which still carries pre-rebuild acceptance/dev residue) —
-holds all five accepted source families at once, imported directly from the immutable raw exports
-under `DataLabData\` by the current importer code, not copied from any historical acceptance
-database. Schema version 7, current size 6,495 MB. Every `import_runs` row across every source is
-`completed`; zero `staging`/`finalizing`/`partial`/`failed`/`conflicted` rows exist.
+One durable database — `personaldata`, on the dedicated `pdl_canonical_postgres_data` Docker
+volume (never `repo_postgres_data`, which still carries pre-rebuild acceptance/dev residue) — holds
+all six accepted source families at once, imported directly from the immutable raw exports under
+`DataLabData\` by the current importer code, not copied from any historical acceptance database.
+Schema version 7. Every `import_runs` row across every source is `completed`; zero
+`staging`/`finalizing`/`partial`/`failed`/`conflicted` rows exist.
 
 | Source | Import runs | Records | Events | Assets | Relationships | Exit |
 |---|---:|---:|---:|---:|---:|---:|
@@ -28,6 +27,7 @@ database. Schema version 7, current size 6,495 MB. Every `import_runs` row acros
 | iMessages | 35 | — | 71,789 | 3,136 | 75,928 | 0 |
 | Apple | 897 | 476,444 | 162,318 | 380 | 161 | 0 (`production_ready: true`) |
 | Google | 23,333 | 122,293 | 164,032 | 13,983 | 115,221 | 0 |
+| Facebook | 2,673 | 43,051 | 91,525 | 1,786 | 1,309 | 0 (`production_ready: true`) |
 
 Apple and Google were imported into this canonical database on 2026-09-19: Apple resumed cleanly
 after an unrelated local power interruption (the 772 members already committed before the
@@ -45,16 +45,22 @@ source at a time from raw exports only, with the old `repo_postgres_data` databa
 un-migrated as comparison evidence rather than merged forward.
 
 Both Apple and Google were then re-run a second time, identically, against this now-combined
-canonical database to verify the exact-replay guarantee holds with all five sources present at
+canonical database to verify the exact-replay guarantee holds with multiple sources present at
 once, not just per-source in isolation. Zero drift: Apple's 814/814 members and Google's
 25,427/25,427 members all short-circuited, both exited 0, and every canonical count above was
 unchanged before and after.
 
 Official Facebook export ingestion (a sixth source family) was added and accepted on 2026-09-20
 against an isolated acceptance database — 2,673/2,673 members, `production_ready: true`, exit 0,
-zero conflicts, exact replay verified. It has not yet been imported into this canonical database;
-that import is the immediate next step. See
+zero conflicts, exact replay verified — then imported into this canonical database the same day:
+2,673/2,673 members, exit 0, 574 conversations, 43,051 records, 91,525 events, 1,786 assets, and
+1,309 relationships, identical to the isolated acceptance run. A second identical pass against the
+canonical database short-circuited all 2,673 members with zero drift, matching the idempotency
+verification already established for Apple and Google. See
 [`FACEBOOK_PRODUCTION_ACCEPTANCE_REPORT.md`](FACEBOOK_PRODUCTION_ACCEPTANCE_REPORT.md).
+
+All six sources' canonical counts above are current as of this baseline and have each been
+verified stable under a second identical import pass against the shared canonical database.
 
 ## Current source-family coverage
 
@@ -65,7 +71,7 @@ that import is the immediate next step. See
 | iMessages device export | Production-ready for the retained iMazing CSV corpus in PR15 | Two CSVs, 67,917 message rows, message/reply/reaction/edit/deletion semantics, explicit timezone input, controlled resume, and exact replay passed. The source contains attachment references but no attachment bytes. RSMF, raw iOS `sms.db`, PDF, Excel, and text exports are not claimed. See [`IMESSAGES_COVERAGE.md`](IMESSAGES_COVERAGE.md). |
 | Official OpenAI export | Production-ready for the retained manifest-based export in PR17 | All 1,724 physical members, 1,187 conversations, 25,510 message events, structured JSON, retained and unavailable assets, parent edges, and message-asset edges are accounted. Controlled resume and exact replay pass with exit 0. The legacy standalone `conversations.json` path remains compatibility-only and does not provide whole-export acceptance. See [`OPENAI_INGESTION_SPEC.md`](OPENAI_INGESTION_SPEC.md) and [`PR17_OPENAI_PRODUCTION_ACCEPTANCE_REPORT.md`](PR17_OPENAI_PRODUCTION_ACCEPTANCE_REPORT.md). |
 | Anthropic export | Production-ready for the retained official account export in PR19 | All six physical source files and eight JSON members are accounted. A controlled stop after the first committed conversation chunk, resume, and exact replay passed with exit 0: 269 conversations, 9,748 events, 601 explicit unavailable assets, and 10,014 relationships, with zero failures, warnings, unknowns, or conflicts. All 18 bounded units short-circuit on replay without changing run, version, or observation counts. See [`ANTHROPIC_INGESTION_SPEC.md`](ANTHROPIC_INGESTION_SPEC.md) and [`PR19_ANTHROPIC_PRODUCTION_ACCEPTANCE_REPORT.md`](PR19_ANTHROPIC_PRODUCTION_ACCEPTANCE_REPORT.md). |
-| Official Facebook export | Production-ready for the retained "Download Your Information" export | All 2,673 entries across all 74 registered categories are accounted with zero unknown, generic-fallback, or unsupported members. 73 categories are `losslessly_structured`/`generic_lossless`; one (`files`) is `fully_structured`/`provider_specific`. Complete replay exits 0 with `production_ready: true`. Not yet imported into the canonical database. See [`FACEBOOK_PRODUCT_COVERAGE.md`](FACEBOOK_PRODUCT_COVERAGE.md) and [`FACEBOOK_PRODUCTION_ACCEPTANCE_REPORT.md`](FACEBOOK_PRODUCTION_ACCEPTANCE_REPORT.md). |
+| Official Facebook export | Production-ready for the retained "Download Your Information" export | All 2,673 entries across all 74 registered categories are accounted with zero unknown, generic-fallback, or unsupported members. 73 categories are `losslessly_structured`/`generic_lossless`; one (`files`) is `fully_structured`/`provider_specific`. Complete replay exits 0 with `production_ready: true`. Imported into the canonical database with zero drift on replay. See [`FACEBOOK_PRODUCT_COVERAGE.md`](FACEBOOK_PRODUCT_COVERAGE.md) and [`FACEBOOK_PRODUCTION_ACCEPTANCE_REPORT.md`](FACEBOOK_PRODUCTION_ACCEPTANCE_REPORT.md). |
 
 ## Implemented architecture
 
@@ -150,23 +156,18 @@ version-7 universal record, event, asset, and relationship model already express
 
 ## Outstanding work in priority order
 
-1. **Import Facebook into the canonical database.** The new `facebook_export` module is accepted
-   against an isolated database (2,673/2,673 members, `production_ready: true`, exit 0, exact
-   replay verified) but has not yet been run against the canonical `personaldata` database used by
-   the other five sources. Re-run the canonical-database idempotency check afterward so all six
-   sources are verified together, not just five.
-2. **Close remaining Google semantic gaps.** Preserve the accepted 68-product accounting while
+1. **Close remaining Google semantic gaps.** Preserve the accepted 68-product accounting while
    completing or explicitly bounding the retained Nest partial surface and the asset-indexed surface.
-3. **Add a unified query foundation.** Build provenance-aware full-text search over canonical
+2. **Add a unified query foundation.** Build provenance-aware full-text search over canonical
    conversations, events, records, document text, and asset metadata before introducing agents or
    embeddings.
-4. **Add reversible identity resolution.** Provider identities may be linked to people/accounts/
+3. **Add reversible identity resolution.** Provider identities may be linked to people/accounts/
    devices only with inspectable evidence and manual merge/split controls. Never rewrite provider
    identity or source truth.
-5. **Add derived understanding.** Claims, cross-source correlations, OCR/transcription, chunks,
+4. **Add derived understanding.** Claims, cross-source correlations, OCR/transcription, chunks,
    and embeddings belong in separately versioned, disposable layers whose outputs cite immutable
    observations.
-6. **Continue the operational track.** Encrypted backup/restore, integrity audits, sensitive-field
+5. **Continue the operational track.** Encrypted backup/restore, integrity audits, sensitive-field
    controls, incremental scheduling, performance budgets, derived-data invalidation, and corpus
    exportability remain permanent requirements.
 

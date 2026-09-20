@@ -37,6 +37,17 @@ one in isolation):
 Zero drift in either source. The canonical-rebuild proposal below is now fully executed and
 verified, not just executed.
 
+## Update 2026-09-20: Facebook added as a sixth canonical source
+
+A new `facebook_export` module (see [`FACEBOOK_PRODUCTION_ACCEPTANCE_REPORT.md`](FACEBOOK_PRODUCTION_ACCEPTANCE_REPORT.md))
+was accepted against an isolated database, then imported into this same canonical `personaldata`
+database: 2,673/2,673 members, exit 0, `production_ready: true`, 574 conversations, 43,051 records,
+91,525 events, 1,786 assets, 1,309 relationships — identical to the isolated acceptance run. A
+second identical pass short-circuited all 2,673 members with zero drift, matching the idempotency
+verification already done for Apple and Google above. All six source families (Anthropic, OpenAI,
+iMessages, Apple, Google, Facebook) now coexist in this one canonical database. See
+[`PROJECT_STATE.md`](PROJECT_STATE.md) for the consolidated table.
+
 This file exists because local operational state (Docker volumes, databases,
 raw export locations) had drifted into something no one — human or model —
 could read correctly on first contact.

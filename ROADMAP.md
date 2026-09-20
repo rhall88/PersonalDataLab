@@ -102,8 +102,10 @@ before acceptance: PostgreSQL's rejection of embedded NUL bytes, a cross-thread 
 collision, and false conflicts from duplicate media/multi-part threads leaking occurrence-specific
 data into fields meant to stay stable per canonical identity. A complete real-data import and exact
 unchanged replay both passed with exit 0 and `production_ready: true`; see
-[`FACEBOOK_PRODUCTION_ACCEPTANCE_REPORT.md`](FACEBOOK_PRODUCTION_ACCEPTANCE_REPORT.md). It has not
-yet been imported into the canonical database.
+[`FACEBOOK_PRODUCTION_ACCEPTANCE_REPORT.md`](FACEBOOK_PRODUCTION_ACCEPTANCE_REPORT.md). It was then
+imported into the canonical database alongside the other five sources, with a second identical
+pass confirming zero drift: all six source families now coexist in one durable `personaldata`
+database.
 
 Add later providers only when source evidence exists; every provider starts with inventory and
 explicit disposition rather than optimistic format assumptions.
@@ -167,7 +169,7 @@ chain must never depend on an embedding model, UI, or agent remaining available.
 | Completed 2026-09-19 | Canonical database rebuild: all five sources imported fresh from raw exports into one dedicated-volume database | Apple resumed to its accepted 897-run baseline after an unrelated interruption; Google ran one fresh complete pass, 25,427/25,427 members, zero failed/unknown, exit 0 |
 | Completed 2026-09-19 | Canonical-database idempotency verification | Apple and Google each re-run a second time against the combined canonical database: all members short-circuited, zero drift, exit 0 for both |
 | Completed 2026-09-20 | Official Facebook export ingestion | New source family: inventory, product registry, adapters, orchestrator, and tests for the retained "Download Your Information" export; 2,673/2,673 members, exit 0, `production_ready: true`, exact replay verified against an isolated database |
-| Next | Import Facebook into the canonical database | Run `import-facebook-all` against `personaldata`, then re-run the idempotency check across all six sources together |
+| Completed 2026-09-20 | Import Facebook into the canonical database | 2,673/2,673 members, exit 0, zero conflicts, identical to the isolated acceptance run; a second identical pass short-circuited all members with zero drift |
 | Then | Remaining Google semantic gaps | Complete or explicitly bound retained Nest and asset-indexed surfaces without regressing accepted accounting |
 | Then | Unified canonical full-text query | Fast source-spanning queries with direct observation/version provenance and regression coverage |
 | Then | Reversible identity resolution, claims, correlation, and semantic retrieval | Every derived object cites evidence, is versioned, and can be removed without changing source truth |
