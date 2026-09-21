@@ -35,6 +35,13 @@ from .facebook_export.orchestrator import import_facebook_all
 from .google_importer import iter_google_exports
 from .google_takeout.inventory import inspect_google, render_inventory_table
 from .google_takeout.orchestrator import import_google_all
+from .identity import (
+    create_person,
+    list_identity_candidates,
+    list_people,
+    merge_identity,
+    split_identity,
+)
 from .imessages.inventory import inspect_imessages
 from .imessages.inventory import render_inventory_table as render_imessages_table
 from .imessages.orchestrator import import_imessages_all
@@ -259,6 +266,59 @@ def _parser() -> argparse.ArgumentParser:
         help="output machine-readable JSON (default) or a human-readable table",
     )
     search.add_argument("--database-url", help="overrides DATABASE_URL from .env")
+    candidates = subparsers.add_parser(
+        "identity-candidates",
+        help="list distinct provider actor_identity values across events and records",
+    )
+    candidates.add_argument("--source", help="restrict to one source, e.g. apple, google, facebook")
+    candidates.add_argument(
+        "--min-count", type=int, default=1, help="minimum combined events+records occurrences"
+    )
+    candidates.add_argument(
+        "--include-linked",
+        action="store_true",
+        help="include values that already have an active identity link; excluded by default",
+    )
+    candidates.add_argument(
+        "--format",
+        dest="output_format",
+        choices=("json", "table"),
+        default="json",
+        help="output machine-readable JSON (default) or a human-readable table",
+    )
+    candidates.add_argument("--database-url", help="overrides DATABASE_URL from .env")
+    create_person_parser = subparsers.add_parser(
+        "identity-create-person", help="create a new person to link identities to"
+    )
+    create_person_parser.add_argument("display_name", help="human-readable name for this person")
+    create_person_parser.add_argument("--database-url", help="overrides DATABASE_URL from .env")
+    people = subparsers.add_parser(
+        "identity-people", help="list people and their active identity links"
+    )
+    people.add_argument(
+        "--format",
+        dest="output_format",
+        choices=("json", "table"),
+        default="json",
+        help="output machine-readable JSON (default) or a human-readable table",
+    )
+    people.add_argument("--database-url", help="overrides DATABASE_URL from .env")
+    merge = subparsers.add_parser(
+        "identity-merge",
+        help="link a provider actor_identity value to a person, with inspectable evidence",
+    )
+    merge.add_argument("person_id", type=int)
+    merge.add_argument("source")
+    merge.add_argument("identity_value")
+    merge.add_argument("--note", help="free-text note explaining the evidence for this link")
+    merge.add_argument("--database-url", help="overrides DATABASE_URL from .env")
+    split = subparsers.add_parser(
+        "identity-split",
+        help="revert the active identity link for a provider actor_identity value",
+    )
+    split.add_argument("source")
+    split.add_argument("identity_value")
+    split.add_argument("--database-url", help="overrides DATABASE_URL from .env")
     return parser
 
 
@@ -674,6 +734,52 @@ def _render_search_table(report: dict) -> str:
     return "\n".join(lines)
 
 
+def _build_identity_candidates_report(
+    *,
+    source: str | None,
+    min_count: int,
+    include_linked: bool,
+    explicit_url: str | None,
+) -> dict:
+    engine = _resolve_guarded_engine(explicit_url, canonical_import=False)
+    candidates = list_identity_candidates(
+        engine, source=source, min_count=min_count, include_linked=include_linked
+    )
+    return {"candidates": [candidate.model_dump(mode="json") for candidate in candidates]}
+
+
+def _render_identity_candidates_table(report: dict) -> str:
+    lines = [f"{len(report['candidates'])} identity candidate(s)", ""]
+    for candidate in report["candidates"]:
+        link = (
+            f"-> person {candidate['linked_person_id']} ({candidate['linked_display_name']})"
+            if candidate["linked_person_id"]
+            else "(unlinked)"
+        )
+        lines.append(
+            f"[{candidate['source']:<10}] {candidate['identity_value']:<40} "
+            f"n={candidate['occurrences']:<6} {link}"
+        )
+    return "\n".join(lines)
+
+
+def _build_identity_people_report(explicit_url: str | None) -> dict:
+    engine = _resolve_guarded_engine(explicit_url, canonical_import=False)
+    return {"people": [person.model_dump(mode="json") for person in list_people(engine)]}
+
+
+def _render_identity_people_table(report: dict) -> str:
+    lines = [f"{len(report['people'])} people", ""]
+    for person in report["people"]:
+        lines.append(
+            f"[{person['id']}] {person['display_name']} "
+            f"({len(person['linked_identities'])} linked identities)"
+        )
+        for linked in person["linked_identities"]:
+            lines.append(f"    {linked['source']}: {linked['identity_value']}")
+    return "\n".join(lines)
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     if args.command == "import-openai":
@@ -896,6 +1002,50 @@ def main(argv: Sequence[str] | None = None) -> int:
             print(_render_search_table(report))
         else:
             print(json.dumps(report, indent=2))
+        return 0
+    if args.command == "identity-candidates":
+        report = _build_identity_candidates_report(
+            source=args.source,
+            min_count=args.min_count,
+            include_linked=args.include_linked,
+            explicit_url=args.database_url,
+        )
+        if args.output_format == "table":
+            print(_render_identity_candidates_table(report))
+        else:
+            print(json.dumps(report, indent=2))
+        return 0
+    if args.command == "identity-create-person":
+        engine = _resolve_guarded_engine(args.database_url, canonical_import=False)
+        person = create_person(engine, args.display_name)
+        print(json.dumps(person.model_dump(mode="json"), indent=2))
+        return 0
+    if args.command == "identity-people":
+        report = _build_identity_people_report(args.database_url)
+        if args.output_format == "table":
+            print(_render_identity_people_table(report))
+        else:
+            print(json.dumps(report, indent=2))
+        return 0
+    if args.command == "identity-merge":
+        engine = _resolve_guarded_engine(args.database_url, canonical_import=False)
+        try:
+            link = merge_identity(
+                engine, args.person_id, args.source, args.identity_value, note=args.note
+            )
+        except ValueError as error:
+            print(f"error: {error}", file=sys.stderr, flush=True)
+            return 1
+        print(json.dumps(link.model_dump(mode="json"), indent=2))
+        return 0
+    if args.command == "identity-split":
+        engine = _resolve_guarded_engine(args.database_url, canonical_import=False)
+        try:
+            link = split_identity(engine, args.source, args.identity_value)
+        except ValueError as error:
+            print(f"error: {error}", file=sys.stderr, flush=True)
+            return 1
+        print(json.dumps(link.model_dump(mode="json"), indent=2))
         return 0
     raise AssertionError(f"unhandled command: {args.command}")
 

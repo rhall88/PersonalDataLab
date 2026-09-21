@@ -658,4 +658,27 @@ CREATE TRIGGER assets_search_vector_trigger
     BEFORE INSERT OR UPDATE ON assets
     FOR EACH ROW EXECUTE FUNCTION assets_search_vector_update();
 
-INSERT INTO schema_migrations (version) VALUES (2), (3), (4), (5), (6), (7), (8) ON CONFLICT DO NOTHING;
+-- Migration 009: reversible identity resolution. Mirrored here for the same reason as migration
+-- 008 above -- this file is the fresh-install snapshot.
+ALTER TABLE records ADD COLUMN actor_person_id BIGINT REFERENCES people(id) ON DELETE SET NULL;
+
+CREATE TABLE identity_links (
+    id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    person_id BIGINT NOT NULL REFERENCES people(id) ON DELETE CASCADE,
+    source TEXT NOT NULL,
+    identity_value TEXT NOT NULL,
+    note TEXT,
+    lifecycle_state TEXT NOT NULL DEFAULT 'active' CHECK (
+        lifecycle_state IN ('active', 'reverted')
+    ),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    reverted_at TIMESTAMPTZ
+);
+
+CREATE UNIQUE INDEX identity_links_active_idx
+    ON identity_links (source, identity_value)
+    WHERE lifecycle_state = 'active';
+
+CREATE INDEX identity_links_person_id_idx ON identity_links (person_id);
+
+INSERT INTO schema_migrations (version) VALUES (2), (3), (4), (5), (6), (7), (8), (9) ON CONFLICT DO NOTHING;
