@@ -18,7 +18,8 @@ One durable database — `personaldata`, on the dedicated `pdl_canonical_postgre
 volume (never `repo_postgres_data`, which still carries pre-rebuild acceptance/dev residue) — holds
 all six accepted source families at once, imported directly from the immutable raw exports under
 `DataLabData\` by the current importer code, not copied from any historical acceptance database.
-Schema version 7. Every `import_runs` row across every source is `completed`; zero
+Schema version 7 at the time of this rebuild, later advanced to version 8 by the full-text search
+migration described below. Every `import_runs` row across every source is `completed`; zero
 `staging`/`finalizing`/`partial`/`failed`/`conflicted` rows exist.
 
 | Source | Import runs | Records | Events | Assets | Relationships | Exit |
