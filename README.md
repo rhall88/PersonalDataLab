@@ -34,6 +34,8 @@ This repository contains the completed foundation and its source importers:
   assets, and a generic lossless adapter for every other category
 - provenance-aware unified full-text search over canonical conversations, events, records, and
   assets, spanning all six source families in one ranked result list
+- reversible, evidence-checked identity resolution linking provider identity values to people,
+  with manual merge and split controls
 - reconciliation tests
 - Windows/PowerShell setup instructions
 
@@ -431,6 +433,24 @@ Search is maintained entirely by database triggers on the four canonical tables 
 adapter, or orchestrator code changes anything about how it works, and every future import from any
 source becomes searchable automatically. See [`QUERY_SPEC.md`](QUERY_SPEC.md) for the weighting,
 ranking, and provenance contract.
+
+### Resolve identities
+
+Once schema version 9 is applied, a provider identity value (an email address, a phone number, an
+account UUID, a free-text sender name) can be manually and reversibly linked to a person, with
+every link checked against real canonical evidence first:
+
+```powershell
+personal-data-lab identity-candidates --format table
+personal-data-lab identity-create-person "Jane Doe"
+personal-data-lab identity-merge 1 google "jane@example.com" --note "Gmail From header"
+personal-data-lab identity-split google "jane@example.com"
+```
+
+Merging never rewrites `actor_identity` or any other provider-sourced field — it only annotates a
+plain `actor_person_id` column, and splitting undoes that annotation without deleting the merge's
+history. See [`IDENTITY_RESOLUTION_SPEC.md`](IDENTITY_RESOLUTION_SPEC.md) for the storage rationale,
+evidence rules, and known limitations.
 
 ## Permanent cumulative and lossless contract
 

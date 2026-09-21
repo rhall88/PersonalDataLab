@@ -1,7 +1,8 @@
 # PersonalDataLab project state
 
-Updated 2026-09-20, after schema version 8 added unified full-text search over the canonical
-database. Version `0.21.0` adds the `search` command and `search_vector` schema; `0.20.0` recovered
+Updated 2026-09-20, after schema version 9 added reversible identity resolution over the canonical
+database. Version `0.22.0` adds five `identity-*` commands and the `identity_links` schema;
+`0.21.0` added the `search` command and `search_vector` schema; `0.20.0` recovered
 doubly-escaped Nest provider rows; `0.19.0` added the `facebook_export` module; `0.18.0` qualified
 Apple lossless structured ingestion and reported interpretation depth separately. PR7–PR11 were
 stacked Google changes that reached `main` through PR12. Their remote feature branches remain
@@ -155,7 +156,7 @@ local execution order, path changes, and repeated exports from becoming accident
 
 ## Schema and migrations
 
-Fresh databases initialize directly at schema version 8. `personal-data-lab migrate` upgrades a
+Fresh databases initialize directly at schema version 9. `personal-data-lab migrate` upgrades a
 PR2 database idempotently through the tracked migrations:
 
 | Version | Purpose |
@@ -166,19 +167,28 @@ PR2 database idempotently through the tracked migrations:
 | 6 | universal durable records and external assets, each with versions and observations |
 | 7 | provenance-bearing, versioned relationships |
 | 8 | `search_vector tsvector` + GIN index + maintenance trigger on conversations/events/records/assets |
+| 9 | `records.actor_person_id` (matching the existing `events` column) + the `identity_links` table for reversible identity merges |
 
 Apple, Facebook, iMessages, OpenAI, and Anthropic v2 required no later schema migration because the
 version-7 universal record, event, asset, and relationship model already expresses their data.
 Migration 8 requires no importer-side changes either — every existing source becomes searchable
-purely from its already-existing canonical columns. See [`QUERY_SPEC.md`](QUERY_SPEC.md).
+purely from its already-existing canonical columns. See [`QUERY_SPEC.md`](QUERY_SPEC.md). Migration
+9 likewise requires no importer changes: identity links are asserted after the fact by a human, not
+inferred at import time. See [`IDENTITY_RESOLUTION_SPEC.md`](IDENTITY_RESOLUTION_SPEC.md).
 
 ## Verification state
 
-- The repository currently collects 293 tests: non-integration tests plus PostgreSQL-marked
-  integration tests, including the 13-test focused Facebook suite and the 6-test unified-search
-  suite (cross-kind matching, weighted ranking, tombstone filtering, source/kind filtering,
-  automatic re-indexing on update through the normal import path, and the CLI command).
-- The unified full-text search change passes all 293 tests against the local PostgreSQL
+- The repository currently collects 310 tests: non-integration tests plus PostgreSQL-marked
+  integration tests, including the 13-test focused Facebook suite, the 6-test unified-search suite,
+  and the 17-test identity-resolution suite (candidate counts summed across events and records,
+  default exclusion/inclusion of already-linked values, source/min-count filtering, person
+  create/list/get, merge backfilling `actor_person_id` on both events and records, merge rejecting
+  an unknown person, missing evidence, or a value already linked to a different person, merge being
+  idempotent and backfilling newly-imported evidence, merge annotating tombstoned rows too, split
+  reverting a link while preserving history, and CLI smoke tests for all five commands).
+- The reversible identity resolution change passes all 310 tests against the local PostgreSQL
+  18/pgvector test service. Not yet applied to the real canonical database — see Outstanding work.
+- The unified full-text search change passed all 293 tests against the local PostgreSQL
   18/pgvector test service. Migration 8 was applied to the real canonical database on 2026-09-20
   and verified with real queries (see the canonical baseline section above).
 - The Facebook production-readiness change passed all 285 tests against the local PostgreSQL
@@ -205,9 +215,9 @@ purely from its already-existing canonical columns. See [`QUERY_SPEC.md`](QUERY_
    not been re-verified for exact replay against the canonical database (see the canonical baseline
    section above). Low priority: the fix is narrow, unit-tested, and was verified directly against
    the real corpus bytes before merging.
-2. **Add reversible identity resolution.** Provider identities may be linked to people/accounts/
-   devices only with inspectable evidence and manual merge/split controls. Never rewrite provider
-   identity or source truth.
+2. **Apply schema version 9 to the canonical database.** Reversible identity resolution
+   (`identity_links`, `records.actor_person_id`) is built and tested but has not yet been applied
+   to the real canonical database or verified with a real merge/split.
 3. **Add derived understanding.** Claims, cross-source correlations, OCR/transcription, chunks,
    and embeddings belong in separately versioned, disposable layers whose outputs cite immutable
    observations.

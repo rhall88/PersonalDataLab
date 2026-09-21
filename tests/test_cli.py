@@ -178,7 +178,7 @@ def test_doctor_reports_canonical_target_with_clean_json(monkeypatch, capsys) ->
         cli, "database_url", lambda override: "postgresql://user:pass@localhost:5432/personaldata"
     )
     monkeypatch.setattr(cli, "create_database_engine", lambda url: object())
-    monkeypatch.setattr(cli, "current_schema_version", lambda engine: 8)
+    monkeypatch.setattr(cli, "current_schema_version", lambda engine: 9)
     monkeypatch.setattr(
         cli,
         "list_sibling_databases",
@@ -195,7 +195,7 @@ def test_doctor_reports_canonical_target_with_clean_json(monkeypatch, capsys) ->
     report = json.loads(captured.out)
     assert report["target_database"] == "personaldata"
     assert report["target_classification"] == "canonical"
-    assert report["schema_version"] == 8
+    assert report["schema_version"] == 9
     assert report["schema_up_to_date"] is True
     assert report["suspicious_config"] == []
     classifications = {row["name"]: row["classification"] for row in report["sibling_databases"]}
