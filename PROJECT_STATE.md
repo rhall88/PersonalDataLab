@@ -79,6 +79,25 @@ Apple's and Facebook's canonical counts above remain current as of their last ve
 pass. Google's counts above are current as of the Nest-fix import but have not been re-verified for
 exact replay since.
 
+### Unified full-text search applied 2026-09-20
+
+Schema version 8 (see [`QUERY_SPEC.md`](QUERY_SPEC.md)) was applied to this canonical database via
+`personal-data-lab migrate`: `schema_up_to_date` went from `false` (version 7) to `true` (version
+8), backfilling `search_vector` for every existing row across all four canonical tables in one
+transaction. Database size grew from 7,164,343,999 to 13,048,247,999 bytes (tsvector columns plus
+four GIN indexes over roughly 1.19M rows: 2,133 conversations, 524,953 events, 642,998 records,
+22,525 assets).
+
+Verified against real data with `personal-data-lab search`, not just synthetic fixtures: a search
+for "meeting" correctly ranked and highlighted real Gmail messages with accurate `occurred_at`
+timestamps and full provenance; a cross-kind, cross-source search for "photo" returned hits split
+across `google` and `openai`; a search for "img" restricted to `--kind asset` correctly matched
+real `IMG_4369`-style camera filenames — proving the `filename_search_text()` separator
+normalization works on real filenames, not just the synthetic `sourdough_starter.jpg` case it was
+built against. This was not followed by a second idempotency-verification pass (the migration is
+purely additive — new columns/indexes/triggers — and was already tested against a disposable
+database before merging); nothing about the existing six-source verification state above changes.
+
 ## Current source-family coverage
 
 | Source family | Current status | Accepted evidence and boundary |
@@ -159,8 +178,8 @@ purely from its already-existing canonical columns. See [`QUERY_SPEC.md`](QUERY_
   suite (cross-kind matching, weighted ranking, tombstone filtering, source/kind filtering,
   automatic re-indexing on update through the normal import path, and the CLI command).
 - The unified full-text search change passes all 293 tests against the local PostgreSQL
-  18/pgvector test service. Migration 8 has not yet been applied to the real canonical database;
-  that is the immediate next step.
+  18/pgvector test service. Migration 8 was applied to the real canonical database on 2026-09-20
+  and verified with real queries (see the canonical baseline section above).
 - The Facebook production-readiness change passed all 285 tests against the local PostgreSQL
   18/pgvector test service.
 - The Apple production-readiness change passed all 250 tests against the local PostgreSQL
@@ -181,21 +200,17 @@ purely from its already-existing canonical columns. See [`QUERY_SPEC.md`](QUERY_
 
 ## Outstanding work in priority order
 
-1. **Apply schema version 8 to the canonical database.** The unified full-text search migration
-   (`search_vector` columns, GIN indexes, maintenance triggers) is tested and merged but has not
-   yet been run against the real canonical database. Run `personal-data-lab migrate`, backfilling
-   `search_vector` for the ~1M+ existing rows, then verify with real queries.
-2. **(Optional, deferred by explicit instruction) Re-verify Google idempotency.** The Nest fix has
+1. **(Optional, deferred by explicit instruction) Re-verify Google idempotency.** The Nest fix has
    not been re-verified for exact replay against the canonical database (see the canonical baseline
    section above). Low priority: the fix is narrow, unit-tested, and was verified directly against
    the real corpus bytes before merging.
-3. **Add reversible identity resolution.** Provider identities may be linked to people/accounts/
+2. **Add reversible identity resolution.** Provider identities may be linked to people/accounts/
    devices only with inspectable evidence and manual merge/split controls. Never rewrite provider
    identity or source truth.
-4. **Add derived understanding.** Claims, cross-source correlations, OCR/transcription, chunks,
+3. **Add derived understanding.** Claims, cross-source correlations, OCR/transcription, chunks,
    and embeddings belong in separately versioned, disposable layers whose outputs cite immutable
    observations.
-5. **Continue the operational track.** Encrypted backup/restore, integrity audits, sensitive-field
+4. **Continue the operational track.** Encrypted backup/restore, integrity audits, sensitive-field
    controls, incremental scheduling, performance budgets, derived-data invalidation, and corpus
    exportability remain permanent requirements.
 
