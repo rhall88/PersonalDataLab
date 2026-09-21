@@ -150,8 +150,9 @@ explicit disposition rather than optimistic format assumptions.
    added to match the existing unused `events.actor_person_id`, and both are backfilled/cleared by
    five new `personal-data-lab identity-*` commands. Every merge is validated against real
    `actor_identity` evidence and is fully reversible via split, which preserves history rather than
-   deleting it. Not yet applied to the real canonical database — see `PROJECT_STATE.md` outstanding
-   work. See [`IDENTITY_RESOLUTION_SPEC.md`](IDENTITY_RESOLUTION_SPEC.md).
+   deleting it. Applied to the real canonical database the same day and verified with a real
+   merge/split/re-merge — see `PROJECT_STATE.md`. See
+   [`IDENTITY_RESOLUTION_SPEC.md`](IDENTITY_RESOLUTION_SPEC.md).
 3. **Derived entities and claims:** versioned, confidence-scored assertions about people,
    organizations, places, projects, topics, documents, and relationships. Every assertion must
    cite immutable observations and remain removable without changing source truth.
@@ -214,7 +215,8 @@ chain must never depend on an embedding model, UI, or agent remaining available.
 | Completed 2026-09-20 | Re-run Google against the canonical database | All 25,427 members, exit 0, zero failures/unknowns/conflicts; `nest_event` rows went from 35 (31 opaque) to 66 (31 opaque preserved + 31 newly recovered); not re-verified for exact replay (deferred by explicit instruction — low priority given the fix's narrow scope and existing test coverage) |
 | Completed 2026-09-20 | Unified canonical full-text query | Schema version 8 (`search_vector`/GIN/trigger on all four canonical tables), ranked `search` CLI command spanning all six sources, 293 tests passing, zero importer changes required |
 | Completed 2026-09-20 | Apply schema version 8 to the canonical database | `personal-data-lab migrate` backfilled `search_vector` for ~1.19M existing rows (2,133 conversations, 524,953 events, 642,998 records, 22,525 assets); verified with real queries (Gmail "meeting", cross-source "photo", asset-filename "img") |
-| Completed 2026-09-20 | Reversible identity resolution | Schema version 9 (`identity_links` table, `records.actor_person_id`), five `identity-*` CLI commands, 310 tests passing, zero importer changes required, evidence-checked and fully reversible merge/split |
-| Then | Apply schema version 9 to the canonical database, then claims, correlation, and semantic retrieval | Every derived object cites evidence, is versioned, and can be removed without changing source truth |
+| Completed 2026-09-20 | Reversible identity resolution | Schema version 9 (`identity_links` table, `records.actor_person_id`), five `identity-*` CLI commands, 311 tests passing, zero importer changes required, evidence-checked and fully reversible merge/split |
+| Completed 2026-09-20 | Apply schema version 9 to the canonical database | `personal-data-lab migrate` added the empty `identity_links` table and `records.actor_person_id` column (additive, no backfill); verified with a real merge linking "Ryan Hallgarth" (facebook, 16,624 events) and "Ryan Hallgarth <rhallgarth88@gmail.com>" (google, 596 events) to one person, a real split reverting the Gmail link and nulling `actor_person_id`, and a re-merge inserting a new `identity_links` row while the reverted one stayed in place |
+| Then | Claims, correlation, and semantic retrieval | Every derived object cites evidence, is versioned, and can be removed without changing source truth |
 | Final product track | Timeline, exploration, analytics, read-only MCP, and agents | Fast normal queries, permission boundaries, and evidence-citing answers |
 
