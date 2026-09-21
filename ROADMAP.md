@@ -140,8 +140,8 @@ explicit disposition rather than optimistic format assumptions.
 1. ~~**Unified full-text query:** searchable conversations, events, records, document text, and
    asset metadata with direct provenance inspection.~~ **Done 2026-09-20** (schema version 8):
    `search_vector`/GIN/trigger on all four canonical tables, ranked `personal-data-lab search`
-   command spanning all six sources, zero importer changes required. Not yet applied to the real
-   canonical database — see `PROJECT_STATE.md` outstanding work. See
+   command spanning all six sources, zero importer changes required. Applied to the real canonical
+   database the same day and verified with real queries — see `PROJECT_STATE.md`. See
    [`QUERY_SPEC.md`](QUERY_SPEC.md).
 2. **Identity resolution:** reversible evidence-backed links among provider identities, people,
    accounts, and devices, with manual merge and split controls.
