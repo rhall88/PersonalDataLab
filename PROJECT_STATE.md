@@ -1,11 +1,11 @@
 # PersonalDataLab project state
 
-Updated 2026-09-20, after the canonical database was rebuilt fresh with all six accepted source
-families and Google's Nest semantic gap was closed and landed in the canonical database. Version
-`0.20.0` recovers doubly-escaped Nest provider rows; `0.19.0` added the `facebook_export` module;
-`0.18.0` qualified Apple lossless structured ingestion and reported interpretation depth
-separately. PR7–PR11 were stacked Google changes that reached `main` through PR12. Their remote
-feature branches remain history, not evidence of unfinished PRs.
+Updated 2026-09-20, after schema version 8 added unified full-text search over the canonical
+database. Version `0.21.0` adds the `search` command and `search_vector` schema; `0.20.0` recovered
+doubly-escaped Nest provider rows; `0.19.0` added the `facebook_export` module; `0.18.0` qualified
+Apple lossless structured ingestion and reported interpretation depth separately. PR7–PR11 were
+stacked Google changes that reached `main` through PR12. Their remote feature branches remain
+history, not evidence of unfinished PRs.
 
 This file is the current implementation summary. Specifications define contracts, coverage pages
 record format support, and PR reports preserve milestone evidence from the time each PR landed.
@@ -135,7 +135,7 @@ local execution order, path changes, and repeated exports from becoming accident
 
 ## Schema and migrations
 
-Fresh databases initialize directly at schema version 7. `personal-data-lab migrate` upgrades a
+Fresh databases initialize directly at schema version 8. `personal-data-lab migrate` upgrades a
 PR2 database idempotently through the tracked migrations:
 
 | Version | Purpose |
@@ -145,15 +145,23 @@ PR2 database idempotently through the tracked migrations:
 | 5 | lossless conversation/event/attachment versions and version-backed observations |
 | 6 | universal durable records and external assets, each with versions and observations |
 | 7 | provenance-bearing, versioned relationships |
+| 8 | `search_vector tsvector` + GIN index + maintenance trigger on conversations/events/records/assets |
 
 Apple, Facebook, iMessages, OpenAI, and Anthropic v2 required no later schema migration because the
 version-7 universal record, event, asset, and relationship model already expresses their data.
+Migration 8 requires no importer-side changes either — every existing source becomes searchable
+purely from its already-existing canonical columns. See [`QUERY_SPEC.md`](QUERY_SPEC.md).
 
 ## Verification state
 
-- The repository currently collects 285 tests: non-integration tests plus PostgreSQL-marked
-  integration tests, including the 13-test focused Facebook suite.
-- The Facebook production-readiness change passes all 285 tests against the local PostgreSQL
+- The repository currently collects 293 tests: non-integration tests plus PostgreSQL-marked
+  integration tests, including the 13-test focused Facebook suite and the 6-test unified-search
+  suite (cross-kind matching, weighted ranking, tombstone filtering, source/kind filtering,
+  automatic re-indexing on update through the normal import path, and the CLI command).
+- The unified full-text search change passes all 293 tests against the local PostgreSQL
+  18/pgvector test service. Migration 8 has not yet been applied to the real canonical database;
+  that is the immediate next step.
+- The Facebook production-readiness change passed all 285 tests against the local PostgreSQL
   18/pgvector test service.
 - The Apple production-readiness change passed all 250 tests against the local PostgreSQL
   18/pgvector test service, including restart/replay and changed-packaging integration coverage.
@@ -173,13 +181,14 @@ version-7 universal record, event, asset, and relationship model already express
 
 ## Outstanding work in priority order
 
-1. **(Optional, deferred by explicit instruction) Re-verify Google idempotency.** The Nest fix has
+1. **Apply schema version 8 to the canonical database.** The unified full-text search migration
+   (`search_vector` columns, GIN indexes, maintenance triggers) is tested and merged but has not
+   yet been run against the real canonical database. Run `personal-data-lab migrate`, backfilling
+   `search_vector` for the ~1M+ existing rows, then verify with real queries.
+2. **(Optional, deferred by explicit instruction) Re-verify Google idempotency.** The Nest fix has
    not been re-verified for exact replay against the canonical database (see the canonical baseline
    section above). Low priority: the fix is narrow, unit-tested, and was verified directly against
    the real corpus bytes before merging.
-2. **Add a unified query foundation.** Build provenance-aware full-text search over canonical
-   conversations, events, records, document text, and asset metadata before introducing agents or
-   embeddings.
 3. **Add reversible identity resolution.** Provider identities may be linked to people/accounts/
    devices only with inspectable evidence and manual merge/split controls. Never rewrite provider
    identity or source truth.

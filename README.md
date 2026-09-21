@@ -32,11 +32,13 @@ This repository contains the completed foundation and its source importers:
 - production-accepted official Facebook "Download Your Information" export ingestion covering all
   74 observed categories, with bespoke Messenger-thread conversations, content-addressed media
   assets, and a generic lossless adapter for every other category
+- provenance-aware unified full-text search over canonical conversations, events, records, and
+  assets, spanning all six source families in one ranked result list
 - reconciliation tests
 - Windows/PowerShell setup instructions
 
-MCP, embeddings, later source importers, full-text search, analytics, DuckDB/Parquet, identity
-resolution automation, and derived claims are deliberately deferred.
+MCP, embeddings, later source importers, analytics, DuckDB/Parquet, identity resolution
+automation, and derived claims are deliberately deferred.
 
 The audited implementation, source-by-source acceptance boundaries, merged PR state, schema,
 verification evidence, and ordered next work are summarized in
@@ -412,6 +414,21 @@ opt-in. See [`FACEBOOK_INGESTION_SPEC.md`](FACEBOOK_INGESTION_SPEC.md) and
 A complete real-data PostgreSQL import and exact unchanged replay both passed with exit 0 and
 `production_ready: true` across all 74 present products; see
 [`FACEBOOK_PRODUCTION_ACCEPTANCE_REPORT.md`](FACEBOOK_PRODUCTION_ACCEPTANCE_REPORT.md).
+
+### Search the canonical database
+
+Once schema version 8 is applied (`personal-data-lab migrate`), every conversation, event, record,
+and asset across all six sources is full-text searchable in one ranked result list:
+
+```powershell
+personal-data-lab search "sourdough bread" --format table
+personal-data-lab search "sourdough" --source apple --source facebook --kind record --limit 10
+```
+
+Search is maintained entirely by database triggers on the four canonical tables — no importer,
+adapter, or orchestrator code changes anything about how it works, and every future import from any
+source becomes searchable automatically. See [`QUERY_SPEC.md`](QUERY_SPEC.md) for the weighting,
+ranking, and provenance contract.
 
 ## Permanent cumulative and lossless contract
 

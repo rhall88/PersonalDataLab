@@ -42,6 +42,7 @@ from .migrations import LATEST_SCHEMA_VERSION, current_schema_version, migrate_d
 from .openai_export.inventory import inspect_openai
 from .openai_export.orchestrator import import_openai_all
 from .openai_importer import parse_openai_export
+from .search import ALL_KINDS, search_canonical
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -223,6 +224,41 @@ def _parser() -> argparse.ArgumentParser:
         help="output machine-readable JSON (default) or a human-readable table",
     )
     doctor.add_argument("--database-url", help="overrides DATABASE_URL from .env")
+    search = subparsers.add_parser(
+        "search",
+        help="provenance-aware full-text search over canonical conversations, events, "
+        "records, and assets",
+    )
+    search.add_argument("query", help="full-text query (supports quotes, OR, and - exclusion)")
+    search.add_argument(
+        "--kind",
+        dest="kinds",
+        action="append",
+        choices=("conversation", "event", "record", "asset"),
+        help="restrict to one or more kinds (repeatable); default is all kinds",
+    )
+    search.add_argument(
+        "--source",
+        dest="sources",
+        action="append",
+        help="restrict to one or more sources (repeatable), e.g. apple, google, facebook",
+    )
+    search.add_argument(
+        "--limit", type=int, default=25, help="maximum number of ranked hits to return"
+    )
+    search.add_argument(
+        "--include-deleted",
+        action="store_true",
+        help="include provider-deleted (tombstoned) rows; excluded by default",
+    )
+    search.add_argument(
+        "--format",
+        dest="output_format",
+        choices=("json", "table"),
+        default="json",
+        help="output machine-readable JSON (default) or a human-readable table",
+    )
+    search.add_argument("--database-url", help="overrides DATABASE_URL from .env")
     return parser
 
 
@@ -592,6 +628,52 @@ def _render_doctor_table(report: dict) -> str:
     return "\n".join(lines)
 
 
+def _build_search_report(
+    query: str,
+    *,
+    kinds: Sequence[str] | None,
+    sources: Sequence[str] | None,
+    limit: int,
+    include_deleted: bool,
+    explicit_url: str | None,
+) -> dict:
+    engine = _resolve_guarded_engine(explicit_url, canonical_import=False)
+    results = search_canonical(
+        engine,
+        query,
+        kinds=tuple(kinds) if kinds else ALL_KINDS,
+        sources=tuple(sources) if sources else (),
+        limit=limit,
+        include_deleted=include_deleted,
+    )
+    return results.model_dump(mode="json")
+
+
+def _render_search_table(report: dict) -> str:
+    lines = [
+        (
+            f"personal-data-lab search: {report['query']!r} "
+            f"({len(report['hits'])} of up to {report['limit']} hits)"
+        ),
+        "",
+    ]
+    for hit in report["hits"]:
+        title = hit["title"] or "(untitled)"
+        lines.append(
+            f"[{hit['kind']:<12}] {hit['source']:<10} rank={hit['rank']:.4f} "
+            f"occurred_at={hit['occurred_at'] or '-'} {title}"
+        )
+        if hit["snippet"]:
+            lines.append(f"    {hit['snippet']}")
+        lines.append(
+            f"    namespace={hit['namespace']} id={hit['identifier']} "
+            f"canonical_run_id={hit['canonical_run_id']} lifecycle={hit['lifecycle_state']}"
+        )
+    if not report["hits"]:
+        lines.append("(no hits)")
+    return "\n".join(lines)
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     if args.command == "import-openai":
@@ -798,6 +880,20 @@ def main(argv: Sequence[str] | None = None) -> int:
         report = _build_doctor_report(args.database_url)
         if args.output_format == "table":
             print(_render_doctor_table(report))
+        else:
+            print(json.dumps(report, indent=2))
+        return 0
+    if args.command == "search":
+        report = _build_search_report(
+            args.query,
+            kinds=args.kinds,
+            sources=args.sources,
+            limit=args.limit,
+            include_deleted=args.include_deleted,
+            explicit_url=args.database_url,
+        )
+        if args.output_format == "table":
+            print(_render_search_table(report))
         else:
             print(json.dumps(report, indent=2))
         return 0
