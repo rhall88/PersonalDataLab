@@ -156,6 +156,10 @@ claims express what multiple observations may mean together.
 
 ## 4. Build user and agent experiences
 
+See [`COCKPIT_VISION.md`](COCKPIT_VISION.md) for the full end-state product vision (an adaptive,
+question-driven visual cockpit) this section works toward. Nothing in that document is implemented
+yet; it's north-star context for how this layer should eventually feel, not a current spec.
+
 - unified personal timeline;
 - people, place, project, topic, conversation, and document views;
 - geographic and communication exploration;
