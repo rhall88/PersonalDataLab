@@ -137,8 +137,12 @@ explicit disposition rather than optimistic format assumptions.
 
 ## 3. Build query and understanding layers
 
-1. **Unified full-text query:** searchable conversations, events, records, document text, and
-   asset metadata with direct provenance inspection.
+1. ~~**Unified full-text query:** searchable conversations, events, records, document text, and
+   asset metadata with direct provenance inspection.~~ **Done 2026-09-20** (schema version 8):
+   `search_vector`/GIN/trigger on all four canonical tables, ranked `personal-data-lab search`
+   command spanning all six sources, zero importer changes required. Not yet applied to the real
+   canonical database — see `PROJECT_STATE.md` outstanding work. See
+   [`QUERY_SPEC.md`](QUERY_SPEC.md).
 2. **Identity resolution:** reversible evidence-backed links among provider identities, people,
    accounts, and devices, with manual merge and split controls.
 3. **Derived entities and claims:** versioned, confidence-scored assertions about people,
@@ -201,7 +205,8 @@ chain must never depend on an embedding model, UI, or agent remaining available.
 | Completed 2026-09-20 | Import Facebook into the canonical database | 2,673/2,673 members, exit 0, zero conflicts, identical to the isolated acceptance run; a second identical pass short-circuited all members with zero drift |
 | Completed 2026-09-20 | Remaining Google semantic gaps | Nest's 31 doubly-escaped rows recovered to real structured content (`partially_structured` -> `fully_structured`); Wallet's `asset_indexed` disposition confirmed already correct, not a gap |
 | Completed 2026-09-20 | Re-run Google against the canonical database | All 25,427 members, exit 0, zero failures/unknowns/conflicts; `nest_event` rows went from 35 (31 opaque) to 66 (31 opaque preserved + 31 newly recovered); not re-verified for exact replay (deferred by explicit instruction — low priority given the fix's narrow scope and existing test coverage) |
-| Then | Unified canonical full-text query | Fast source-spanning queries with direct observation/version provenance and regression coverage |
+| Completed 2026-09-20 | Unified canonical full-text query | Schema version 8 (`search_vector`/GIN/trigger on all four canonical tables), ranked `search` CLI command spanning all six sources, 293 tests passing, zero importer changes required |
+| Next | Apply schema version 8 to the canonical database | Run `personal-data-lab migrate`, backfilling `search_vector` for ~1M+ existing rows, then verify with real queries |
 | Then | Reversible identity resolution, claims, correlation, and semantic retrieval | Every derived object cites evidence, is versioned, and can be removed without changing source truth |
 | Final product track | Timeline, exploration, analytics, read-only MCP, and agents | Fast normal queries, permission boundaries, and evidence-citing answers |
 
