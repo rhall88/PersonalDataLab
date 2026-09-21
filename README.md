@@ -42,6 +42,8 @@ The audited implementation, source-by-source acceptance boundaries, merged PR st
 verification evidence, and ordered next work are summarized in
 [`PROJECT_STATE.md`](PROJECT_STATE.md). Milestone reports remain historical evidence; use the
 project-state summary and [`ROADMAP.md`](ROADMAP.md) for current sequencing.
+[`COCKPIT_VISION.md`](COCKPIT_VISION.md) records the long-term product vision for a future
+adaptive visual interface built on top of this backend; it is not yet implemented.
 
 ## 1. Prerequisites
 
