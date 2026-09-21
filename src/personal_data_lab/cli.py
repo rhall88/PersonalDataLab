@@ -7,9 +7,10 @@ import sys
 from collections.abc import Sequence
 from pathlib import Path
 
+from sqlalchemy import text
 from sqlalchemy.engine import Engine, make_url
 
-from . import __version__
+from . import __version__, derive
 from .anthropic_export.inventory import inspect_anthropic
 from .anthropic_export.inventory import render_inventory_table as render_anthropic_table
 from .anthropic_export.orchestrator import import_anthropic_all
@@ -319,6 +320,58 @@ def _parser() -> argparse.ArgumentParser:
     split.add_argument("source")
     split.add_argument("identity_value")
     split.add_argument("--database-url", help="overrides DATABASE_URL from .env")
+    derive_sync = subparsers.add_parser(
+        "derive-sync",
+        help="read the observation change feed and dirty affected derivation partitions",
+    )
+    derive_sync.add_argument("--database-url", help="overrides DATABASE_URL from .env")
+    derive_run = subparsers.add_parser("derive-run", help="compute dirty derivation partitions")
+    derive_run.add_argument(
+        "--global",
+        dest="include_global",
+        action="store_true",
+        help="also process GLOBAL partitions (skipped by default)",
+    )
+    derive_run.add_argument(
+        "--limit", type=int, default=None, help="maximum number of partitions to process"
+    )
+    derive_run.add_argument("--database-url", help="overrides DATABASE_URL from .env")
+    derive_status = subparsers.add_parser(
+        "derive-status", help="report each deriver's active version and partition counts"
+    )
+    derive_status.add_argument("--database-url", help="overrides DATABASE_URL from .env")
+    derive_rebuild = subparsers.add_parser(
+        "derive-rebuild",
+        help="clear a deriver's (or every deriver's) output and mark it dirty again",
+    )
+    derive_rebuild.add_argument("--deriver", dest="deriver_name", help="limit to one deriver")
+    derive_rebuild.add_argument("--database-url", help="overrides DATABASE_URL from .env")
+    derive_promote = subparsers.add_parser(
+        "derive-promote", help="promote a shadow deriver version to active"
+    )
+    derive_promote.add_argument("deriver_name")
+    derive_promote.add_argument("version_hash", help="hex-encoded version_hash to promote")
+    derive_promote.add_argument("--database-url", help="overrides DATABASE_URL from .env")
+    declare_add = subparsers.add_parser("declare-add", help="record a user-asserted declaration")
+    declare_add.add_argument(
+        "kind",
+        choices=(
+            "episode",
+            "identity_same_as",
+            "identity_not_same_as",
+            "metric_definition",
+            "label",
+            "egress_override",
+            "exclude",
+            "purge",
+        ),
+    )
+    declare_add.add_argument("--payload", required=True, help="JSON payload for this declaration")
+    declare_add.add_argument("--database-url", help="overrides DATABASE_URL from .env")
+    policy_show = subparsers.add_parser(
+        "policy-show", help="show each source's current sensitivity/egress defaults"
+    )
+    policy_show.add_argument("--database-url", help="overrides DATABASE_URL from .env")
     return parser
 
 
@@ -1053,6 +1106,102 @@ def main(argv: Sequence[str] | None = None) -> int:
             print(f"error: {error}", file=sys.stderr, flush=True)
             return 1
         print(json.dumps(link.model_dump(mode="json"), indent=2))
+        return 0
+    if args.command == "derive-sync":
+        engine = _resolve_guarded_engine(args.database_url, canonical_import=False)
+        outcome = derive.sync(engine)
+        print(
+            json.dumps(
+                {
+                    "epoch_id": outcome.epoch_id,
+                    "dirtied_local_keys": outcome.dirtied_local_keys,
+                    "is_noop": outcome.is_noop,
+                },
+                indent=2,
+            )
+        )
+        return 0
+    if args.command == "derive-run":
+        engine = _resolve_guarded_engine(args.database_url, canonical_import=False)
+        outcomes = derive.run(engine, include_global=args.include_global, limit=args.limit)
+        print(
+            json.dumps(
+                [
+                    {
+                        "deriver_name": outcome.deriver_name,
+                        "partition_key": outcome.partition_key,
+                        "status": outcome.status,
+                        "rows_written": outcome.rows_written,
+                        "error": outcome.error,
+                    }
+                    for outcome in outcomes
+                ],
+                indent=2,
+            )
+        )
+        return 2 if any(outcome.status == "failed" for outcome in outcomes) else 0
+    if args.command == "derive-status":
+        engine = _resolve_guarded_engine(args.database_url, canonical_import=False)
+        print(json.dumps(derive.status(engine), indent=2))
+        return 0
+    if args.command == "derive-rebuild":
+        engine = _resolve_guarded_engine(args.database_url, canonical_import=False)
+        dirtied = derive.rebuild(engine, deriver_name=args.deriver_name)
+        print(json.dumps({"dirtied": dirtied}, indent=2))
+        return 0
+    if args.command == "derive-promote":
+        engine = _resolve_guarded_engine(args.database_url, canonical_import=False)
+        try:
+            derive.promote(engine, args.deriver_name, args.version_hash)
+        except derive.VersioningError as error:
+            print(f"error: {error}", file=sys.stderr, flush=True)
+            return 1
+        print(
+            json.dumps(
+                {
+                    "promoted": True,
+                    "deriver_name": args.deriver_name,
+                    "version_hash": args.version_hash,
+                },
+                indent=2,
+            )
+        )
+        return 0
+    if args.command == "declare-add":
+        engine = _resolve_guarded_engine(args.database_url, canonical_import=False)
+        try:
+            payload = json.loads(args.payload)
+        except json.JSONDecodeError as error:
+            print(f"error: --payload is not valid JSON: {error}", file=sys.stderr, flush=True)
+            return 1
+        with engine.begin() as connection:
+            declaration_id = connection.execute(
+                text(
+                    "INSERT INTO declare.declaration (kind, payload) "
+                    "VALUES (:kind, CAST(:payload AS jsonb)) RETURNING id"
+                ),
+                {"kind": args.kind, "payload": json.dumps(payload)},
+            ).scalar_one()
+        print(json.dumps({"id": declaration_id, "kind": args.kind}, indent=2))
+        return 0
+    if args.command == "policy-show":
+        engine = _resolve_guarded_engine(args.database_url, canonical_import=False)
+        with engine.connect() as connection:
+            rows = connection.execute(
+                text(
+                    "SELECT DISTINCT ON (source) source, sensitivity, egress "
+                    "FROM policy.source_policy ORDER BY source, egress_policy_version_id DESC"
+                )
+            ).all()
+        print(
+            json.dumps(
+                [
+                    {"source": row.source, "sensitivity": list(row.sensitivity), "egress": row.egress}
+                    for row in rows
+                ],
+                indent=2,
+            )
+        )
         return 0
     raise AssertionError(f"unhandled command: {args.command}")
 
