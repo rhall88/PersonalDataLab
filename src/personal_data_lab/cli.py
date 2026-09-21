@@ -781,6 +781,13 @@ def _render_identity_people_table(report: dict) -> str:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
+    # Real actor_identity/title/filename values routinely contain non-ASCII text (accented
+    # names, emoji); Windows consoles default to a codepage (e.g. cp1252) that can't encode
+    # them, so printing real data would crash with UnicodeEncodeError. Force UTF-8 output on
+    # any stream that supports it (a plain TextIOWrapper does; pytest's capsys fixture may not).
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8")
     args = _parser().parse_args(argv)
     if args.command == "import-openai":
         engine = _resolve_guarded_engine(args.database_url, canonical_import=True)
