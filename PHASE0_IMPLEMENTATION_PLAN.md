@@ -1,8 +1,9 @@
 # Phase 0 implementation plan: derivation and epistemic foundation
 
-Status: proposed, 2026-09-21. Implements Phase 0 of
+Status: accepted, 2026-09-21. Implements Phase 0 of
 [`DERIVED_MEANING_ARCHITECTURE.md`](DERIVED_MEANING_ARCHITECTURE.md) against the repository as it
-stands at schema version 9 (`c397dd2`).
+stands at schema version 9 (`c397dd2`). All four open decisions below are resolved; PR A can start
+from this document.
 
 ## Summary
 
@@ -27,7 +28,7 @@ columns are unnecessary and should be dropped from the doc (see "Corrections to 
 | Order-independent reconciliation | `reconciliation.py` authority rules | None. This is what makes as-of replay deterministic |
 | Provider deletion | `lifecycle_state = 'provider_deleted'`, `tombstone_run_id` | Maps directly to `value_basis = provider_deleted` later |
 | Provenance family | `source` column (anthropic, openai, imessages, apple, google, facebook); iMessages already kept separate from Apple | `evidence_root` edges come later (sec. 18) |
-| Import policy versions | `import_runs.parser_version`, `fingerprint_version`, `policy_version` | Name collision: see decisions below |
+| Import policy versions | `import_runs.parser_version`, `fingerprint_version`, `policy_version` | Name collision, resolved: new table is `policy.egress_policy_version` |
 | Human identity assertions | `identity_links` (append-only, revertible) | Becomes a DECLARED input in Phase 2 |
 | Schema migrations | `db/migrations/NNN_*.sql`, mirrored into `db/init/002_schema.sql`, `LATEST_SCHEMA_VERSION` | Migration 010 |
 | Test harness | pytest, `TEST_DATABASE_URL` integration tests, CI with pgvector/pg18 | New test modules |
@@ -60,7 +61,10 @@ CLI; tests; application to the canonical database.
 
 **Out:** time normalization and local time zones, observation contracts and coverage (Phase 1);
 identity resolution versions (Phase 2); metric catalog, life ledger, DuckDB (Phase 3); anything
-semantic or LLM-based.
+semantic or LLM-based; multi-user access control. The initial implementation is single-user (Ry
+only), so `policy.egress_override.object_ref` and everything downstream of it stay unscoped by
+user — there is no "whose policy" question yet. If PDL is ever shared with another person, that's a
+schema change to make then, not speculative plumbing now.
 
 ## Migration 010 (sketch)
 
@@ -167,18 +171,19 @@ CREATE TABLE declare.declaration (
     declared_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
--- Egress policy (sec. 7, inv. 24 and 29).
-CREATE TABLE policy.policy_version (
+-- Egress policy (sec. 7, inv. 24 and 29). Named egress_policy_version, not policy_version, so it
+-- is never confused with the unrelated import_runs.policy_version (import/parser policy).
+CREATE TABLE policy.egress_policy_version (
     id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     definition JSONB NOT NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 CREATE TABLE policy.source_policy (
     source TEXT NOT NULL,
-    policy_version_id BIGINT NOT NULL REFERENCES policy.policy_version(id),
+    egress_policy_version_id BIGINT NOT NULL REFERENCES policy.egress_policy_version(id),
     sensitivity TEXT[] NOT NULL DEFAULT '{}',
     egress policy.egress_level NOT NULL DEFAULT 'local_only',
-    PRIMARY KEY (source, policy_version_id)
+    PRIMARY KEY (source, egress_policy_version_id)
 );
 CREATE TABLE policy.egress_override (
     id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
@@ -191,9 +196,10 @@ CREATE TABLE policy.egress_override (
 );
 ```
 
-Seed data: policy version 1 with all six sources `local_only` (inv. 29: nothing leaves the machine
-until you authorize it). Sensitivity defaults: `intimate` for imessages and facebook (source-level for now; finer
-granularity comes with metric definitions), `private` elsewhere, adjustable later by declaration.
+Seed data: egress policy version 1 with all six sources `local_only` (inv. 29: nothing leaves the
+machine until you authorize it). Sensitivity defaults: `intimate` for imessages and facebook
+(source-level for now; finer granularity comes with metric definitions), `private` elsewhere,
+adjustable later by declaration.
 
 The `measure` output tables for the two Phase 0 derivers are created by the migration too, so
 `DROP SCHEMA measure CASCADE` plus rebuild can be tested.
