@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import hashlib
+import io
 import os
+import sys
 from collections.abc import Iterator
 from datetime import UTC, datetime
 
@@ -374,3 +376,26 @@ def test_cli_identity_merge_command_reports_error_and_exit_code_1_on_invalid_inp
     )
 
     assert exit_code == 1
+
+
+def test_cli_table_output_renders_non_ascii_identity_values_on_a_restrictive_console(
+    database_engine: Engine, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Real actor_identity values include emoji/accented names (e.g. "Mom ❤️" from iMessages).
+
+    Windows consoles default to a codepage (e.g. cp1252) that cannot encode them; main() must
+    reconfigure stdout to UTF-8 or this raises UnicodeEncodeError against real corpus data.
+    """
+    _import(database_engine, "imessages", "e1.json", events=(_event("e1", "Mom ❤️", source="imessages"),))
+    database_url = database_engine.url.render_as_string(hide_password=False)
+    buffer = io.BytesIO()
+    restrictive_stdout = io.TextIOWrapper(buffer, encoding="cp1252")
+    monkeypatch.setattr(sys, "stdout", restrictive_stdout)
+
+    exit_code = cli.main(
+        ["identity-candidates", "--format", "table", "--database-url", database_url]
+    )
+
+    assert exit_code == 0
+    restrictive_stdout.flush()
+    assert "Mom ❤️" in buffer.getvalue().decode("utf-8")
