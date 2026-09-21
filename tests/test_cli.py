@@ -10,6 +10,7 @@ import pytest
 from personal_data_lab import cli
 from personal_data_lab.config import DatabaseTargetGuardError
 from personal_data_lab.google_importer import GoogleExportError
+from personal_data_lab.migrations import LATEST_SCHEMA_VERSION
 from personal_data_lab.models import ImportResult, NormalizedEvent, ParsedExport
 
 
@@ -178,7 +179,7 @@ def test_doctor_reports_canonical_target_with_clean_json(monkeypatch, capsys) ->
         cli, "database_url", lambda override: "postgresql://user:pass@localhost:5432/personaldata"
     )
     monkeypatch.setattr(cli, "create_database_engine", lambda url: object())
-    monkeypatch.setattr(cli, "current_schema_version", lambda engine: 9)
+    monkeypatch.setattr(cli, "current_schema_version", lambda engine: LATEST_SCHEMA_VERSION)
     monkeypatch.setattr(
         cli,
         "list_sibling_databases",
@@ -195,7 +196,7 @@ def test_doctor_reports_canonical_target_with_clean_json(monkeypatch, capsys) ->
     report = json.loads(captured.out)
     assert report["target_database"] == "personaldata"
     assert report["target_classification"] == "canonical"
-    assert report["schema_version"] == 9
+    assert report["schema_version"] == LATEST_SCHEMA_VERSION
     assert report["schema_up_to_date"] is True
     assert report["suspicious_config"] == []
     classifications = {row["name"]: row["classification"] for row in report["sibling_databases"]}
