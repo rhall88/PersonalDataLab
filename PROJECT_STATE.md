@@ -100,6 +100,31 @@ built against. This was not followed by a second idempotency-verification pass (
 purely additive — new columns/indexes/triggers — and was already tested against a disposable
 database before merging); nothing about the existing six-source verification state above changes.
 
+### Reversible identity resolution applied 2026-09-20
+
+Schema version 9 (see [`IDENTITY_RESOLUTION_SPEC.md`](IDENTITY_RESOLUTION_SPEC.md)) was applied to
+this canonical database via `personal-data-lab migrate`: `schema_up_to_date` went from `false`
+(version 8) to `true` (version 9), adding the empty `identity_links` table and
+`records.actor_person_id` column. Database size grew from 13,048,477,375 to 13,064,599,231 bytes —
+a small, purely additive change (one new nullable column and one empty table), unlike migration 8's
+data-heavy backfill.
+
+Verified against real data, not just synthetic fixtures: `identity-candidates` surfaced 165 real
+undecided identity values with correct combined events+records counts (`account_owner` with 238,269
+Google events; `"Mom ❤️"` and other iMessages contacts; free-text Facebook sender names; raw Gmail
+`From:` headers). A real merge linked the Facebook sender name `"Ryan Hallgarth"` (16,624 events)
+and the Gmail `From:` header `"Ryan Hallgarth <rhallgarth88@gmail.com>"` (596 events) to one newly
+created person, backfilling `actor_person_id` on all matching rows in both cases. A real split then
+reverted the Gmail link and confirmed `actor_person_id` was nulled back out on all 596 events, and a
+re-merge confirmed the reversibility contract: it inserted a **new** `identity_links` row rather
+than reusing the reverted one, leaving both rows in the table as permanent history. This exercise
+also surfaced and fixed a real bug: real `actor_identity` values contain non-ASCII text (the emoji
+in `"Mom ❤️"`), which crashed `--format table` output with `UnicodeEncodeError` on this Windows
+console's default codepage — fixed by reconfiguring CLI stdout/stderr to UTF-8 (a small follow-up
+fix, not part of the identity-resolution migration itself). This was not followed by a second
+idempotency-verification pass, matching migration 8's precedent (the migration is purely additive
+and already tested against a disposable database before merging).
+
 ## Current source-family coverage
 
 | Source family | Current status | Accepted evidence and boundary |
@@ -178,16 +203,19 @@ inferred at import time. See [`IDENTITY_RESOLUTION_SPEC.md`](IDENTITY_RESOLUTION
 
 ## Verification state
 
-- The repository currently collects 310 tests: non-integration tests plus PostgreSQL-marked
+- The repository currently collects 311 tests: non-integration tests plus PostgreSQL-marked
   integration tests, including the 13-test focused Facebook suite, the 6-test unified-search suite,
-  and the 17-test identity-resolution suite (candidate counts summed across events and records,
+  and the 18-test identity-resolution suite (candidate counts summed across events and records,
   default exclusion/inclusion of already-linked values, source/min-count filtering, person
   create/list/get, merge backfilling `actor_person_id` on both events and records, merge rejecting
   an unknown person, missing evidence, or a value already linked to a different person, merge being
   idempotent and backfilling newly-imported evidence, merge annotating tombstoned rows too, split
-  reverting a link while preserving history, and CLI smoke tests for all five commands).
-- The reversible identity resolution change passes all 310 tests against the local PostgreSQL
-  18/pgvector test service. Not yet applied to the real canonical database — see Outstanding work.
+  reverting a link while preserving history, CLI smoke tests for all five commands, and a regression
+  test proving real non-ASCII identity values render correctly on a restrictive console).
+- The reversible identity resolution change passes all 311 tests against the local PostgreSQL
+  18/pgvector test service. Migration 9 was applied to the real canonical database on 2026-09-20
+  and verified with a real merge/split/re-merge (see the canonical baseline section above), which
+  also surfaced a real CLI UTF-8 output bug, fixed separately.
 - The unified full-text search change passed all 293 tests against the local PostgreSQL
   18/pgvector test service. Migration 8 was applied to the real canonical database on 2026-09-20
   and verified with real queries (see the canonical baseline section above).
@@ -215,13 +243,10 @@ inferred at import time. See [`IDENTITY_RESOLUTION_SPEC.md`](IDENTITY_RESOLUTION
    not been re-verified for exact replay against the canonical database (see the canonical baseline
    section above). Low priority: the fix is narrow, unit-tested, and was verified directly against
    the real corpus bytes before merging.
-2. **Apply schema version 9 to the canonical database.** Reversible identity resolution
-   (`identity_links`, `records.actor_person_id`) is built and tested but has not yet been applied
-   to the real canonical database or verified with a real merge/split.
-3. **Add derived understanding.** Claims, cross-source correlations, OCR/transcription, chunks,
+2. **Add derived understanding.** Claims, cross-source correlations, OCR/transcription, chunks,
    and embeddings belong in separately versioned, disposable layers whose outputs cite immutable
    observations.
-4. **Continue the operational track.** Encrypted backup/restore, integrity audits, sensitive-field
+3. **Continue the operational track.** Encrypted backup/restore, integrity audits, sensitive-field
    controls, incremental scheduling, performance budgets, derived-data invalidation, and corpus
    exportability remain permanent requirements.
 
