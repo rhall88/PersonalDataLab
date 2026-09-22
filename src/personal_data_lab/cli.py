@@ -5,6 +5,7 @@ import json
 import os
 import sys
 from collections.abc import Sequence
+from datetime import datetime
 from pathlib import Path
 
 from sqlalchemy import text
@@ -30,6 +31,7 @@ from .database import (
     import_parsed_exports,
     list_sibling_databases,
 )
+from .derive import asof
 from .facebook_export.inventory import inspect_facebook
 from .facebook_export.inventory import render_inventory_table as render_facebook_table
 from .facebook_export.orchestrator import import_facebook_all
@@ -372,6 +374,46 @@ def _parser() -> argparse.ArgumentParser:
         "policy-show", help="show each source's current sensitivity/egress defaults"
     )
     policy_show.add_argument("--database-url", help="overrides DATABASE_URL from .env")
+    contract_declare = subparsers.add_parser(
+        "contract-declare", help="declare or update a source's observability contract"
+    )
+    contract_declare.add_argument("source")
+    contract_declare.add_argument(
+        "--observable-kinds",
+        required=True,
+        help="comma-separated kinds this source can observe, e.g. conversation,event,record,asset",
+    )
+    contract_declare.add_argument(
+        "--covered-start", help="ISO date; omit for an unbounded start"
+    )
+    contract_declare.add_argument("--covered-end", help="ISO date; omit for an unbounded end")
+    contract_declare.add_argument(
+        "--gap-semantics",
+        required=True,
+        choices=("not_exported", "deleted_by_provider", "device_absent", "unknown"),
+    )
+    contract_declare.add_argument(
+        "--default-timezone", required=True, help="IANA timezone name, e.g. America/Chicago"
+    )
+    contract_declare.add_argument("--notes")
+    contract_declare.add_argument("--database-url", help="overrides DATABASE_URL from .env")
+    contract_show = subparsers.add_parser(
+        "contract-show", help="show declared source_contract rows"
+    )
+    contract_show.add_argument("source", nargs="?", help="limit to one source")
+    contract_show.add_argument("--database-url", help="overrides DATABASE_URL from .env")
+    asof_parser = subparsers.add_parser(
+        "asof", help="reconstruct canonical rows visible as of a historical import run cutoff"
+    )
+    asof_parser.add_argument(
+        "--object",
+        required=True,
+        choices=("conversations", "events", "records", "assets", "relationships"),
+    )
+    cutoff_group = asof_parser.add_mutually_exclusive_group(required=True)
+    cutoff_group.add_argument("--cutoff-run", type=int, dest="cutoff_run_id")
+    cutoff_group.add_argument("--cutoff-at", dest="cutoff_at", help="ISO timestamp")
+    asof_parser.add_argument("--database-url", help="overrides DATABASE_URL from .env")
     return parser
 
 
@@ -1200,6 +1242,100 @@ def main(argv: Sequence[str] | None = None) -> int:
                     for row in rows
                 ],
                 indent=2,
+            )
+        )
+        return 0
+    if args.command == "contract-declare":
+        engine = _resolve_guarded_engine(args.database_url, canonical_import=False)
+        kinds = [k.strip() for k in args.observable_kinds.split(",") if k.strip()]
+        with engine.begin() as connection:
+            connection.execute(
+                text(
+                    """
+                    INSERT INTO declare.source_contract
+                        (source, observable_kinds, covered_range_start, covered_range_end,
+                         gap_semantics, default_timezone, notes, updated_at)
+                    VALUES
+                        (:source, :observable_kinds, :covered_start, :covered_end,
+                         :gap_semantics, :default_timezone, :notes, CURRENT_TIMESTAMP)
+                    ON CONFLICT (source) DO UPDATE SET
+                        contract_version = declare.source_contract.contract_version + 1,
+                        observable_kinds = EXCLUDED.observable_kinds,
+                        covered_range_start = EXCLUDED.covered_range_start,
+                        covered_range_end = EXCLUDED.covered_range_end,
+                        gap_semantics = EXCLUDED.gap_semantics,
+                        default_timezone = EXCLUDED.default_timezone,
+                        notes = EXCLUDED.notes,
+                        updated_at = EXCLUDED.updated_at
+                    """
+                ),
+                {
+                    "source": args.source,
+                    "observable_kinds": kinds,
+                    "covered_start": args.covered_start,
+                    "covered_end": args.covered_end,
+                    "gap_semantics": args.gap_semantics,
+                    "default_timezone": args.default_timezone,
+                    "notes": args.notes,
+                },
+            )
+        print(json.dumps({"source": args.source, "observable_kinds": kinds}, indent=2))
+        return 0
+    if args.command == "contract-show":
+        engine = _resolve_guarded_engine(args.database_url, canonical_import=False)
+        clause = "WHERE source = :source" if args.source else ""
+        with engine.connect() as connection:
+            rows = connection.execute(
+                text(
+                    f"SELECT source, contract_version, observable_kinds, covered_range_start, "
+                    f"covered_range_end, gap_semantics, default_timezone, notes, updated_at "
+                    f"FROM declare.source_contract {clause} ORDER BY source"
+                ),
+                {"source": args.source} if args.source else {},
+            ).all()
+        print(
+            json.dumps(
+                [
+                    {
+                        "source": row.source,
+                        "contract_version": row.contract_version,
+                        "observable_kinds": list(row.observable_kinds),
+                        "covered_range_start": (
+                            row.covered_range_start.isoformat()
+                            if row.covered_range_start
+                            else None
+                        ),
+                        "covered_range_end": (
+                            row.covered_range_end.isoformat() if row.covered_range_end else None
+                        ),
+                        "gap_semantics": row.gap_semantics,
+                        "default_timezone": row.default_timezone,
+                        "notes": row.notes,
+                        "updated_at": row.updated_at.isoformat(),
+                    }
+                    for row in rows
+                ],
+                indent=2,
+            )
+        )
+        return 0
+    if args.command == "asof":
+        engine = _resolve_guarded_engine(args.database_url, canonical_import=False)
+        cutoff_at = datetime.fromisoformat(args.cutoff_at) if args.cutoff_at else None
+        with engine.connect() as connection:
+            try:
+                cutoff_run_id = asof.resolve_cutoff_run_id(
+                    connection, cutoff_run_id=args.cutoff_run_id, cutoff_at=cutoff_at
+                )
+            except ValueError as error:
+                print(f"error: {error}", file=sys.stderr, flush=True)
+                return 1
+            rows = asof.AS_OF_FUNCTIONS[args.object](connection, cutoff_run_id)
+        print(
+            json.dumps(
+                {"cutoff_run_id": cutoff_run_id, "count": len(rows), "rows": rows},
+                indent=2,
+                default=str,
             )
         )
         return 0

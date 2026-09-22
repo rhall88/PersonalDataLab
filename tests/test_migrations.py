@@ -116,6 +116,13 @@ def pr2_engine() -> Iterator[Engine]:
         with admin.begin() as connection:
             connection.execute(text(f"DROP SCHEMA IF EXISTS {schema} CASCADE"))
             connection.execute(text(f"DROP SCHEMA IF EXISTS {derived_schemas} CASCADE"))
+            # This fixture's own setup above already dropped these shared, top-level schemas
+            # once, so PR2 -> migration 10 can be tested from a clean slate. Restoring them here
+            # (rather than leaving personaldata_test missing them for every test file that
+            # happens to run after this one) keeps the database in the same freshly-migrated
+            # state a plain bootstrap leaves it in.
+            connection.exec_driver_sql(_read_migration(10))
+            connection.exec_driver_sql(_read_migration(11))
         admin.dispose()
 
 
