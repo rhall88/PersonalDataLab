@@ -5,7 +5,7 @@ import json
 import os
 import sys
 from collections.abc import Sequence
-from datetime import datetime
+from datetime import date, datetime
 from pathlib import Path
 
 from sqlalchemy import text
@@ -33,6 +33,7 @@ from .database import (
     list_sibling_databases,
 )
 from .derive import asof
+from .derive.derivers.episode import declare_episode, list_episodes
 from .facebook_export.inventory import inspect_facebook
 from .facebook_export.inventory import render_inventory_table as render_facebook_table
 from .facebook_export.orchestrator import import_facebook_all
@@ -399,6 +400,17 @@ def _parser() -> argparse.ArgumentParser:
         help="limit to this metric name (repeatable); default is every metric",
     )
     compare_parser.add_argument("--database-url", help="overrides DATABASE_URL from .env")
+    episode_declare = subparsers.add_parser(
+        "episode-declare", help="name a period as a declared episode (PHASE4_IMPLEMENTATION_PLAN.md)"
+    )
+    episode_declare.add_argument("--start", required=True, help="YYYY-MM-DD")
+    episode_declare.add_argument("--end", required=True, help="YYYY-MM-DD")
+    episode_declare.add_argument("--label", required=True)
+    episode_declare.add_argument("--note")
+    episode_declare.add_argument("--database-url", help="overrides DATABASE_URL from .env")
+    episode_list = subparsers.add_parser("episode-list", help="list declared/derived/detected episodes")
+    episode_list.add_argument("--kind", choices=("declared", "derived", "detected"))
+    episode_list.add_argument("--database-url", help="overrides DATABASE_URL from .env")
     declare_add = subparsers.add_parser("declare-add", help="record a user-asserted declaration")
     declare_add.add_argument(
         "kind",
@@ -1317,6 +1329,28 @@ def main(argv: Sequence[str] | None = None) -> int:
             engine, focal=focal, baseline=baseline, metric_names=metric_names
         )
         print(json.dumps(ranked, indent=2, default=str))
+        return 0
+    if args.command == "episode-declare":
+        engine = _resolve_guarded_engine(args.database_url, canonical_import=False)
+        try:
+            start = date.fromisoformat(args.start)
+            end = date.fromisoformat(args.end)
+        except ValueError as error:
+            print(f"error: {error}", file=sys.stderr, flush=True)
+            return 1
+        try:
+            episode_id = declare_episode(
+                engine, start=start, end=end, label=args.label, note=args.note
+            )
+        except ValueError as error:
+            print(f"error: {error}", file=sys.stderr, flush=True)
+            return 1
+        print(json.dumps({"id": episode_id, "label": args.label}, indent=2))
+        return 0
+    if args.command == "episode-list":
+        engine = _resolve_guarded_engine(args.database_url, canonical_import=False)
+        episodes = list_episodes(engine, kind=args.kind)
+        print(json.dumps(episodes, indent=2, default=str))
         return 0
     if args.command == "declare-add":
         engine = _resolve_guarded_engine(args.database_url, canonical_import=False)

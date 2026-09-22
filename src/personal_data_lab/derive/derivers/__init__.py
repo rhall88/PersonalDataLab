@@ -6,12 +6,15 @@ modules, so registration order (and therefore dependency-order registration, whi
 registry.Deriver.register enforces) is consistent.
 """
 
-from __future__ import annotations
+from __future__ import annotations  # noqa: I001 -- import order below is dependency order, not alphabetical
 
-from . import (
-    activity,  # noqa: F401 -- imported for its @deriver registration side effect
-    coverage,  # noqa: F401 -- imported for its @deriver registration side effect
-    metrics,  # noqa: F401 -- imported for its @deriver registration side effect
-)
+# metrics's derivers must register before signals's and episode's (both declare inputs
+# referencing metrics.py's deriver names); interaction only depends on coverage.
+from . import activity  # noqa: F401 -- imported for its @deriver registration side effect
+from . import coverage  # noqa: F401 -- imported for its @deriver registration side effect
+from . import metrics  # noqa: F401 -- imported for its @deriver registration side effect
+from . import signals  # noqa: F401 -- imported for its @deriver registration side effect
+from . import interaction  # noqa: F401 -- imported for its @deriver registration side effect
+from . import episode  # noqa: F401 -- imported for its @deriver registration side effect
 
 __all__: list[str] = []
