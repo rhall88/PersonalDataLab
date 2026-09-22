@@ -97,7 +97,11 @@ def pr2_engine() -> Iterator[Engine]:
     schema = "migration_pr2"
     # Migration 010 creates derive/declare/policy/measure as top-level schemas, not inside
     # `schema`, so they need their own cleanup on both sides of the test -- CASCADE handles
-    # cross-schema FKs between them (e.g. measure.* referencing derive.evidence_epoch).
+    # cross-schema FKs between them (e.g. measure.* referencing derive.evidence_epoch). Migration
+    # 012 adds `identity` the same way (identity.resolution_version_seq, identity.assertion,
+    # identity.not_same_as) -- without it here, the sequence survives from one test to the next
+    # in the shared TEST_DATABASE_URL database and the next migrate_database(pr2_engine) call
+    # fails with DuplicateTable on identity.resolution_version_seq.
     derived_schemas = "derive, declare, policy, measure, identity"
     with admin.begin() as connection:
         connection.execute(text(f"DROP SCHEMA IF EXISTS {schema} CASCADE"))
