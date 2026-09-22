@@ -1052,8 +1052,15 @@ CREATE TABLE identity.not_same_as (
 -- rules-tier auto-link from a human's declared one. Existing rows (migration 009's own two real
 -- links, both made by hand before this migration existed) default to 'declared', which is the
 -- accurate classification for every row written before the rules tier existed.
-ALTER TABLE identity_links ADD COLUMN resolution_version BIGINT;
-ALTER TABLE identity_links ADD COLUMN tier TEXT NOT NULL DEFAULT 'declared'
+--
+-- IF NOT EXISTS here (unlike the plain CREATEs above): identity_links is the one object this
+-- migration touches that lives outside the fresh `identity` schema, so it isn't reset by
+-- anything that drops and recreates that schema. tests/test_migrations.py's pr2_engine fixture
+-- does exactly that between tests -- it drops+recreates `identity` for isolation, then replays
+-- this whole migration file against the shared database to restore it, and a second replay must
+-- not fail just because the column already exists on the one pre-existing table involved.
+ALTER TABLE identity_links ADD COLUMN IF NOT EXISTS resolution_version BIGINT;
+ALTER TABLE identity_links ADD COLUMN IF NOT EXISTS tier TEXT NOT NULL DEFAULT 'declared'
     CHECK (tier IN ('computed', 'declared'));
 
 INSERT INTO schema_migrations (version) VALUES (2), (3), (4), (5), (6), (7), (8), (9), (10), (11), (12) ON CONFLICT DO NOTHING;
