@@ -43,8 +43,11 @@ from .identity import (
     list_identity_candidates,
     list_people,
     merge_identity,
+    not_same_as_identity,
     split_identity,
 )
+from .identity_candidates import cross_source_name_candidates
+from .identity_rules import run_rules_tier
 from .imessages.inventory import inspect_imessages
 from .imessages.inventory import render_inventory_table as render_imessages_table
 from .imessages.orchestrator import import_imessages_all
@@ -283,6 +286,12 @@ def _parser() -> argparse.ArgumentParser:
         help="include values that already have an active identity link; excluded by default",
     )
     candidates.add_argument(
+        "--cross-source",
+        action="store_true",
+        help="list exact normalized-name matches across sources instead -- Phase 2's "
+        "review queue, see PHASE2_IMPLEMENTATION_PLAN.md",
+    )
+    candidates.add_argument(
         "--format",
         dest="output_format",
         choices=("json", "table"),
@@ -322,6 +331,26 @@ def _parser() -> argparse.ArgumentParser:
     split.add_argument("source")
     split.add_argument("identity_value")
     split.add_argument("--database-url", help="overrides DATABASE_URL from .env")
+    not_same_as = subparsers.add_parser(
+        "identity-not-same-as",
+        help="permanently declare (source, identity_value) is never the given person "
+        "(or never auto-linked at all)",
+    )
+    not_same_as.add_argument("source")
+    not_same_as.add_argument("identity_value")
+    not_same_as.add_argument(
+        "--person-id", type=int, help="omit to block auto-linking this value to anyone"
+    )
+    not_same_as.add_argument("--note")
+    not_same_as.add_argument("--database-url", help="overrides DATABASE_URL from .env")
+    rules_run = subparsers.add_parser(
+        "identity-rules-run",
+        help="auto-link identities that share a normalized email or phone across sources",
+    )
+    rules_run.add_argument(
+        "--dry-run", action="store_true", help="report what would link without writing"
+    )
+    rules_run.add_argument("--database-url", help="overrides DATABASE_URL from .env")
     derive_sync = subparsers.add_parser(
         "derive-sync",
         help="read the observation change feed and dirty affected derivation partitions",
@@ -1105,6 +1134,17 @@ def main(argv: Sequence[str] | None = None) -> int:
         else:
             print(json.dumps(report, indent=2))
         return 0
+    if args.command == "identity-candidates" and args.cross_source:
+        engine = _resolve_guarded_engine(args.database_url, canonical_import=False)
+        candidates = cross_source_name_candidates(engine)
+        report = {
+            "candidates": [
+                {"normalized_name": c.normalized_name, "members": [list(m) for m in c.members]}
+                for c in candidates
+            ]
+        }
+        print(json.dumps(report, indent=2))
+        return 0
     if args.command == "identity-candidates":
         report = _build_identity_candidates_report(
             source=args.source,
@@ -1149,6 +1189,45 @@ def main(argv: Sequence[str] | None = None) -> int:
             return 1
         print(json.dumps(link.model_dump(mode="json"), indent=2))
         return 0
+    if args.command == "identity-not-same-as":
+        engine = _resolve_guarded_engine(args.database_url, canonical_import=False)
+        try:
+            declaration = not_same_as_identity(
+                engine, args.source, args.identity_value,
+                person_id=args.person_id, note=args.note,
+            )
+        except ValueError as error:
+            print(f"error: {error}", file=sys.stderr, flush=True)
+            return 1
+        print(json.dumps(declaration.model_dump(mode="json"), indent=2))
+        return 0
+    if args.command == "identity-rules-run":
+        engine = _resolve_guarded_engine(args.database_url, canonical_import=False)
+        outcome = run_rules_tier(engine, dry_run=args.dry_run)
+        report = {
+            "dry_run": args.dry_run,
+            "links": [
+                {
+                    "normalized_value": link.normalized_value,
+                    "shape": link.shape,
+                    "members": [list(m) for m in link.members],
+                    "person_id": link.person_id,
+                    "created_person": link.created_person,
+                }
+                for link in outcome.links
+            ],
+            "conflicts": [
+                {
+                    "normalized_value": conflict.normalized_value,
+                    "shape": conflict.shape,
+                    "members": [list(m) for m in conflict.members],
+                    "person_ids": list(conflict.person_ids),
+                }
+                for conflict in outcome.conflicts
+            ],
+        }
+        print(json.dumps(report, indent=2))
+        return 1 if outcome.conflicts else 0
     if args.command == "derive-sync":
         engine = _resolve_guarded_engine(args.database_url, canonical_import=False)
         outcome = derive.sync(engine)

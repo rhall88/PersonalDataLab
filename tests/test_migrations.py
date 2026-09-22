@@ -98,7 +98,7 @@ def pr2_engine() -> Iterator[Engine]:
     # Migration 010 creates derive/declare/policy/measure as top-level schemas, not inside
     # `schema`, so they need their own cleanup on both sides of the test -- CASCADE handles
     # cross-schema FKs between them (e.g. measure.* referencing derive.evidence_epoch).
-    derived_schemas = "derive, declare, policy, measure"
+    derived_schemas = "derive, declare, policy, measure, identity"
     with admin.begin() as connection:
         connection.execute(text(f"DROP SCHEMA IF EXISTS {schema} CASCADE"))
         connection.execute(text(f"DROP SCHEMA IF EXISTS {derived_schemas} CASCADE"))
@@ -123,6 +123,7 @@ def pr2_engine() -> Iterator[Engine]:
             # state a plain bootstrap leaves it in.
             connection.exec_driver_sql(_read_migration(10))
             connection.exec_driver_sql(_read_migration(11))
+            connection.exec_driver_sql(_read_migration(12))
         admin.dispose()
 
 
@@ -175,7 +176,7 @@ def test_pr2_database_migrates_and_backfills_provenance(pr2_engine: Engine) -> N
             {"source_file_id": source_file_id, "record_id": event_id},
         )
 
-    assert migrate_database(pr2_engine) == (3, 4, 5, 6, 7, 8, 9, 10, 11)
+    assert migrate_database(pr2_engine) == (3, 4, 5, 6, 7, 8, 9, 10, 11, 12)
     assert migrate_database(pr2_engine) == ()
 
     with pr2_engine.connect() as connection:
@@ -207,7 +208,7 @@ def test_pr2_database_migrates_and_backfills_provenance(pr2_engine: Engine) -> N
                 """
             )
         ).one()
-    assert list(versions) == [2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
+    assert list(versions) == [2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]
     assert tuple(event) == ("message", "user", 32, "canonical-v1")
     assert tuple(observations) == (1, 1)
     assert tuple(event_versions) == ("full", "hello")
@@ -318,7 +319,7 @@ def test_v5_preserves_unreconstructable_observation_as_fingerprint_only(
             {"fingerprint": new_fingerprint},
         )
 
-    assert migrate_database(pr2_engine) == (5, 6, 7, 8, 9, 10, 11)
+    assert migrate_database(pr2_engine) == (5, 6, 7, 8, 9, 10, 11, 12)
 
     with pr2_engine.connect() as connection:
         versions = connection.execute(
@@ -388,7 +389,7 @@ def test_current_schema_version_reads_max_applied_version(
 
     migrate_database(fresh_database_engine)
 
-    assert current_schema_version(fresh_database_engine) == 11
+    assert current_schema_version(fresh_database_engine) == 12
 
 
 def test_migration_010_creates_derive_schemas_and_seeds_local_only_policy(
@@ -476,8 +477,9 @@ def test_migration_010_touches_no_canonical_table(pr2_engine: Engine) -> None:
         ).all()
 
     # Run only migrations 3-9 first (skip 10+) so `before` reflects the same baseline the
-    # existing PR2 test already validates, then apply migrations 10-11 (via
-    # migrate_database, which runs everything through LATEST_SCHEMA_VERSION) and diff.
+    # existing PR2 test already validates, then apply migrations 10+ (via migrate_database,
+    # which runs everything through LATEST_SCHEMA_VERSION -- currently 12 -- so this test
+    # automatically covers each new migration as LATEST_SCHEMA_VERSION is bumped) and diff.
     with pr2_engine.begin() as connection:
         for version in range(3, 10):
             connection.exec_driver_sql(_read_migration(version))
@@ -498,7 +500,7 @@ def test_migration_010_touches_no_canonical_table(pr2_engine: Engine) -> None:
             {"tables": list(canonical_tables)},
         ).all()
 
-    migrate_database(pr2_engine)  # applies migrations 10-11
+    migrate_database(pr2_engine)  # applies migrations 10 through LATEST_SCHEMA_VERSION
 
     with pr2_engine.connect() as connection:
         after = connection.execute(
@@ -511,5 +513,5 @@ def test_migration_010_touches_no_canonical_table(pr2_engine: Engine) -> None:
             {"tables": list(canonical_tables)},
         ).all()
 
-    assert mid == after, "migrations 10-11 must not alter any canonical table"
+    assert mid == after, "migrations 10+ must not alter any canonical table"
     assert before != mid, "sanity check: migrations 3-9 should have changed something"
