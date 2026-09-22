@@ -156,8 +156,16 @@ explicit disposition rather than optimistic format assumptions.
 3. **Derived entities and claims:** versioned, confidence-scored assertions about people,
    organizations, places, projects, topics, documents, and relationships. Every assertion must
    cite immutable observations and remain removable without changing source truth.
-4. **Event correlation:** link observations that may describe the same real-world occurrence
-   without deleting or merging the original provider surfaces.
+4. ~~**Event correlation:** link observations that may describe the same real-world occurrence
+   without deleting or merging the original provider surfaces.~~ **Done 2026-09-22** (schema
+   version 14, via [`DERIVED_MEANING_ARCHITECTURE.md`](DERIVED_MEANING_ARCHITECTURE.md)'s Phase 4):
+   `signal.change_point`/`signal.anomaly` per-metric detection over Phase 3's metric catalog,
+   feeding `episode.episode`'s cross-source change-point clustering into `detected` episode
+   candidates — real cross-source correlation the individual providers never expressed on their
+   own (9 real candidates on the canonical database, spanning 2016–2026, each clustering change
+   points across multiple source families). Also delivered `measure.interaction_dynamics`/
+   `signal.interaction_state` for per-correspondent communication-pattern segmentation. See
+   `PROJECT_STATE.md`'s Phase 4 rollout section.
 5. **Semantic retrieval:** deterministic chunking and locally controlled embeddings as
    disposable derived data, never as canonical evidence.
 6. **Optional media enrichment:** OCR, transcription, and document/image analysis only in a
@@ -165,6 +173,13 @@ explicit disposition rather than optimistic format assumptions.
 
 Deep understanding begins in this layer. Import adapters know what provider objects say; derived
 claims express what multiple observations may mean together.
+
+Phases 0–4 of [`DERIVED_MEANING_ARCHITECTURE.md`](DERIVED_MEANING_ARCHITECTURE.md) (activity
+coverage, as-of/contract derivation, identity's COMPUTED rules tier, the life-ledger metrics/
+compare layer, and signals + episodes above) are all live against the real canonical database as
+of 2026-09-22 — see `PROJECT_STATE.md` for full rollout evidence on each. That architecture's own
+phase numbering does not map one-to-one onto items 3–6 above; item 3 (claims) remains the next
+item genuinely outstanding in this list.
 
 ## 4. Build user and agent experiences
 
@@ -217,6 +232,11 @@ chain must never depend on an embedding model, UI, or agent remaining available.
 | Completed 2026-09-20 | Apply schema version 8 to the canonical database | `personal-data-lab migrate` backfilled `search_vector` for ~1.19M existing rows (2,133 conversations, 524,953 events, 642,998 records, 22,525 assets); verified with real queries (Gmail "meeting", cross-source "photo", asset-filename "img") |
 | Completed 2026-09-20 | Reversible identity resolution | Schema version 9 (`identity_links` table, `records.actor_person_id`), five `identity-*` CLI commands, 311 tests passing, zero importer changes required, evidence-checked and fully reversible merge/split |
 | Completed 2026-09-20 | Apply schema version 9 to the canonical database | `personal-data-lab migrate` added the empty `identity_links` table and `records.actor_person_id` column (additive, no backfill); verified with a real merge linking "Ryan Hallgarth" (facebook, 16,624 events) and "Ryan Hallgarth <rhallgarth88@gmail.com>" (google, 596 events) to one person, a real split reverting the Gmail link and nulling `actor_person_id`, and a re-merge inserting a new `identity_links` row while the reverted one stayed in place |
-| Then | Claims, correlation, and semantic retrieval | Every derived object cites evidence, is versioned, and can be removed without changing source truth |
+| Completed 2026-09-22 | `DERIVED_MEANING_ARCHITECTURE.md` Phase 0: derivation foundation | Schema version 10 (`derive`/`declare`/`policy`/`measure` schemas), a generic versioned deriver/change-feed/worker runtime, applied to and computed against the real canonical database |
+| Completed 2026-09-22 | Phase 1: coverage and as-of contracts | Schema version 11, day-grain source coverage and point-in-time reconstruction over the real canonical database |
+| Completed 2026-09-22 | Phase 2: identity COMPUTED-tier rules and assertion log | Schema version 12 (`identity.assertion`/`identity.not_same_as`, `identity_links.tier`/`resolution_version`), an append-only log underneath the existing manual `identity_links`; real rollout found zero real auto-linkable pairs (an honest result, not a bug) and surfaced a real cross-source name-candidate queue for human review |
+| Completed 2026-09-22 | Phase 3: life ledger metrics and `compare` | Schema version 13 (`derive.metric_def`, `measure.metric_daily`), 20 per-source/composite communication metrics; real values cross-checked against independent raw-event counts, 37/37 matched exactly |
+| Completed 2026-09-22 | Phase 4: signals and episodes | Schema version 14 (`signal`/`episode` schemas), baselines/change-points/anomalies over Phase 3's metrics, per-correspondent interaction dynamics/states, and cross-source `detected` episode candidates; top anomaly independently cross-checked against raw events, 106/106 matched exactly; 9 real episode candidates spanning 2016–2026 — see `PROJECT_STATE.md` for full rollout evidence |
+| Then | Derived entities and claims, semantic retrieval | Every derived object cites evidence, is versioned, and can be removed without changing source truth |
 | Final product track | Timeline, exploration, analytics, read-only MCP, and agents | Fast normal queries, permission boundaries, and evidence-citing answers |
 

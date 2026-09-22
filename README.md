@@ -36,11 +36,16 @@ This repository contains the completed foundation and its source importers:
   assets, spanning all six source families in one ranked result list
 - reversible, evidence-checked identity resolution linking provider identity values to people,
   with manual merge and split controls
+- a versioned derivation runtime: day-grain source coverage, as-of reconstruction, identity
+  COMPUTED-tier auto-linking, per-source/composite communication metrics with ranked period
+  comparison, and statistical baselines/change-points/anomalies/interaction dynamics clustering
+  into cross-source detected episode candidates
 - reconciliation tests
 - Windows/PowerShell setup instructions
 
-MCP, embeddings, later source importers, analytics, DuckDB/Parquet, identity resolution
-automation, and derived claims are deliberately deferred.
+MCP, embeddings, later source importers, derived entities/claims, and a user-facing analytics UI
+are deliberately deferred; a versioned derivation runtime (coverage, as-of reconstruction, identity
+auto-linking, metrics, signals, and episodes — using DuckDB for ranked comparisons) is not.
 
 The audited implementation, source-by-source acceptance boundaries, merged PR state, schema,
 verification evidence, and ordered next work are summarized in
@@ -452,6 +457,28 @@ plain `actor_person_id` column, and splitting undoes that annotation without del
 history. See [`IDENTITY_RESOLUTION_SPEC.md`](IDENTITY_RESOLUTION_SPEC.md) for the storage rationale,
 evidence rules, and known limitations.
 
+### Derive metrics, signals, and episodes
+
+Schema versions 10–14 add a versioned derivation runtime (see
+[`DERIVED_MEANING_ARCHITECTURE.md`](DERIVED_MEANING_ARCHITECTURE.md)) that computes, from the
+canonical database alone, day-grain source coverage, point-in-time (`as-of`) reconstruction, an
+identity COMPUTED-tier auto-linking pass, per-source/composite communication metrics, and
+statistical baselines/change-points/anomalies/interaction dynamics that cluster into cross-source
+`detected` episode candidates — all as disposable, re-derivable layers that never touch canonical
+data:
+
+```powershell
+personal-data-lab derive-sync
+personal-data-lab derive-run
+personal-data-lab derive-status
+personal-data-lab compare --focal 2026-08-01:2026-09-01 --baseline 2026-07-01:2026-08-01
+personal-data-lab episode-list
+```
+
+See `PHASE0_IMPLEMENTATION_PLAN.md` through `PHASE4_IMPLEMENTATION_PLAN.md` and
+`PROJECT_STATE.md`'s per-phase rollout sections for the design rationale and real-database
+verification evidence.
+
 ## Permanent cumulative and lossless contract
 
 PersonalDataLab is cumulative and lossless. Raw exports are immutable evidence. Every distinct
@@ -654,7 +681,8 @@ official Apple source family; see
 [`PR15_IMESSAGES_PRODUCTION_ACCEPTANCE_REPORT.md`](PR15_IMESSAGES_PRODUCTION_ACCEPTANCE_REPORT.md).
 Official OpenAI ingestion is production-accepted against the retained manifest-based, sharded
 export; see [`PR17_OPENAI_PRODUCTION_ACCEPTANCE_REPORT.md`](PR17_OPENAI_PRODUCTION_ACCEPTANCE_REPORT.md).
-Full-text and semantic search,
-identity resolution, derived claims, MCP, and agents follow the source-ingestion phases. See
+Full-text search, identity resolution, and a versioned derivation runtime (coverage, as-of,
+metrics, signals, and episodes) are complete and applied to the real canonical database. Semantic
+search/embeddings, derived entities and claims, MCP, and agents remain ahead. See
 [`ROADMAP.md`](ROADMAP.md) for the ordered program and completion gates.
 
