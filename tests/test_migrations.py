@@ -168,7 +168,7 @@ def test_pr2_database_migrates_and_backfills_provenance(pr2_engine: Engine) -> N
             {"source_file_id": source_file_id, "record_id": event_id},
         )
 
-    assert migrate_database(pr2_engine) == (3, 4, 5, 6, 7, 8, 9, 10)
+    assert migrate_database(pr2_engine) == (3, 4, 5, 6, 7, 8, 9, 10, 11)
     assert migrate_database(pr2_engine) == ()
 
     with pr2_engine.connect() as connection:
@@ -200,7 +200,7 @@ def test_pr2_database_migrates_and_backfills_provenance(pr2_engine: Engine) -> N
                 """
             )
         ).one()
-    assert list(versions) == [2, 3, 4, 5, 6, 7, 8, 9, 10]
+    assert list(versions) == [2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
     assert tuple(event) == ("message", "user", 32, "canonical-v1")
     assert tuple(observations) == (1, 1)
     assert tuple(event_versions) == ("full", "hello")
@@ -311,7 +311,7 @@ def test_v5_preserves_unreconstructable_observation_as_fingerprint_only(
             {"fingerprint": new_fingerprint},
         )
 
-    assert migrate_database(pr2_engine) == (5, 6, 7, 8, 9, 10)
+    assert migrate_database(pr2_engine) == (5, 6, 7, 8, 9, 10, 11)
 
     with pr2_engine.connect() as connection:
         versions = connection.execute(
@@ -381,7 +381,7 @@ def test_current_schema_version_reads_max_applied_version(
 
     migrate_database(fresh_database_engine)
 
-    assert current_schema_version(fresh_database_engine) == 10
+    assert current_schema_version(fresh_database_engine) == 11
 
 
 def test_migration_010_creates_derive_schemas_and_seeds_local_only_policy(
@@ -468,8 +468,9 @@ def test_migration_010_touches_no_canonical_table(pr2_engine: Engine) -> None:
             {"tables": list(canonical_tables)},
         ).all()
 
-    # Run only migrations 3-9 first (skip 10) so `before` reflects the same baseline the
-    # existing PR2 test already validates, then apply just migration 10 and diff.
+    # Run only migrations 3-9 first (skip 10+) so `before` reflects the same baseline the
+    # existing PR2 test already validates, then apply migrations 10-11 (via
+    # migrate_database, which runs everything through LATEST_SCHEMA_VERSION) and diff.
     with pr2_engine.begin() as connection:
         for version in range(3, 10):
             connection.exec_driver_sql(_read_migration(version))
@@ -490,7 +491,7 @@ def test_migration_010_touches_no_canonical_table(pr2_engine: Engine) -> None:
             {"tables": list(canonical_tables)},
         ).all()
 
-    migrate_database(pr2_engine)  # applies migration 10
+    migrate_database(pr2_engine)  # applies migrations 10-11
 
     with pr2_engine.connect() as connection:
         after = connection.execute(
@@ -503,5 +504,5 @@ def test_migration_010_touches_no_canonical_table(pr2_engine: Engine) -> None:
             {"tables": list(canonical_tables)},
         ).all()
 
-    assert mid == after, "migration 10 must not alter any canonical table"
+    assert mid == after, "migrations 10-11 must not alter any canonical table"
     assert before != mid, "sanity check: migrations 3-9 should have changed something"
