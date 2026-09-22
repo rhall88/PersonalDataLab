@@ -49,8 +49,9 @@ machinery.
   it was built for: a new LOCAL deriver, partitioned `source:YYYY-MM`, no new infrastructure.
 - **`policy.source_policy` as a placement precedent.** Phase 0 already has a per-source
   declared-configuration table in the `policy` schema. `declare.declaration` is the other
-  existing per-source-ish declared-fact table. Phase 1's `source_contract` needs a home next to
-  one of these (see Decisions for Ry).
+  existing per-source-ish declared-fact table. `source_contract` goes in `declare` (see
+  Decisions below): it's a declared fact about what a source can observe, not an
+  access-control rule.
 
 ## Corrections to the architecture doc
 
@@ -78,9 +79,9 @@ machinery.
 - As-of reconstruction: a parameterized read path (SQL, invoked from Python -- see below) that
   reconstructs any of the five canonical object tables' visible rows and content as of a given
   `import_runs.id` cutoff.
-- `declare.source_contract` (schema placement is a Decision for Ry): per-source declaration of
-  `observable_kinds`, `covered_range`, `gap_semantics` (`not_exported` / `deleted_by_provider` /
-  `device_absent` / `unknown`), and a declared default timezone (see time normalization below).
+- `declare.source_contract`: per-source declaration of `observable_kinds`, `covered_range`,
+  `gap_semantics` (`not_exported` / `deleted_by_provider` / `device_absent` / `unknown`), and a
+  declared default timezone (see time normalization below).
 - `measure.coverage`: a new LOCAL deriver, `source:YYYY-MM` partitions, computing
   expected/observed/completeness/gap_reason per source per day, built on Phase 0's existing
   change-feed and worker -- no new invalidation logic.
@@ -104,7 +105,7 @@ machinery.
 No canonical table is altered. New tables only:
 
 ```sql
--- declare.source_contract (schema TBD -- see Decisions for Ry)
+-- declare.source_contract
 CREATE TABLE declare.source_contract (
     source TEXT PRIMARY KEY,
     contract_version INTEGER NOT NULL DEFAULT 1,
@@ -205,27 +206,29 @@ Same shape as Phase 0:
    independently written scoped query over `*_versions`/`*_observations` for the same cutoff --
    not just the function agreeing with itself.
 
-## Decisions for Ry
+## Decisions
 
-1. **Where does `source_contract` live -- `declare` or `policy`?** Leaning `declare`: it's a
-   declared fact about what a source can observe, not an access-control rule like
-   `policy.source_policy`/`policy.egress_override`. Your call.
-2. **Time normalization scope-down: declared default timezone + honoring explicit
-   per-observation offsets, full location-based resolution deferred -- agreed?** This is a real
-   reduction from the architecture doc's stated ambition (invariant 17, section 2's "local zone
-   derived from location where known"), traded for landing Phase 1 without also building location
-   resolution.
-3. **Provenance families: default one family per source, no `provenance_family_id` column yet --
-   agreed?** Revisit only when a real multi-family source appears (e.g. two independent apps
-   feeding the same `source` value).
-4. **Exit test 6 (real historical cutoffs): do both a synthetic fixture suite (in PR B, for CI)
-   and a live spot-check against real `import_runs.id`s during the PR C rollout, or skip the real
-   spot-check and rely on synthetic fixtures alone?** Recommend both, matching how Phase 0's exit
-   test 10 was a real-database step separate from the automated suite.
-5. **`measure.coverage` grain: day only, with month as a query-side aggregation, or also store a
-   month-grain rollup (mirroring `source_activity_7d`'s precedent for a second grain)?** Leaning
-   day-only until the heatmap query's real performance says otherwise -- avoids a second stored
-   grain and its own halo/partition logic for no proven need yet.
+Ry delegated these five calls; decided as follows, each with the reasoning that would otherwise
+have been "leaning X" above:
+
+1. **`source_contract` lives in `declare`, not `policy`.** It's a declared fact about what a
+   source can observe, not an access-control rule like `policy.source_policy`/
+   `policy.egress_override`.
+2. **Time normalization is scoped down**: declared default timezone + honoring explicit
+   per-observation offsets when a source provides them; full location-based zone resolution is
+   deferred to a later phase. This is a real reduction from the architecture doc's stated
+   ambition (invariant 17), traded deliberately for landing Phase 1 without also building
+   location resolution.
+3. **Provenance families default to one per source, no `provenance_family_id` column yet.**
+   Every source today is a single independent pipeline; a column carrying a value that's always
+   equal to `source` would be premature. Revisit when a real multi-family source appears (e.g.
+   two independent apps feeding the same `source` value).
+4. **Exit test 6 does both**: synthetic fixtures in PR B's automated suite, plus a live spot-check
+   against 3 real historical `import_runs.id` cutoffs during the PR C rollout -- matching how
+   Phase 0's exit test 10 was a real-database step kept separate from the automated suite.
+5. **`measure.coverage` is day-grain only**, with month handled as a query-side aggregation.
+   No second stored grain (no `source_activity_7d`-style rollup for coverage) until the heatmap
+   query's real performance says one is needed.
 
 🤖 Generated with [Claude Code](https://claude.com/claude-code)
 
