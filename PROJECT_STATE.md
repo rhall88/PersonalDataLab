@@ -1,6 +1,8 @@
 # PersonalDataLab project state
 
-Updated 2026-09-21, after schema version 10 added the derived-meaning foundation (derive/declare/
+Updated 2026-09-22, after schema version 11 added Phase 1's coverage/contract layer and its derivation
+runtime (as-of reconstruction, day-grain coverage) landed and ran against the real canonical
+database. Updated 2026-09-21, after schema version 10 added the derived-meaning foundation (derive/declare/
 policy/measure schemas) and its Phase 0 derivation runtime landed and ran against the real
 canonical database. Updated 2026-09-20, after schema version 9 added reversible identity resolution
 over the canonical database. Version `0.22.0` adds five `identity-*` commands and the `identity_links`
@@ -244,6 +246,67 @@ currently harmless); `source:undated` partitions are fingerprinted but produce z
 pending Phase 1 time normalization (none were dirtied in this run -- all six sources' watched
 kinds carry a usable date). Exit tests 2-4 and 6-9 are covered by `tests/test_derive.py` against
 `personaldata_test`, not repeated here against the real database.
+
+## Phase 1 derivation runtime and rollout (2026-09-22)
+
+`PHASE1_IMPLEMENTATION_PLAN.md`'s runtime landed in PR #45 (PR B): `derive/asof.py`
+(`as_of_conversations`/`as_of_events`/`as_of_records`/`as_of_assets`/`as_of_relationships`, one
+shared LATERAL-join query pattern -- an object is visible as of cutoff N iff
+`first_observed_run_id <= N` and it wasn't tombstoned at or before N, with content taken from the
+`*_versions` row of greatest `first_observed_run_id <= N`), `derive/time_norm.py` (the one place a
+source's declared `default_timezone` is resolved), and `derive/derivers/coverage.py`
+(`measure_coverage`, a new root LOCAL deriver on Phase 0's unmodified worker/partition/change-feed
+machinery: `observed` is the real watched-row count for a day/kind, `completeness` is 1.0 iff
+`observed >= 1`, and a day outside a source's declared `covered_range` -- or an entirely
+undeclared source -- gets no row at all rather than a fabricated gap). `cli.py` gained
+`contract-declare`, `contract-show`, and `asof` verbs. 342 tests pass, ruff clean. Two pre-existing
+test gaps surfaced (not caused) by adding a second root deriver are documented in the PR: two
+`test_derive.py` exact-partition-set assertions needed `measure_coverage`'s own partition added,
+and `test_migrations.py`'s `pr2_engine` fixture was dropping the shared `derive`/`declare`/
+`policy`/`measure` schemas without recreating them, leaving them missing for every test file
+sorting after it alphabetically.
+
+PR C (real-database rollout) ran migration 11 against the real canonical database
+(`{"schema_version": 11, "applied": [11], "changed": true}`), then declared a `source_contract`
+row per source. A brand-new root deriver added after Phase 0's `derive sync` had already advanced
+the shared change-feed cursor past all history gets no retroactive dirtying from `sync()` or
+`rebuild()` (the former only reacts to observations after the cursor; the latter only re-dirties
+partition keys already present in `partition_state`, and `measure_coverage` had none) -- a real
+architectural gap the plan didn't anticipate. Worked around with a one-off script calling
+`derive.scheduler.mark_dirty()` directly for every `source:YYYY-MM` key in each source's declared
+`covered_range`, deliberately not resetting `change_cursor` so Phase 0's own derivers weren't
+needlessly recomputed across all history. `derive run` then computed all 933 partitions, zero
+failures.
+
+The first pass at `observable_kinds` was declared from `MIN`/`MAX` timestamp existence per source
+alone, which is not the same question as "does this (source, kind) actually carry a usable date on
+most rows." A systematic `count(*)` vs `count(date_column)` pass per (source, kind) found real
+gaps that first pass missed, corrected via re-declaration (the `contract-declare` upsert bumps
+`contract_version`) followed by `derive-rebuild --deriver measure_coverage` + `derive run` to purge
+the now-stale rows and recompute:
+
+- `facebook`: `conversation` removed (0/574 rows carry `started_at`) -- was wrongly included.
+- `google`: `record` removed (277/122,293, ~0.2% -- not meaningfully trackable) -- was wrongly
+  included.
+- `imessages`: `record` removed (4/74, ~5%) -- was wrongly included.
+- `openai`: `record` removed (0/1,135) -- was wrongly included.
+- Kept, but noted as partial rather than excluded, since a real (if incomplete) date signal exists
+  and exclusion would throw away real coverage information: `apple.record` (163,342/476,444,
+  ~34%), `google.event` (47,626/164,063, ~29%), `openai.asset` (1,039/2,639, ~39%). Their
+  `completeness` numbers conflate genuine activity gaps with rows that exist but lack a date, and
+  should be read with that caveat rather than as literal provider-side gaps.
+
+Final `declare.source_contract` (all `gap_semantics=unknown`, `default_timezone=America/Chicago`):
+`anthropic` [conversation, event, record, asset]; `apple` [event, record]; `facebook` [event,
+record]; `google` [event]; `imessages` [conversation, event, asset]; `openai` [conversation, event,
+asset]. `asset` stays excluded for apple/facebook/google (0% date coverage on all three).
+
+Exit test 6 (live spot-check): `asof` run against three real cutoffs, each cross-checked against
+an independently-written `count(*) ... WHERE first_observed_run_id <= :cutoff AND
+(tombstone_run_id IS NULL OR tombstone_run_id > :cutoff)` query over the same table --
+`events`/cutoff 100: 81,527 both ways; `conversations`/cutoff 55,000: 1,559 both ways;
+`relationships`/cutoff 110,000: 230,235 both ways. All three matched exactly.
+
 
 ## Verification state
 
