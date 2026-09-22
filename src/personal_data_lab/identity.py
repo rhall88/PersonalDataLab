@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from datetime import datetime
 from typing import Literal
 
@@ -9,6 +10,7 @@ from sqlalchemy.engine import Engine
 from sqlalchemy.exc import IntegrityError
 
 LifecycleState = Literal["active", "reverted"]
+Tier = Literal["computed", "declared"]
 
 _CANDIDATES_SQL = """
     WITH counts AS (
@@ -119,6 +121,113 @@ def list_identity_candidates(
     )
 
 
+class NotSameAsDeclaration(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    source: str
+    identity_value: str
+    person_id: int | None
+    note: str | None
+    created_at: datetime
+
+
+def _write_assertion(
+    connection,
+    *,
+    tier: Tier,
+    action: Literal["link", "unlink", "not_same_as"],
+    source: str,
+    identity_value: str,
+    person_id: int | None,
+    evidence: dict | None = None,
+    note: str | None = None,
+) -> int:
+    """Append one row to identity.assertion and return its resolution_version.
+
+    One call here is one identity-changing operation's worth of log entry -- see
+    PHASE2_IMPLEMENTATION_PLAN.md for why resolution_version comes from its own sequence rather
+    than reusing assertion.id.
+    """
+    resolution_version = connection.execute(
+        text("SELECT nextval('identity.resolution_version_seq')")
+    ).scalar_one()
+    connection.execute(
+        text(
+            "INSERT INTO identity.assertion "
+            "(resolution_version, tier, action, source, identity_value, person_id, evidence, note) "
+            "VALUES (:resolution_version, :tier, :action, :source, :value, :person_id, "
+            ":evidence, :note)"
+        ),
+        {
+            "resolution_version": resolution_version,
+            "tier": tier,
+            "action": action,
+            "source": source,
+            "value": identity_value,
+            "person_id": person_id,
+            "evidence": json.dumps(evidence or {}),
+            "note": note,
+        },
+    )
+    return resolution_version
+
+
+def not_same_as_identity(
+    engine: Engine,
+    source: str,
+    identity_value: str,
+    *,
+    person_id: int | None = None,
+    note: str | None = None,
+) -> NotSameAsDeclaration:
+    """Declare that (source, identity_value) is never person_id (or, with person_id None, is
+    never auto-linked to anything by the rules tier). Permanent: the rules tier checks this
+    before writing any link, and this function does not remove an existing one -- there is no
+    "un-declare" verb, matching the architecture's own framing of not_same_as as a stop, not a
+    toggle.
+    """
+    with engine.begin() as connection:
+        try:
+            row = (
+                connection.execute(
+                    text(
+                        "INSERT INTO identity.not_same_as (source, identity_value, person_id, note) "
+                        "VALUES (:source, :value, :person_id, :note) "
+                        "RETURNING source, identity_value, person_id, note, created_at"
+                    ),
+                    {
+                        "source": source,
+                        "value": identity_value,
+                        "person_id": person_id,
+                        "note": note,
+                    },
+                )
+                .mappings()
+                .one()
+            )
+        except IntegrityError as error:
+            raise ValueError(
+                f"source={source!r} identity_value={identity_value!r} person_id={person_id!r} "
+                "is already declared not-same-as"
+            ) from error
+        _write_assertion(
+            connection,
+            tier="declared",
+            action="not_same_as",
+            source=source,
+            identity_value=identity_value,
+            person_id=person_id,
+            note=note,
+        )
+    return NotSameAsDeclaration(
+        source=row["source"],
+        identity_value=row["identity_value"],
+        person_id=row["person_id"],
+        note=row["note"],
+        created_at=row["created_at"],
+    )
+
+
 def create_person(engine: Engine, display_name: str) -> Person:
     with engine.begin() as connection:
         row = (
@@ -209,6 +318,8 @@ def merge_identity(
     identity_value: str,
     *,
     note: str | None = None,
+    tier: Tier = "declared",
+    evidence: dict | None = None,
 ) -> IdentityLink:
     """Link (source, identity_value) to person_id, backfilling actor_person_id everywhere.
 
@@ -301,6 +412,24 @@ def merge_identity(
             {"person_id": person_id, "source": source, "value": identity_value},
         ).rowcount
 
+        resolution_version = _write_assertion(
+            connection,
+            tier=tier,
+            action="link",
+            source=source,
+            identity_value=identity_value,
+            person_id=person_id,
+            evidence=evidence,
+            note=note,
+        )
+        connection.execute(
+            text(
+                "UPDATE identity_links SET tier = :tier, resolution_version = :resolution_version "
+                "WHERE id = :id"
+            ),
+            {"tier": tier, "resolution_version": resolution_version, "id": link_id},
+        )
+
         row = connection.execute(
             text(
                 "SELECT id, person_id, source, identity_value, lifecycle_state, note, "
@@ -370,6 +499,19 @@ def split_identity(engine: Engine, source: str, identity_value: str) -> Identity
             ),
             {"source": source, "value": identity_value, "person_id": existing["person_id"]},
         ).rowcount
+
+        resolution_version = _write_assertion(
+            connection,
+            tier="declared",
+            action="unlink",
+            source=source,
+            identity_value=identity_value,
+            person_id=existing["person_id"],
+        )
+        connection.execute(
+            text("UPDATE identity_links SET resolution_version = :resolution_version WHERE id = :id"),
+            {"resolution_version": resolution_version, "id": existing["id"]},
+        )
 
         row = connection.execute(
             text(

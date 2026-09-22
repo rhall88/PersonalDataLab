@@ -481,8 +481,9 @@ def test_migration_010_touches_no_canonical_table(pr2_engine: Engine) -> None:
         ).all()
 
     # Run only migrations 3-9 first (skip 10+) so `before` reflects the same baseline the
-    # existing PR2 test already validates, then apply migrations 10-11 (via
-    # migrate_database, which runs everything through LATEST_SCHEMA_VERSION) and diff.
+    # existing PR2 test already validates, then apply migrations 10+ (via migrate_database,
+    # which runs everything through LATEST_SCHEMA_VERSION -- currently 12 -- so this test
+    # automatically covers each new migration as LATEST_SCHEMA_VERSION is bumped) and diff.
     with pr2_engine.begin() as connection:
         for version in range(3, 10):
             connection.exec_driver_sql(_read_migration(version))
@@ -503,7 +504,7 @@ def test_migration_010_touches_no_canonical_table(pr2_engine: Engine) -> None:
             {"tables": list(canonical_tables)},
         ).all()
 
-    migrate_database(pr2_engine)  # applies migrations 10-12
+    migrate_database(pr2_engine)  # applies migrations 10 through LATEST_SCHEMA_VERSION
 
     with pr2_engine.connect() as connection:
         after = connection.execute(
@@ -516,5 +517,5 @@ def test_migration_010_touches_no_canonical_table(pr2_engine: Engine) -> None:
             {"tables": list(canonical_tables)},
         ).all()
 
-    assert mid == after, "migrations 10-11 must not alter any canonical table"
+    assert mid == after, "migrations 10+ must not alter any canonical table"
     assert before != mid, "sanity check: migrations 3-9 should have changed something"
