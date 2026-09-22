@@ -1,6 +1,8 @@
 # PersonalDataLab project state
 
-Updated 2026-09-22, after schema version 13 added Phase 3's life ledger (per-source and composite
+Updated 2026-09-22, after schema version 14 added Phase 4's signals and episodes layer (baselines,
+change points, anomalies, interaction dynamics/states, and cross-source detected episodes), which
+ran against the real canonical database. Updated 2026-09-22, after schema version 13 added Phase 3's life ledger (per-source and composite
 metrics, day-grain, and the `compare` command) and its runtime landed and ran against the real
 canonical database. Updated 2026-09-22, after schema version 12 added Phase 2's identity rules
 tier (COMPUTED-tier auto-linking on exact email/phone match), cross-source name-candidate queue,
@@ -312,6 +314,48 @@ an independently-written `count(*) ... WHERE first_observed_run_id <= :cutoff AN
 `events`/cutoff 100: 81,527 both ways; `conversations`/cutoff 55,000: 1,559 both ways;
 `relationships`/cutoff 110,000: 230,235 both ways. All three matched exactly.
 
+## Phase 4 signals + episodes: rollout (2026-09-22)
+
+`PHASE4_IMPLEMENTATION_PLAN.md`'s signals and episodes layer landed in PR #56 (migration 014:
+`signal`/`episode` schemas -- `signal.baseline`, `signal.change_point`, `signal.anomaly`,
+`measure.interaction_dynamics`, `signal.interaction_state`, `episode.episode`) and PR #57
+(`derive/derivers/signals.py`'s trailing-90d/lifetime baselines, PELT change-point detection, and
+robust-z anomaly flagging over Phase 3's metric catalog; `interaction.py`'s per-(source,
+correspondent, month) dynamics and PELT-segmented interaction states, scoped to Facebook and
+iMessages 1:1 threads per decision 9; `episode.py`'s cross-source change-point clustering into
+`detected` episode candidates; the `episode-declare`/`episode-list` CLI verbs). 357 tests pass,
+ruff clean.
+
+Schema version 14 was applied to the real canonical database and the derivation runtime was fully
+computed against it (`derive-status` reports zero dirty and zero failed partitions across all
+eleven registered derivers, including `signal_baseline`, `signal_change_point`, `signal_anomaly`,
+`measure_interaction_dynamics`, `signal_interaction_state`, and `episode_detect_candidates`) --
+this had already happened by the time this rollout was written up, so this section records and
+verifies that real state rather than performing the rollout itself.
+
+Rollout findings against the real data:
+
+- **101,002 `signal.baseline` rows, 293 `signal.change_point` rows, and 1,172 `signal.anomaly`
+  rows** computed across the real metric catalog. The single highest-magnitude anomaly
+  (`facebook.messages_count`, 2016-01-20, observed 106, z-score ~142 against an expected band of
+  roughly -1.7 to 2.7) was independently cross-checked against a direct `count(*)` over real
+  `events` rows for that exact day (`source='facebook' AND event_type='message' AND
+  occurred_at::date = '2016-01-20'`): **106/106 matched exactly.**
+- **2,057 `measure.interaction_dynamics` rows across 365 distinct (source, correspondent) pairs**,
+  scoped to Facebook and iMessages as designed. The longest-running real interaction state spans
+  69 months (`imessages`, a real phone number, 2020-09 through 2026-09, mean reciprocity index
+  ~0.70) and a real named Facebook correspondent (Eric Schaeffer) shows a 58-month state
+  (2014-06 through 2019-09, mean reciprocity ~0.68) -- both plausible, stable long-term
+  correspondences rather than artifacts.
+- **9 real `detected` episode candidates**, all `status = 'candidate'` (none confirmed or rejected
+  -- confirmation is a human/DECLARED-tier action per the architecture, not automated), spanning
+  2016 through 2026 and clustering change points across multiple source families per episode (for
+  example, episode 9 clusters 27 change points across facebook/imessages/google/openai spanning
+  2026-05-02 through 2026-09-09). This is real cross-source correlation the individual providers
+  never expressed on their own -- exactly the capability this phase exists to add.
+- The rules-tier-adjacent identity work from Phase 2 remains at zero real auto-links
+  (`identity.assertion` has 0 rows on the real database), consistent with the honest zero already
+  recorded in the Phase 2 section below -- nothing about Phase 3/4 changed that.
 
 ## Phase 3 life ledger: metrics, compare, and rollout (2026-09-22)
 
