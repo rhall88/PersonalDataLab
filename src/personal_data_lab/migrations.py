@@ -19,7 +19,7 @@ from .fingerprints import (
 )
 from .models import NormalizedConversation, NormalizedEvent
 
-LATEST_SCHEMA_VERSION = 13
+LATEST_SCHEMA_VERSION = 14
 MIGRATIONS_DIRECTORIES = (
     Path(__file__).resolve().parents[2] / "db" / "migrations",
     Path(sysconfig.get_path("data")) / "share" / "personal-data-lab" / "migrations",

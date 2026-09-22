@@ -2,8 +2,10 @@
 
 Updated 2026-09-22, after schema version 13 added Phase 3's life ledger (per-source and composite
 metrics, day-grain, and the `compare` command) and its runtime landed and ran against the real
-canonical database.
-Updated 2026-09-22, after schema version 11 added Phase 1's coverage/contract layer and its derivation
+canonical database. Updated 2026-09-22, after schema version 12 added Phase 2's identity rules
+tier (COMPUTED-tier auto-linking on exact email/phone match), cross-source name-candidate queue,
+and append-only identity assertion log, which ran against the real canonical database. Updated
+2026-09-22, after schema version 11 added Phase 1's coverage/contract layer and its derivation
 runtime (as-of reconstruction, day-grain coverage) landed and ran against the real canonical
 database. Updated 2026-09-21, after schema version 10 added the derived-meaning foundation (derive/declare/
 policy/measure schemas) and its Phase 0 derivation runtime landed and ran against the real
@@ -357,6 +359,47 @@ Real rollout verification:
   2026) without needing Phase 2's PRs to be merged first -- confirmed the plan's pure-Python
   import dependency, not a schema dependency, works as designed.
 
+## Phase 2 identity resolution: rules tier and rollout (2026-09-22)
+
+`PHASE2_IMPLEMENTATION_PLAN.md`'s rules tier landed in PR #48 (migration 012:
+`identity.assertion`, `identity.not_same_as`, `identity_links.tier`/`resolution_version`) and
+PR #49 (`identity_normalize.py`'s shape-sniffing, `identity_rules.py`'s COMPUTED-tier
+`run_rules_tier()`, `identity_candidates.py`'s cross-source name-candidate queue, `merge_identity`/
+`split_identity` writing through the new assertion log, and the `identity-rules-run`/
+`identity-not-same-as`/`identity-candidates --cross-source` CLI verbs). Both build on migration
+009's pre-existing manual `people`/`identity_links` tables rather than replacing them. 347 tests
+pass, ruff clean.
+
+Two real bugs were found by actually running the suite, not by inspection: migration 012's
+`ALTER TABLE ADD COLUMN` wasn't idempotent, which broke `test_migrations.py`'s own teardown
+restoration and, because that failure rolled back the whole teardown transaction, silently left
+the shared `derive`/`declare`/`policy`/`measure`/`identity` schemas dropped for every test file
+that ran afterward -- the actual cause of unrelated-looking failures in `test_phase1.py` and
+`test_phase2.py`. Fixed with `ADD COLUMN IF NOT EXISTS`. Three tests also hardcoded the exact
+list of migration versions `LATEST_SCHEMA_VERSION` expands to; updated for 12.
+
+Migration 012 applied to the real canonical database (`{"schema_version": 12, "applied": [12]}`).
+Rollout findings against the real data:
+
+- **The rules tier (COMPUTED) found zero auto-linkable pairs.** `identity-rules-run --dry-run`
+  returned no links and no conflicts. This is a real, honest result, not a bug: cross-checked
+  directly, none of the real `actor_identity` values that carry an extractable email or E.164
+  phone corroborate across two or more sources in this dataset (`google`'s email-bearing rows are
+  almost entirely commercial senders plus Ry's own outgoing address; `imessages`' phone numbers
+  have no email counterpart anywhere else). The rules tier's narrow, high-precision design
+  (Decisions 1-2 in the plan) simply has no real-world signal to act on yet in this database --
+  it isn't a placeholder that silently failed.
+- **The cross-source name-candidate queue surfaced exactly the two candidates found during
+  planning**: `angela barnes` and `sara slaughter`, each a `facebook`/`imessages` pair, with
+  `you`/`user`/`assistant`/`account_owner` correctly excluded as role labels rather than people.
+- **Left for Ry's own review, not resolved here.** Confirming `Angela Barnes` on Facebook is the
+  same real person as `Angela Barnes` in iMessages is a factual claim about Ry's actual
+  relationships that nothing in this dataset corroborates beyond name equality -- exactly the
+  judgment call the architecture reserves for the DECLARED tier (a human), not for an
+  automated pass. Run `personal-data-lab identity-candidates --cross-source` to see the current
+  queue and `identity-merge <person_id> <source> <identity_value>` to act on either one, or
+  `identity-not-same-as <source> <identity_value>` to reject it permanently.
+
 ## Verification state
 
 - The repository currently collects 311 tests: non-integration tests plus PostgreSQL-marked
@@ -399,12 +442,13 @@ Real rollout verification:
    not been re-verified for exact replay against the canonical database (see the canonical baseline
    section above). Low priority: the fix is narrow, unit-tested, and was verified directly against
    the real corpus bytes before merging.
-2. **Extend the derived-meaning layer (Phase 4: signals + episodes).** Phases 0-3 (activity
-   coverage, as-of contracts, identity resolution, and the life-ledger metrics/compare layer) are
-   live against the real canonical database (see the sections above). Phase 4 per
-   `DERIVED_MEANING_ARCHITECTURE.md` §15: baseline kinds, autocorrelation-aware intervals, change
-   points, anomalies, cycles, trips, project spans, declared episodes, and interaction states --
-   all as separately versioned, disposable layers whose outputs cite immutable observations.
+2. **Continue the derived-meaning layer past Phase 4.** Phases 0-4 (activity coverage, as-of
+   contracts, identity resolution, the life-ledger metrics/compare layer, and signals + episodes --
+   baselines, change points, anomalies, interaction dynamics/states, declared/detected episodes)
+   are all live against the real canonical database (see the sections above). Next per
+   `DERIVED_MEANING_ARCHITECTURE.md` §15: claims and cross-source correlations, OCR/transcription,
+   chunks, and embeddings, all as separately versioned, disposable layers whose outputs cite
+   immutable observations.
 3. **Continue the operational track.** Encrypted backup/restore, integrity audits, sensitive-field
    controls, incremental scheduling, performance budgets, derived-data invalidation, and corpus
    exportability remain permanent requirements.
