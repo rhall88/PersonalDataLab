@@ -1,5 +1,8 @@
 # PersonalDataLab project state
 
+Updated 2026-09-22, after schema version 13 added Phase 3's life ledger (per-source and composite
+metrics, day-grain, and the `compare` command) and its runtime landed and ran against the real
+canonical database.
 Updated 2026-09-22, after schema version 11 added Phase 1's coverage/contract layer and its derivation
 runtime (as-of reconstruction, day-grain coverage) landed and ran against the real canonical
 database. Updated 2026-09-21, after schema version 10 added the derived-meaning foundation (derive/declare/
@@ -308,6 +311,52 @@ an independently-written `count(*) ... WHERE first_observed_run_id <= :cutoff AN
 `relationships`/cutoff 110,000: 230,235 both ways. All three matched exactly.
 
 
+## Phase 3 life ledger: metrics, compare, and rollout (2026-09-22)
+
+`PHASE3_IMPLEMENTATION_PLAN.md`'s life ledger landed in PR #52 (migration 013:
+`derive.metric_def`/`derive.metric_dependency`, `measure.metric_daily`) and PR #53
+(`derive/derivers/metrics.py`'s 17 per-source + 3 composite metrics, riding Phase 0's existing
+deriver framework unchanged; `compare.py`'s DuckDB-backed ranked change table; the
+`compare` CLI verb). Scoped to communication + AI-chat metrics only: grounded directly against
+the real database, only facebook/imessages/google/anthropic/openai carry any communication-shaped
+activity, and there is no git/browsing/location-stay/calendar-scale source in this corpus at all
+(apple has zero communication event types). 352 tests pass, ruff clean.
+
+A real architectural gap surfaced during rollout, not during design or testing: `measure_metric_daily`
+is a non-root deriver (`inputs=("measure_coverage",)`) added after Phase 0's `derive sync` had
+already advanced the shared change-feed cursor past all history, so it got no retroactive
+dirtying from `sync()` (only reacts to observations after the cursor) or `rebuild()` (only
+re-dirties partition keys already present in `partition_state`, and this deriver had none) --
+the exact same class of gap Phase 1's own rollout hit with `measure_coverage`, now recurring one
+deriver layer downstream. Fixed the same way: a one-off script calling
+`derive.scheduler.mark_dirty_and_propagate()` directly for every `source:YYYY-MM` key in each of
+the five metric-relevant sources' declared `covered_range`, which also correctly cascaded into
+dirtying `measure_metric_daily_global`'s single `GLOBAL` partition. Deliberately did not reset
+`change_cursor`, so Phase 0/1's own derivers weren't needlessly recomputed. `derive run` then
+computed all 735 `measure_metric_daily` partitions (zero failures), and `derive run --global`
+computed `measure_metric_daily_global`'s one partition (4,725 rows written across the three
+composites).
+
+Real rollout verification:
+
+- **37 real `measure.metric_daily` values, covering all 20 metric names at least once** (17
+  per-source metrics on two real days -- 2026-08-15 and 2026-09-01 -- plus all 3 composites on
+  2026-09-01), each cross-checked against an independently written `count(*)`/
+  `count(distinct conversation_id)` query over the same raw `events` rows for the same day.
+  **37/37 matched exactly.**
+- **`compare --focal 2026-08-01:2026-09-01 --baseline 2026-07-01:2026-08-01`** (two real,
+  non-overlapping full months) ranked all 20 metrics by absolute change correctly (largest first:
+  `ai_chat.total_turns_count` +2,874, down to several genuinely-zero-both-months metrics at the
+  bottom with a `null` percent_change rather than a division-by-zero error), and reported
+  `known_days == total_days == 31` for both periods on every metric -- both months have full
+  source coverage in the real data, so there was no coverage gap to surface in this particular
+  comparison, but the mechanism that would surface one (verified in `test_phase3.py`'s exit test
+  5) held up against the real query path end to end.
+- `communication.unique_correspondents_count` reused Phase 2's `identity_normalize.classify()`
+  directly (no duplicate exclusion list) and produced a real, plausible value (1,192 for August
+  2026) without needing Phase 2's PRs to be merged first -- confirmed the plan's pure-Python
+  import dependency, not a schema dependency, works as designed.
+
 ## Verification state
 
 - The repository currently collects 311 tests: non-integration tests plus PostgreSQL-marked
@@ -350,12 +399,12 @@ an independently-written `count(*) ... WHERE first_observed_run_id <= :cutoff AN
    not been re-verified for exact replay against the canonical database (see the canonical baseline
    section above). Low priority: the fix is narrow, unit-tested, and was verified directly against
    the real corpus bytes before merging.
-2. **Extend the derived-meaning layer (Phase 1).** Phase 0's derivation runtime and its two
-   activity derivers are live against the real canonical database (see the section above).
-   Phase 1: proper time-zone-aware normalization (Phase 0's UTC-day convention is explicitly
-   provisional), claims and cross-source correlations, OCR/transcription, chunks, and
-   embeddings -- all as separately versioned, disposable layers whose outputs cite immutable
-   observations, per `DERIVED_MEANING_ARCHITECTURE.md`.
+2. **Extend the derived-meaning layer (Phase 4: signals + episodes).** Phases 0-3 (activity
+   coverage, as-of contracts, identity resolution, and the life-ledger metrics/compare layer) are
+   live against the real canonical database (see the sections above). Phase 4 per
+   `DERIVED_MEANING_ARCHITECTURE.md` §15: baseline kinds, autocorrelation-aware intervals, change
+   points, anomalies, cycles, trips, project spans, declared episodes, and interaction states --
+   all as separately versioned, disposable layers whose outputs cite immutable observations.
 3. **Continue the operational track.** Encrypted backup/restore, integrity audits, sensitive-field
    controls, incremental scheduling, performance budgets, derived-data invalidation, and corpus
    exportability remain permanent requirements.
