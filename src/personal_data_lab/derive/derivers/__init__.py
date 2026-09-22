@@ -11,6 +11,7 @@ from __future__ import annotations
 from . import (
     activity,  # noqa: F401 -- imported for its @deriver registration side effect
     coverage,  # noqa: F401 -- imported for its @deriver registration side effect
+    metrics,  # noqa: F401 -- imported for its @deriver registration side effect
 )
 
 __all__: list[str] = []

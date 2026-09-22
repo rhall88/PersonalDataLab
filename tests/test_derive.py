@@ -155,6 +155,8 @@ def test_sync_dirties_local_and_propagates_across_the_month_boundary(database_en
         ("source_activity_7d", "google:2024-03"),
         ("source_activity_7d", "google:2024-04"),
         ("measure_coverage", "google:2024-03"),
+        ("measure_metric_daily", "google:2024-03"),
+        ("measure_metric_daily_global", "GLOBAL"),
     }
 
 
@@ -180,6 +182,7 @@ def test_run_computes_daily_and_7d_rows(database_engine: Engine) -> None:
         ("source_activity_7d", "google:2024-03"),
         ("source_activity_7d", "google:2024-04"),
         ("measure_coverage", "google:2024-03"),
+        ("measure_metric_daily", "google:2024-03"),
     }
 
     with database_engine.connect() as connection:
