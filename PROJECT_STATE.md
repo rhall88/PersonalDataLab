@@ -1,7 +1,10 @@
 # PersonalDataLab project state
 
-Updated 2026-09-20, after schema version 9 added reversible identity resolution over the canonical
-database. Version `0.22.0` adds five `identity-*` commands and the `identity_links` schema;
+Updated 2026-09-21, after schema version 10 added the derived-meaning foundation (derive/declare/
+policy/measure schemas) and its Phase 0 derivation runtime landed and ran against the real
+canonical database. Updated 2026-09-20, after schema version 9 added reversible identity resolution
+over the canonical database. Version `0.22.0` adds five `identity-*` commands and the `identity_links`
+schema;
 `0.21.0` added the `search` command and `search_vector` schema; `0.20.0` recovered
 doubly-escaped Nest provider rows; `0.19.0` added the `facebook_export` module; `0.18.0` qualified
 Apple lossless structured ingestion and reported interpretation depth separately. PR7–PR11 were
@@ -181,7 +184,7 @@ local execution order, path changes, and repeated exports from becoming accident
 
 ## Schema and migrations
 
-Fresh databases initialize directly at schema version 9. `personal-data-lab migrate` upgrades a
+Fresh databases initialize directly at schema version 10. `personal-data-lab migrate` upgrades a
 PR2 database idempotently through the tracked migrations:
 
 | Version | Purpose |
@@ -193,13 +196,54 @@ PR2 database idempotently through the tracked migrations:
 | 7 | provenance-bearing, versioned relationships |
 | 8 | `search_vector tsvector` + GIN index + maintenance trigger on conversations/events/records/assets |
 | 9 | `records.actor_person_id` (matching the existing `events` column) + the `identity_links` table for reversible identity merges |
+| 10 | `derive`/`declare`/`policy`/`measure` schemas: the derived-meaning foundation (deriver registry,
+     versioning, change feed, partition scheduling, egress policy). No canonical table altered. |
 
 Apple, Facebook, iMessages, OpenAI, and Anthropic v2 required no later schema migration because the
 version-7 universal record, event, asset, and relationship model already expresses their data.
 Migration 8 requires no importer-side changes either — every existing source becomes searchable
 purely from its already-existing canonical columns. See [`QUERY_SPEC.md`](QUERY_SPEC.md). Migration
 9 likewise requires no importer changes: identity links are asserted after the fact by a human, not
-inferred at import time. See [`IDENTITY_RESOLUTION_SPEC.md`](IDENTITY_RESOLUTION_SPEC.md).
+inferred at import time. See [`IDENTITY_RESOLUTION_SPEC.md`](IDENTITY_RESOLUTION_SPEC.md). Migration 10 also requires no
+importer changes: the change feed reads only the `*_observations` rows every importer already
+writes. See [`DERIVED_MEANING_ARCHITECTURE.md`](DERIVED_MEANING_ARCHITECTURE.md) and
+[`PHASE0_IMPLEMENTATION_PLAN.md`](PHASE0_IMPLEMENTATION_PLAN.md).
+
+## Phase 0 derived-meaning layer (2026-09-21)
+
+`DERIVED_MEANING_ARCHITECTURE.md` (v2.2) was accepted as PDL's architecture of record (PR #38),
+followed by `PHASE0_IMPLEMENTATION_PLAN.md` (PR #39), schema version 10 (PR #40), and the Phase 0
+derivation runtime -- deriver registry, version hashing with shadow/active/retired promotion, a
+change feed reading only existing `*_observations` rows, halo-aware partition scheduling, a
+`SKIP LOCKED` worker, and the egress policy lattice, plus the two Phase 0 derivers
+(`source_activity_daily`, `source_activity_7d`) -- in PR #41. This is explicitly single-user scope
+(Ry only): `policy.egress_override` and everything downstream stays unscoped by user for now.
+
+Migration 10 was applied to the real canonical database on 2026-09-21, after a full `pg_dump`
+backup (`backups/20260921T195110Z/`). `derive sync` then `derive run --global` were run against
+the complete 13GB, six-source canonical database -- the plan's exit test 10:
+
+- `derive sync`: 15.8s, 606 dirty LOCAL partitions found across all six sources' full history.
+- `derive run --global`: 4m40s wall time, 1,232 partitions processed (606
+  `source_activity_daily` + 626 `source_activity_7d`, the extra 20 being halo-neighbor months),
+  zero failures.
+- Output: 25,369 `measure.source_activity_daily` rows, 35,154 `measure.source_activity_7d` rows.
+  Per-source daily row counts: Facebook 10,005, Apple 7,412, Google 3,662, iMessages 3,174,
+  OpenAI 715, Anthropic 401.
+- Replay check (exit test 1): a second `derive sync` with no new imports reported
+  `"is_noop": true`, dirtying zero partitions. A second `derive run --global` with nothing dirty
+  returned `[]` (exit test 5).
+- No canonical table was altered by the migration or by either run; `measure.*` is additive-only
+  and disposable (`derive rebuild` clears and recomputes from partition_state without touching
+  `derive.deriver`/`derive.deriver_version`'s idempotent registration state).
+
+Known Phase 0 limitations, carried from the runtime PR rather than fixed here: a worker failure
+between `clear_partition()` and the last replacement row leaves a partition `failed` but
+partially written (nothing queries `measure.*` without checking `partition_state` yet, so this is
+currently harmless); `source:undated` partitions are fingerprinted but produce zero output rows
+pending Phase 1 time normalization (none were dirtied in this run -- all six sources' watched
+kinds carry a usable date). Exit tests 2-4 and 6-9 are covered by `tests/test_derive.py` against
+`personaldata_test`, not repeated here against the real database.
 
 ## Verification state
 
@@ -243,9 +287,12 @@ inferred at import time. See [`IDENTITY_RESOLUTION_SPEC.md`](IDENTITY_RESOLUTION
    not been re-verified for exact replay against the canonical database (see the canonical baseline
    section above). Low priority: the fix is narrow, unit-tested, and was verified directly against
    the real corpus bytes before merging.
-2. **Add derived understanding.** Claims, cross-source correlations, OCR/transcription, chunks,
-   and embeddings belong in separately versioned, disposable layers whose outputs cite immutable
-   observations.
+2. **Extend the derived-meaning layer (Phase 1).** Phase 0's derivation runtime and its two
+   activity derivers are live against the real canonical database (see the section above).
+   Phase 1: proper time-zone-aware normalization (Phase 0's UTC-day convention is explicitly
+   provisional), claims and cross-source correlations, OCR/transcription, chunks, and
+   embeddings -- all as separately versioned, disposable layers whose outputs cite immutable
+   observations, per `DERIVED_MEANING_ARCHITECTURE.md`.
 3. **Continue the operational track.** Encrypted backup/restore, integrity audits, sensitive-field
    controls, incremental scheduling, performance budgets, derived-data invalidation, and corpus
    exportability remain permanent requirements.
