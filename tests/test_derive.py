@@ -157,6 +157,12 @@ def test_sync_dirties_local_and_propagates_across_the_month_boundary(database_en
         ("measure_coverage", "google:2024-03"),
         ("measure_metric_daily", "google:2024-03"),
         ("measure_metric_daily_global", "GLOBAL"),
+        ("signal_baseline", "GLOBAL"),
+        ("signal_change_point", "GLOBAL"),
+        ("signal_anomaly", "GLOBAL"),
+        ("episode_detect_candidates", "GLOBAL"),
+        ("measure_interaction_dynamics", "GLOBAL"),
+        ("signal_interaction_state", "GLOBAL"),
     }
 
 
