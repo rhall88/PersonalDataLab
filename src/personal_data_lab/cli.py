@@ -18,6 +18,7 @@ from .anthropic_export.orchestrator import import_anthropic_all
 from .apple_export.inventory import inspect_apple
 from .apple_export.inventory import render_inventory_table as render_apple_table
 from .apple_export.orchestrator import import_apple_all
+from .compare import DateRangeError, compare_periods, parse_date_range
 from .config import (
     canonical_database_name,
     database_url,
@@ -383,6 +384,21 @@ def _parser() -> argparse.ArgumentParser:
     derive_promote.add_argument("deriver_name")
     derive_promote.add_argument("version_hash", help="hex-encoded version_hash to promote")
     derive_promote.add_argument("--database-url", help="overrides DATABASE_URL from .env")
+    compare_parser = subparsers.add_parser(
+        "compare",
+        help="rank Phase 3 life-ledger metrics by change between two date ranges",
+    )
+    compare_parser.add_argument(
+        "--focal", required=True, help="YYYY-MM-DD:YYYY-MM-DD, end exclusive"
+    )
+    compare_parser.add_argument(
+        "--baseline", required=True, help="YYYY-MM-DD:YYYY-MM-DD, end exclusive"
+    )
+    compare_parser.add_argument(
+        "--metric", dest="metrics", action="append", default=None,
+        help="limit to this metric name (repeatable); default is every metric",
+    )
+    compare_parser.add_argument("--database-url", help="overrides DATABASE_URL from .env")
     declare_add = subparsers.add_parser("declare-add", help="record a user-asserted declaration")
     declare_add.add_argument(
         "kind",
@@ -1287,6 +1303,20 @@ def main(argv: Sequence[str] | None = None) -> int:
                 indent=2,
             )
         )
+        return 0
+    if args.command == "compare":
+        try:
+            focal = parse_date_range(args.focal)
+            baseline = parse_date_range(args.baseline)
+        except DateRangeError as error:
+            print(f"error: {error}", file=sys.stderr, flush=True)
+            return 1
+        engine = _resolve_guarded_engine(args.database_url, canonical_import=False)
+        metric_names = tuple(args.metrics) if args.metrics else None
+        ranked = compare_periods(
+            engine, focal=focal, baseline=baseline, metric_names=metric_names
+        )
+        print(json.dumps(ranked, indent=2, default=str))
         return 0
     if args.command == "declare-add":
         engine = _resolve_guarded_engine(args.database_url, canonical_import=False)

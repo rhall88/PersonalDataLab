@@ -16,6 +16,7 @@ from sqlalchemy.engine import Engine
 
 from . import derivers as _derivers  # noqa: F401 -- import side effect populates REGISTRY
 from .changefeed import advance_cursor, cursor_value, read_dirty_local_keys
+from .derivers.metrics import sync_metric_catalog
 from .registry import REGISTRY, DeriverRegistry
 from .scheduler import mark_dirty_and_propagate
 from .versioning import VersioningError, ensure_deriver_version
@@ -54,6 +55,7 @@ def sync(
     """
     with engine.begin() as connection:
         registry.sync(connection)
+        sync_metric_catalog(connection)
         for deriver_obj in registry:
             ensure_deriver_version(connection, deriver_obj)
 
