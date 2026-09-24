@@ -33,7 +33,7 @@ from .database import (
     list_sibling_databases,
 )
 from .derive import asof
-from .derive.derivers.episode import declare_episode, list_episodes
+from .derive.derivers.episode import confirm_episode, declare_episode, list_episodes, reject_episode
 from .facebook_export.inventory import inspect_facebook
 from .facebook_export.inventory import render_inventory_table as render_facebook_table
 from .facebook_export.orchestrator import import_facebook_all
@@ -411,6 +411,21 @@ def _parser() -> argparse.ArgumentParser:
     episode_list = subparsers.add_parser("episode-list", help="list declared/derived/detected episodes")
     episode_list.add_argument("--kind", choices=("declared", "derived", "detected"))
     episode_list.add_argument("--database-url", help="overrides DATABASE_URL from .env")
+    episode_confirm = subparsers.add_parser(
+        "episode-confirm",
+        help="confirm a detected candidate episode in place (status -> 'confirmed')",
+    )
+    episode_confirm.add_argument("episode_id", type=int)
+    episode_confirm.add_argument("--label", help="human-readable name for what this period was")
+    episode_confirm.add_argument("--note")
+    episode_confirm.add_argument("--database-url", help="overrides DATABASE_URL from .env")
+    episode_reject = subparsers.add_parser(
+        "episode-reject",
+        help="reject a detected candidate episode in place (status -> 'rejected'), permanently",
+    )
+    episode_reject.add_argument("episode_id", type=int)
+    episode_reject.add_argument("--note")
+    episode_reject.add_argument("--database-url", help="overrides DATABASE_URL from .env")
     declare_add = subparsers.add_parser("declare-add", help="record a user-asserted declaration")
     declare_add.add_argument(
         "kind",
@@ -1352,6 +1367,26 @@ def main(argv: Sequence[str] | None = None) -> int:
         engine = _resolve_guarded_engine(args.database_url, canonical_import=False)
         episodes = list_episodes(engine, kind=args.kind)
         print(json.dumps(episodes, indent=2, default=str))
+        return 0
+    if args.command == "episode-confirm":
+        engine = _resolve_guarded_engine(args.database_url, canonical_import=False)
+        try:
+            episode = confirm_episode(
+                engine, args.episode_id, label=args.label, note=args.note
+            )
+        except ValueError as error:
+            print(f"error: {error}", file=sys.stderr, flush=True)
+            return 1
+        print(json.dumps(episode, indent=2, default=str))
+        return 0
+    if args.command == "episode-reject":
+        engine = _resolve_guarded_engine(args.database_url, canonical_import=False)
+        try:
+            episode = reject_episode(engine, args.episode_id, note=args.note)
+        except ValueError as error:
+            print(f"error: {error}", file=sys.stderr, flush=True)
+            return 1
+        print(json.dumps(episode, indent=2, default=str))
         return 0
     if args.command == "declare-add":
         engine = _resolve_guarded_engine(args.database_url, canonical_import=False)
