@@ -52,6 +52,13 @@ def _coverage_for(connection: Connection, pairs: set[tuple[str, date]]) -> float
     'event' -- the same object_kind every current metric and episode evidence source uses. `None`
     (dimension absent, not a fabricated 1.0) if `pairs` is empty or any pair has no coverage row
     at all -- an undeclared/uncovered day is unknown, never silently treated as fully covered.
+
+    Used only by `communication_change` claims, where `pairs` is every constituent source for
+    exactly *one* day (a composite metric can have several sources; a single-source metric has
+    one) -- "weakest link across today's sources" is the right question there. Not used for
+    `episode_evidence` (see `_coverage_for_range` and the module-level note on why a strict
+    per-literal-day minimum over *many* days was a real, documented weakness the 2026-09-24
+    Phase 5 rollout found).
     """
     if not pairs:
         return None
@@ -68,6 +75,37 @@ def _coverage_for(connection: Connection, pairs: set[tuple[str, date]]) -> float
             return None
         values.append(float(row))
     return min(values)
+
+
+def _coverage_for_range(
+    connection: Connection, sources: set[str], start: date, end: date
+) -> float | None:
+    """Mean `measure.coverage.completeness` (object_kind 'event') across every declared day in
+    `[start, end]` for `sources` -- the fix for a real, documented weakness the 2026-09-24 Phase 5
+    rollout found in `episode_evidence` claims: taking the *minimum* completeness across only the
+    handful of literal change-point dates in a claim's evidence meant any multi-day episode
+    touching a naturally sparse source (e.g. anthropic, which has real activity on only a fraction
+    of days) got dragged to `coverage = 0.0` almost every time, even when the episode's actual
+    span was well covered. A single sparse day with no same-day activity for one specific metric
+    is a normal pattern, not a coverage gap -- asking "how complete was data collection across
+    this claim's actual sources, over its actual span" (a mean over the whole range) is the more
+    representative question, and the one this dimension was meant to answer. `None` (absent, not
+    a fabricated value) if there is no coverage data at all for these sources over this range --
+    an undeclared contract is still unknown, never silently treated as covered.
+    """
+    if not sources or start is None or end is None:
+        return None
+    row = connection.execute(
+        text(
+            "SELECT avg(completeness) AS avg_completeness, count(*) AS n FROM measure.coverage "
+            "WHERE source = ANY(:sources) AND object_kind = 'event' "
+            "AND bucket_start >= :start AND bucket_start <= :end"
+        ),
+        {"sources": list(sources), "start": start, "end": end},
+    ).mappings().one()
+    if row["n"] == 0 or row["avg_completeness"] is None:
+        return None
+    return float(row["avg_completeness"])
 
 
 def _communication_change_claims(connection: Connection, epoch_id: int) -> list[dict]:
@@ -186,8 +224,9 @@ def _episode_evidence_claims(connection: Connection, epoch_id: int) -> list[dict
         if change_points:
             confidence["statistical_strength"] = n_change_points
             confidence["source_independence"] = len(sources)
-            pairs = {(cp["source"], date.fromisoformat(cp["date"])) for cp in change_points}
-            coverage = _coverage_for(connection, pairs)
+            coverage = _coverage_for_range(
+                connection, sources, row["start_range_low"], row["end_range_high"]
+            )
             if coverage is not None:
                 confidence["coverage"] = coverage
         statement = _episode_statement(

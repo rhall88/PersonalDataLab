@@ -551,6 +551,22 @@ with more than a couple of change points. Not redesigned in this PR -- a better 
 scoring over the episode's overall date range rather than each literal change-point day) is real,
 separable scope for a later pass, not a blocker to shipping the rest of the ledger.
 
+**Fixed same day, in a follow-up commit (before this file's next section was written):** added
+`_coverage_for_range`, used only by `episode_evidence` -- mean `completeness` across the episode's
+whole `[start_range_low, end_range_high]` span, not a minimum over a handful of literal
+change-point dates. `_coverage_for` (the original, min-across-a-single-day's-sources function)
+is unchanged and still correctly used by `communication_change`, where "weakest link among today's
+sources" is the right question, not the one this weakness was ever about. `know_claim_evaluate`
+doesn't have anything downstream to re-propagate to and its fingerprint (correctly) only tracks
+`signal.anomaly`/`episode.episode` content, not this code change, so recomputing after this fix
+needed `derive-rebuild --deriver know_claim_evaluate` + `derive-run --global` -- the same pattern
+Phase 1's own rollout already established for "the code changed, force a real recompute," not new
+process. Verified against the real canonical database: all 8 `episode_evidence` claims with real
+change-point evidence now show `coverage` between 0.72 and 0.99 (previously a flat 0.0 for every
+one), the father's-death declared claim (empty evidence) still correctly shows no `coverage` key
+at all (nothing to score). One new test (`test_episode_coverage_averages_the_range_not_the_worst_
+single_day`) proves the aggregation is a genuine mean, not still a hidden floor. 379 tests pass.
+
 367 tests passed before this rollout (371 including four new `test_phase5.py` cases covering
 exit tests 1-4: `know_claim_evaluate` registration, a synthetic anomaly producing exactly the
 expected `communication_change` claim, all four `episode.episode` kind/status combinations
@@ -660,9 +676,9 @@ the corpus, not just returning syntactically valid rows.
    zero dirty/failed across all 14 derivers -- see "Phase 6 semantic layer: rollout" above. Next
    per `ROADMAP.md`: item 6 (OCR/transcription, explicitly deferred out of Phase 6), semantic
    *annotation*/topic-labeling (also explicitly deferred, needs a local generative model and its
-   own invariant-7 discipline), and further claim-template growth (item 3). The real, un-fixed
-   `coverage`-dimension weakness the Phase 5 rollout found (see above) is worth a better
-   aggregation before claims lean on that dimension for anything user-facing, but isn't blocking.
+   own invariant-7 discipline), and further claim-template growth (item 3). The `coverage`-dimension
+   weakness the Phase 5 rollout found was fixed the same day (see "Phase 5 claims ledger: rollout"
+   above for both the original finding and the fix).
 3. **Continue the operational track.** Encrypted backup/restore, integrity audits, sensitive-field
    controls, incremental scheduling, performance budgets, derived-data invalidation, and corpus
    exportability remain permanent requirements.
