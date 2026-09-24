@@ -1,6 +1,11 @@
 # PersonalDataLab project state
 
-Updated 2026-09-24, after Phase 5 (the claims ledger) landed and ran against the real canonical
+Updated 2026-09-24, after Phase 6 (the semantic layer -- text units, local embeddings,
+`semantic-search`) landed and ran against the real canonical database: 70,145 real text units,
+70,145 real embeddings (exact 1:1, independently verified), a second real scheduler gap found and
+fixed (HALO-class root dirtying), and a real concurrency race (caused by an operational mistake,
+not a code defect) found, diagnosed, and corrected with zero data loss -- see "Phase 6 semantic
+layer: rollout" below. Updated 2026-09-24, after Phase 5 (the claims ledger) landed and ran against the real canonical
 database: schema (015, corrected same-day by 016), the `know_claim_evaluate` runtime and
 `claims-list`/`claims-why` CLI, and a real scheduler ordering defect the runtime surfaced and
 fixed (`derive/worker.py`'s `_claim_one` tiebreak) -- see "Phase 5 claims ledger: rollout" below.
@@ -223,7 +228,7 @@ tracked migrations:
 | 14 | `signal`/`episode` schemas: Phase 4's baselines, change points, anomalies, interaction dynamics/states, and declared/detected episodes. |
 | 15 | `know.claim`/`know.claim_evidence`: Phase 5's claims ledger schema as first designed. No canonical table altered. |
 | 16 | Corrects migration 15: drops `know.claim_evidence`, adds `know.claim.evidence` (inline JSONB) instead -- this project's deriver framework writes one output table per `compute()` call with no `RETURNING`, so a claim and a child evidence row referencing its worker-generated id can never be written together; `episode.episode.evidence` had already solved this exact problem the same way. Discovered building the runtime, not caught at schema-review time. No canonical table altered. |
-| 17 | `semantic.text_unit`/`semantic.embedding_bge_small_en_v15`: Phase 6's semantic layer (`PHASE6_SEMANTIC_LAYER_IMPLEMENTATION_PLAN.md`), pgvector-backed text units and their local embeddings. Schema only in this PR; the `semantic_text_unit`/`semantic_embedding_bge_small` derivers and `semantic-search` CLI are the next PR. No canonical table altered. |
+| 17 | `semantic.text_unit`/`semantic.embedding_bge_small_en_v15`: Phase 6's semantic layer (`PHASE6_SEMANTIC_LAYER_IMPLEMENTATION_PLAN.md`), pgvector-backed text units and their local embeddings. Runtime and real-database rollout landed the same day -- see "Phase 6 semantic layer: rollout". No canonical table altered. |
 
 Apple, Facebook, iMessages, OpenAI, and Anthropic v2 required no later schema migration because the
 version-7 universal record, event, asset, and relationship model already expresses their data.
@@ -552,6 +557,61 @@ expected `communication_change` claim, all four `episode.episode` kind/status co
 producing the right claim/no-claim outcome, and `claims-why` independently re-fetching cited
 evidence); ruff clean; `python -m compileall` clean.
 
+## Phase 6 semantic layer: rollout (2026-09-24)
+
+`PHASE6_SEMANTIC_LAYER_IMPLEMENTATION_PLAN.md`'s text units and local embeddings landed in three
+PRs: migration 017 (`semantic.text_unit`/`semantic.embedding_bge_small_en_v15`), the runtime
+(`derive/derivers/semantic.py`'s `semantic_text_unit`/`semantic_embedding_bge_small` derivers plus
+the `semantic-search` CLI verb, `fastembed`/`BAAI/bge-small-en-v1.5` as a new pinned dependency),
+and this rollout. 378 tests pass (371 + 7 new `test_phase6.py` cases covering exit tests 1-7),
+ruff clean, compileall clean.
+
+Building and rolling out the runtime surfaced two real findings, both fixed, neither anticipated
+in the plan:
+
+- **A second scheduler gap, this time in root-dirtying, not propagation.** Every root deriver
+  before this phase was LOCAL (`source_activity_daily`, `measure_coverage`); `sync()`'s root loop
+  passed raw observation-derived dirty keys straight to `mark_dirty_and_propagate` with no halo
+  expansion, which was correct for all of them. `semantic_text_unit` is the first HALO-class root
+  (`lookback_halo`/`lookahead_halo = "1 days"` each, so a 45-minute session near a month boundary
+  is never split by partitioning alone) -- and a change in March needs to dirty semantic_text_unit's
+  February partition too (a session might have started there), which the old code never did.
+  Fixed in `derive/__init__.py`'s `sync()` by projecting a root's own keys through its
+  `partition_class`/halo via the same `_expand_for_downstream` helper propagation already used --
+  three legitimate uses of one helper now (propagation, new-deriver backfill projection, and root
+  self-expansion), not three different mechanisms.
+- **A real, `ctid`-tiebreak-adjacent scheduler race, caused by an operational mistake, not a code
+  bug.** Two overlapping `derive-run` invocations (an artifact of a background-process handling
+  mistake during rollout, not a deriver logic error) briefly processed the same partition set
+  concurrently. `SKIP LOCKED` correctly prevented either from double-claiming the same partition,
+  but it let `semantic_embedding_bge_small` for 3 partitions (`google:2024-03`,
+  `facebook:2025-01`, `facebook:2012-11`) get claimed and correctly compute "zero text units yet"
+  *before* the sibling process's `semantic_text_unit` run for those same partitions had committed
+  -- exactly the GLOBAL-sibling-ordering hazard `claims.py`'s and `signals.py`'s own module
+  docstrings already warn about, now observed for real, for a LOCAL/HALO pair, under genuine
+  concurrency (the single-process `ctid` ordering fix from earlier in this rollout only orders
+  claims *within* one process's sequential loop; it does nothing to prevent two separate processes
+  racing against each other under `SKIP LOCKED`, which is a correctness property this phase
+  learned it still needs, not a design flaw introduced by it). Diagnosed by joining
+  `semantic.text_unit` against `semantic.embedding_bge_small_en_v15` for orphaned rows (732 found,
+  concentrated in exactly those 3 partitions), fixed by re-dirtying just those partitions and
+  re-running -- no data loss, no incorrect data, just a real gap between "text units exist" and
+  "they got embedded" that self-corrected once identified.
+
+Rollout against the real canonical database, fully verified, not just launched: **70,145 text
+units** across facebook (9,316), google (46,972), imessages (12,514), openai (1,212), and
+anthropic (131) -- google dominates because mail is one unit per message (decision 2), never
+session-grouped, so its raw message count carries through almost unreduced, unlike the other four
+sources' 45-minute-gap/whole-conversation grouping. **70,145 embeddings, an exact 1:1 match with
+text units, verified by an explicit `LEFT JOIN ... WHERE ... IS NULL` check returning zero rows**
+(not just equal counts, which the race above shows can quietly hide a real gap). `derive-status`
+reports zero dirty and zero failed across all 14 registered derivers. `semantic-search` against
+the real corpus: a query for "grandmother moving into assisted living" correctly surfaced real
+messages from the same "Grandma's Move" thread (`conversation_id` 1758) the 2026-09-24 episode
+review already identified and confirmed as episode claims 3-7 -- independent confirmation, from a
+completely different derivation path, that the semantic layer is finding real, correct signal in
+the corpus, not just returning syntactically valid rows.
+
 ## Verification state
 
 - The repository currently collects 311 tests: non-integration tests plus PostgreSQL-marked
@@ -594,14 +654,15 @@ evidence); ruff clean; `python -m compileall` clean.
    not been re-verified for exact replay against the canonical database (see the canonical baseline
    section above). Low priority: the fix is narrow, unit-tested, and was verified directly against
    the real corpus bytes before merging.
-2. **Implement Phase 6.** [`PHASE6_SEMANTIC_LAYER_IMPLEMENTATION_PLAN.md`](PHASE6_SEMANTIC_LAYER_IMPLEMENTATION_PLAN.md)
-   (published 2026-09-24) scopes `ROADMAP.md` item 5 (semantic retrieval) against the real
-   200,914-message conversational population: `semantic.text_unit`/
-   `semantic.embedding_bge_small_en_v15` (pgvector, `fastembed`-computed, fully local), and a
-   `semantic-search` CLI verb. OCR (item 6) and claim-template growth (item 3) come after. The
-   real, un-fixed `coverage`-dimension weakness the Phase 5 rollout found (see above) is worth a
-   better aggregation before claims lean on that dimension for anything user-facing, but isn't
-   blocking.
+2. **Continue past Phase 6.** Phase 6 (the semantic layer -- `semantic.text_unit`/
+   `semantic.embedding_bge_small_en_v15`, `semantic-search`) is live against the real canonical
+   database as of 2026-09-24: 70,145 real text units, 70,145 real embeddings (exact 1:1, verified),
+   zero dirty/failed across all 14 derivers -- see "Phase 6 semantic layer: rollout" above. Next
+   per `ROADMAP.md`: item 6 (OCR/transcription, explicitly deferred out of Phase 6), semantic
+   *annotation*/topic-labeling (also explicitly deferred, needs a local generative model and its
+   own invariant-7 discipline), and further claim-template growth (item 3). The real, un-fixed
+   `coverage`-dimension weakness the Phase 5 rollout found (see above) is worth a better
+   aggregation before claims lean on that dimension for anything user-facing, but isn't blocking.
 3. **Continue the operational track.** Encrypted backup/restore, integrity audits, sensitive-field
    controls, incremental scheduling, performance budgets, derived-data invalidation, and corpus
    exportability remain permanent requirements.

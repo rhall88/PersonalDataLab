@@ -166,6 +166,16 @@ def test_sync_dirties_local_and_propagates_across_the_month_boundary(database_en
         ("measure_interaction_dynamics", "GLOBAL"),
         ("signal_interaction_state", "GLOBAL"),
         ("know_claim_evaluate", "GLOBAL"),
+        # semantic_text_unit is HALO on both sides (lookback_halo="1 days",
+        # lookahead_halo="1 days") -- as a root, the fix above expands a change anywhere in
+        # March through that same halo against the whole month's boundary, touching Feb 29
+        # (March 1 minus a day) and April 1 (March 31 plus a day) too, not just March itself.
+        ("semantic_text_unit", "google:2024-02"),
+        ("semantic_text_unit", "google:2024-03"),
+        ("semantic_text_unit", "google:2024-04"),
+        ("semantic_embedding_bge_small", "google:2024-02"),
+        ("semantic_embedding_bge_small", "google:2024-03"),
+        ("semantic_embedding_bge_small", "google:2024-04"),
     }
 
 
@@ -402,6 +412,15 @@ def test_run_computes_daily_and_7d_rows(database_engine: Engine) -> None:
         ("source_activity_7d", "google:2024-04"),
         ("measure_coverage", "google:2024-03"),
         ("measure_metric_daily", "google:2024-03"),
+        # semantic_text_unit/semantic_embedding_bge_small are LOCAL/HALO, not GLOBAL, so they
+        # run in a plain (non --global) derive_run too -- see the dirty-set test above for why
+        # three months each, not just March.
+        ("semantic_text_unit", "google:2024-02"),
+        ("semantic_text_unit", "google:2024-03"),
+        ("semantic_text_unit", "google:2024-04"),
+        ("semantic_embedding_bge_small", "google:2024-02"),
+        ("semantic_embedding_bge_small", "google:2024-03"),
+        ("semantic_embedding_bge_small", "google:2024-04"),
     }
 
     with database_engine.connect() as connection:

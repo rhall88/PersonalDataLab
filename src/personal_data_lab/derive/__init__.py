@@ -18,7 +18,7 @@ from . import derivers as _derivers  # noqa: F401 -- import side effect populate
 from .changefeed import advance_cursor, cursor_value, read_dirty_local_keys
 from .derivers.metrics import sync_metric_catalog
 from .registry import REGISTRY, DeriverRegistry
-from .scheduler import backfill_new_derivers, mark_dirty_and_propagate
+from .scheduler import _expand_for_downstream, backfill_new_derivers, mark_dirty_and_propagate
 from .versioning import VersioningError, ensure_deriver_version
 from .versioning import promote as _promote
 from .worker import WorkerOutcome, run_pending
@@ -83,7 +83,18 @@ def sync(
         epoch_id = advance_cursor(connection, max_run_id=max_run_id, cursor_name=cursor_name)
         roots = [deriver_obj for deriver_obj in registry if not deriver_obj.inputs]
         for root in roots:
-            mark_dirty_and_propagate(connection, root.name, dirty_keys)
+            # A real gap Phase 6 surfaced: every prior root deriver was LOCAL, so passing raw
+            # observation-derived dirty_keys straight to mark_dirty_and_propagate was correct --
+            # there is no halo to expand through. semantic_text_unit is the first HALO-class
+            # root: a change in March can affect a session that started in February (the halo
+            # exists precisely so a boundary-crossing case isn't missed), so a root's own keys
+            # need the same partition_class/halo projection _expand_for_downstream already
+            # gives a downstream deriver receiving propagated dirtying -- applied here to a
+            # root receiving raw observation-derived dirtying instead.
+            own_keys = _expand_for_downstream(
+                root.partition_class, root.lookback_halo, root.lookahead_halo, dirty_keys
+            )
+            mark_dirty_and_propagate(connection, root.name, own_keys)
         return SyncOutcome(
             epoch_id=epoch_id, dirtied_local_keys=len(dirty_keys), backfilled_derivers=backfilled
         )

@@ -167,8 +167,12 @@ explicit disposition rather than optimistic format assumptions.
    `signal.interaction_state` for per-correspondent communication-pattern segmentation. See
    `PROJECT_STATE.md`'s Phase 4 rollout section.
 5. ~~**Semantic retrieval:** deterministic chunking and locally controlled embeddings as
-   disposable derived data, never as canonical evidence.~~ **Plan published 2026-09-24** --
-   see [`PHASE6_SEMANTIC_LAYER_IMPLEMENTATION_PLAN.md`](PHASE6_SEMANTIC_LAYER_IMPLEMENTATION_PLAN.md).
+   disposable derived data, never as canonical evidence.~~ **Done 2026-09-24** (schema version 17,
+   `semantic.text_unit`/`semantic.embedding_bge_small_en_v15`): 70,145 real text units and
+   70,145 real embeddings against the real canonical database, exact 1:1 match independently
+   verified, `semantic-search` CLI live. See
+   [`PHASE6_SEMANTIC_LAYER_IMPLEMENTATION_PLAN.md`](PHASE6_SEMANTIC_LAYER_IMPLEMENTATION_PLAN.md)
+   and `PROJECT_STATE.md`'s "Phase 6 semantic layer: rollout" for full evidence.
 6. **Optional media enrichment:** OCR, transcription, and document/image analysis only in a
    separately versioned derived layer. Core ingestion never fabricates these results.
 
@@ -258,6 +262,7 @@ chain must never depend on an embedding model, UI, or agent remaining available.
 | Completed 2026-09-24 | Fix the recurring new-deriver onboarding gap | `sync()` now backfills any deriver seeing its first-ever `derive.deriver_version` row from its upstream's (or, for a root, `declare.source_contract`'s) existing partition space, permanently replacing the one-off script each of Phases 1/3/4 needed on rollout; 4 new tests, 361 total passing, ruff clean — see `PROJECT_STATE.md`'s "New-deriver onboarding fix" |
 | Completed 2026-09-24 | Phase 2/4 human review session | Identity: both cross-source name-candidates confirmed and merged, queue now empty. Episodes: `episode-confirm`/`episode-reject` built (didn't exist), 8/9 detected episodes confirmed with real evidence-backed labels, 1 left honestly unresolved, 1 additional declared episode added for a death the automatic detector missed entirely — see `PROJECT_STATE.md`'s "Done 2026-09-24" notes (private details intentionally not in this repo) |
 | Completed 2026-09-24 | Phase 5: claims + evidence challenge | Schema (`know.claim`, corrected same-day from a separate child table to inline JSONB evidence), `know_claim_evaluate` runtime, `claims-list`/`claims-why` CLI, and a real scheduler ordering defect found and fixed (`derive/worker.py`); rolled out against the real canonical database, 1,181 real claims, every cited evidence row independently re-fetched and matched exactly by `claims-why` — see `PROJECT_STATE.md`'s "Phase 5 claims ledger: rollout" |
-| Then | OCR/transcription, chunks, and embeddings | Every derived object cites evidence, is versioned, and can be removed without changing source truth |
+| Completed 2026-09-24 | Phase 6: semantic layer (text units + local embeddings) | Schema (`semantic.text_unit`/`semantic.embedding_bge_small_en_v15`, pgvector), `semantic_text_unit`/`semantic_embedding_bge_small` derivers (`fastembed`/`BAAI/bge-small-en-v1.5`, fully local), `semantic-search` CLI; found and fixed a second scheduler gap (HALO-class root dirtying) and a real concurrency race (operational mistake, not a code defect, self-diagnosed and corrected with zero data loss); rolled out against the real canonical database, 70,145 real text units, 70,145 real embeddings (exact 1:1, independently verified), `semantic-search` correctly surfacing real messages from the same thread the 2026-09-24 episode review already confirmed — see `PROJECT_STATE.md`'s "Phase 6 semantic layer: rollout" |
+| Then | OCR/transcription; semantic annotation/topic-labeling | Every derived object cites evidence, is versioned, and can be removed without changing source truth |
 | Final product track | Timeline, exploration, analytics, read-only MCP, and agents | Fast normal queries, permission boundaries, and evidence-citing answers |
 

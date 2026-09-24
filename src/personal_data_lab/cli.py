@@ -35,6 +35,7 @@ from .database import (
 from .derive import asof
 from .derive.derivers.claims import claim_why, list_claims
 from .derive.derivers.episode import confirm_episode, declare_episode, list_episodes, reject_episode
+from .derive.derivers.semantic import search as semantic_search
 from .facebook_export.inventory import inspect_facebook
 from .facebook_export.inventory import render_inventory_table as render_facebook_table
 from .facebook_export.orchestrator import import_facebook_all
@@ -442,6 +443,13 @@ def _parser() -> argparse.ArgumentParser:
     )
     claims_why.add_argument("claim_id", type=int)
     claims_why.add_argument("--database-url", help="overrides DATABASE_URL from .env")
+    semantic_search_parser = subparsers.add_parser(
+        "semantic-search", help="nearest-neighbor search over local text-unit embeddings"
+    )
+    semantic_search_parser.add_argument("query")
+    semantic_search_parser.add_argument("--limit", type=int, default=10)
+    semantic_search_parser.add_argument("--source")
+    semantic_search_parser.add_argument("--database-url", help="overrides DATABASE_URL from .env")
     declare_add = subparsers.add_parser("declare-add", help="record a user-asserted declaration")
     declare_add.add_argument(
         "kind",
@@ -1419,6 +1427,11 @@ def main(argv: Sequence[str] | None = None) -> int:
             print(f"error: {error}", file=sys.stderr, flush=True)
             return 1
         print(json.dumps(report, indent=2, default=str))
+        return 0
+    if args.command == "semantic-search":
+        engine = _resolve_guarded_engine(args.database_url, canonical_import=False)
+        hits = semantic_search(engine, args.query, limit=args.limit, source=args.source)
+        print(json.dumps(hits, indent=2, default=str))
         return 0
     if args.command == "declare-add":
         engine = _resolve_guarded_engine(args.database_url, canonical_import=False)
