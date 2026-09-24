@@ -223,6 +223,7 @@ tracked migrations:
 | 14 | `signal`/`episode` schemas: Phase 4's baselines, change points, anomalies, interaction dynamics/states, and declared/detected episodes. |
 | 15 | `know.claim`/`know.claim_evidence`: Phase 5's claims ledger schema as first designed. No canonical table altered. |
 | 16 | Corrects migration 15: drops `know.claim_evidence`, adds `know.claim.evidence` (inline JSONB) instead -- this project's deriver framework writes one output table per `compute()` call with no `RETURNING`, so a claim and a child evidence row referencing its worker-generated id can never be written together; `episode.episode.evidence` had already solved this exact problem the same way. Discovered building the runtime, not caught at schema-review time. No canonical table altered. |
+| 17 | `semantic.text_unit`/`semantic.embedding_bge_small_en_v15`: Phase 6's semantic layer (`PHASE6_SEMANTIC_LAYER_IMPLEMENTATION_PLAN.md`), pgvector-backed text units and their local embeddings. Schema only in this PR; the `semantic_text_unit`/`semantic_embedding_bge_small` derivers and `semantic-search` CLI are the next PR. No canonical table altered. |
 
 Apple, Facebook, iMessages, OpenAI, and Anthropic v2 required no later schema migration because the
 version-7 universal record, event, asset, and relationship model already expresses their data.

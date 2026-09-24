@@ -1236,4 +1236,36 @@ CREATE TABLE know.claim (
 
 CREATE INDEX claim_template_idx ON know.claim (template, class);
 
-INSERT INTO schema_migrations (version) VALUES (2), (3), (4), (5), (6), (7), (8), (9), (10), (11), (12), (13), (14), (15), (16) ON CONFLICT DO NOTHING;
+CREATE SCHEMA IF NOT EXISTS semantic;
+
+-- One row per text unit (PHASE6_SEMANTIC_LAYER_IMPLEMENTATION_PLAN.md decision 2: 45-minute-gap
+-- sessions for facebook/imessages, existing conversation_id boundaries for openai/anthropic, one
+-- unit per message for google mail).
+CREATE TABLE semantic.text_unit (
+    id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    source TEXT NOT NULL,
+    conversation_id BIGINT REFERENCES conversations(id),
+    event_ids BIGINT[] NOT NULL,
+    started_at TIMESTAMPTZ NOT NULL,
+    ended_at TIMESTAMPTZ NOT NULL,
+    text TEXT NOT NULL,
+    truncated BOOLEAN NOT NULL DEFAULT FALSE,
+    computed_epoch_id BIGINT NOT NULL REFERENCES derive.evidence_epoch(id),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX text_unit_source_started_idx ON semantic.text_unit (source, started_at);
+CREATE INDEX text_unit_conversation_idx ON semantic.text_unit (conversation_id);
+
+-- One embedding table per embedding space -- BAAI/bge-small-en-v1.5 is 384-dimensional.
+CREATE TABLE semantic.embedding_bge_small_en_v15 (
+    text_unit_id BIGINT PRIMARY KEY REFERENCES semantic.text_unit(id) ON DELETE CASCADE,
+    vector vector(384) NOT NULL,
+    computed_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX embedding_bge_small_en_v15_hnsw_idx
+    ON semantic.embedding_bge_small_en_v15
+    USING hnsw (vector vector_cosine_ops);
+
+INSERT INTO schema_migrations (version) VALUES (2), (3), (4), (5), (6), (7), (8), (9), (10), (11), (12), (13), (14), (15), (16), (17) ON CONFLICT DO NOTHING;
