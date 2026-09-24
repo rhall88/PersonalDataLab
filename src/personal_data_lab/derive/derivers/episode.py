@@ -50,6 +50,80 @@ def declare_episode(engine: Engine, *, start: date, end: date, label: str, note:
         ).scalar_one()
 
 
+_EPISODE_UPDATE_COLUMNS = (
+    "id, kind, status, start_range_low, start_range_high, end_range_low, end_range_high, "
+    "label, note, evidence, created_at"
+)
+
+
+def _resolve_candidate(connection: Connection, episode_id: int):
+    """Shared guard for confirm_episode/reject_episode: only a kind='detected',
+    status='candidate' row can transition. A declared episode is already 'confirmed' at
+    creation (see declare_episode above), and re-deciding an already-decided detected row would
+    silently discard the record of who decided what -- the same one-way-decision precedent
+    identity merge/split already established for identity_links.
+    """
+    row = connection.execute(
+        text("SELECT kind, status FROM episode.episode WHERE id = :id FOR UPDATE"),
+        {"id": episode_id},
+    ).first()
+    if row is None:
+        raise ValueError(f"no episode with id {episode_id}")
+    if row.kind != "detected":
+        raise ValueError(f"episode {episode_id} is kind={row.kind!r}, not 'detected'")
+    if row.status != "candidate":
+        raise ValueError(f"episode {episode_id} is already status={row.status!r}")
+
+
+def confirm_episode(
+    engine: Engine, episode_id: int, *, label: str | None = None, note: str | None = None
+) -> dict:
+    """Confirm a detected candidate episode in place: status -> 'confirmed', optionally
+    attaching a human label/note naming what the clustered change points actually were.
+    `episode_detect_candidates`'s clear_partition only ever removes kind='detected' AND
+    status='candidate' rows, so a confirmed row is never touched by later re-detection --
+    it becomes permanent, inspectable evidence of a human decision, the same as a declared
+    episode.
+    """
+    with engine.begin() as connection:
+        _resolve_candidate(connection, episode_id)
+        updated = connection.execute(
+            text(
+                f"""
+                UPDATE episode.episode
+                SET status = 'confirmed', label = COALESCE(:label, label),
+                    note = COALESCE(:note, note)
+                WHERE id = :id
+                RETURNING {_EPISODE_UPDATE_COLUMNS}
+                """
+            ),
+            {"id": episode_id, "label": label, "note": note},
+        ).mappings().one()
+        return dict(updated)
+
+
+def reject_episode(engine: Engine, episode_id: int, *, note: str | None = None) -> dict:
+    """Reject a detected candidate episode in place: status -> 'rejected', permanently --
+    same non-regeneration guarantee as confirm_episode. Rejecting records "these change points
+    don't correspond to anything real" as durably as confirming records the opposite, rather
+    than leaving the candidate to resurface indefinitely on every future `derive run`.
+    """
+    with engine.begin() as connection:
+        _resolve_candidate(connection, episode_id)
+        updated = connection.execute(
+            text(
+                f"""
+                UPDATE episode.episode
+                SET status = 'rejected', note = COALESCE(:note, note)
+                WHERE id = :id
+                RETURNING {_EPISODE_UPDATE_COLUMNS}
+                """
+            ),
+            {"id": episode_id, "note": note},
+        ).mappings().one()
+        return dict(updated)
+
+
 def list_episodes(engine: Engine, *, kind: str | None = None) -> list[dict]:
     query = (
         "SELECT id, kind, status, start_range_low, start_range_high, end_range_low, "

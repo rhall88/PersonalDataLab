@@ -366,6 +366,79 @@ def test_episode_declare_round_trips_through_list(database_engine: Engine) -> No
     assert all(e["status"] == "confirmed" for e in declared if e["id"] == episode_id)
 
 
+def _insert_detected_candidate(engine: Engine, *, start, end) -> int:
+    with engine.begin() as connection:
+        return connection.execute(
+            text(
+                """
+                INSERT INTO episode.episode
+                    (kind, status, start_range_low, start_range_high, end_range_low,
+                     end_range_high, evidence)
+                VALUES ('detected', 'candidate', :start, :start, :end, :end, '{}'::jsonb)
+                RETURNING id
+                """
+            ),
+            {"start": start, "end": end},
+        ).scalar_one()
+
+
+def test_episode_confirm_sets_status_and_label(database_engine: Engine) -> None:
+    from datetime import date
+
+    from personal_data_lab.derive.derivers.episode import confirm_episode
+
+    episode_id = _insert_detected_candidate(
+        database_engine, start=date(2024, 1, 1), end=date(2024, 1, 10)
+    )
+
+    confirmed = confirm_episode(database_engine, episode_id, label="Job search", note="real")
+
+    assert confirmed["status"] == "confirmed"
+    assert confirmed["label"] == "Job search"
+    assert confirmed["note"] == "real"
+    # clear_partition only ever removes kind='detected' AND status='candidate' rows -- confirm
+    # this survives as 'detected'/'confirmed', not silently reclassified.
+    again = list_episodes(database_engine, kind="detected")
+    assert any(e["id"] == episode_id and e["status"] == "confirmed" for e in again)
+
+
+def test_episode_reject_sets_status_permanently(database_engine: Engine) -> None:
+    from datetime import date
+
+    from personal_data_lab.derive.derivers.episode import confirm_episode, reject_episode
+
+    episode_id = _insert_detected_candidate(
+        database_engine, start=date(2024, 2, 1), end=date(2024, 2, 5)
+    )
+
+    rejected = reject_episode(database_engine, episode_id, note="coincidence, not a real period")
+
+    assert rejected["status"] == "rejected"
+    assert rejected["note"] == "coincidence, not a real period"
+    with pytest.raises(ValueError, match="already status='rejected'"):
+        confirm_episode(database_engine, episode_id)
+
+
+def test_episode_confirm_rejects_an_unknown_id(database_engine: Engine) -> None:
+    from personal_data_lab.derive.derivers.episode import confirm_episode
+
+    with pytest.raises(ValueError, match="no episode with id"):
+        confirm_episode(database_engine, 999_999_999)
+
+
+def test_episode_confirm_rejects_a_non_detected_kind(database_engine: Engine) -> None:
+    from datetime import date
+
+    from personal_data_lab.derive.derivers.episode import confirm_episode
+
+    declared_id = declare_episode(
+        database_engine, start=date(2024, 4, 1), end=date(2024, 4, 5), label="Already declared"
+    )
+
+    with pytest.raises(ValueError, match="not 'detected'"):
+        confirm_episode(database_engine, declared_id)
+
+
 # --- exit test 4: 1:1 interaction dynamics match a hand count; a group thread is excluded ------
 
 
