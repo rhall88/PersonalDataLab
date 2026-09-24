@@ -25,6 +25,7 @@ own, the same way `semantic_text_unit` doesn't judge message content either.
 from __future__ import annotations
 
 import os
+import re
 import tempfile
 import zipfile
 from collections.abc import Iterator
@@ -36,6 +37,7 @@ from sqlalchemy import text
 from sqlalchemy.engine import Connection
 
 from ...apple_export.inventory import AppleInventoryError, open_apple_locator
+from ...facebook_export.inventory import FacebookInventoryError, open_facebook_locator
 from ...fingerprints import fingerprint_value
 from ..partitions import parse_local_key
 from ..registry import ComputeResult, deriver
@@ -67,12 +69,23 @@ def _open_zip_member(original_path: str) -> Iterator[BinaryIO]:
 
 @contextmanager
 def _open_asset_bytes(source: str, original_path: str) -> Iterator[BinaryIO]:
-    """Apple's locator format is its own nested-ZIP-chain JSON (`open_apple_locator`, already
-    built for exactly this in `apple_export/inventory.py`); every other source uses the simpler
-    `<zip>!/<member>` convention; a path with neither is a plain file on disk.
+    """Apple and Facebook each have their own JSON locator format (`open_apple_locator`/
+    `open_facebook_locator`, already built for exactly this in their own export packages --
+    reused here rather than re-implemented); google/openai use the simpler `<zip>!/<member>`
+    convention `_open_zip_member` handles; a path with neither is a plain file on disk.
+
+    A real bug found in the first real rollout: this function originally had no Facebook case
+    at all, so all 6 real Facebook audio assets fell through to the `!/`-based path and failed
+    -- `original_path` for Facebook is the same kind of whole-locator JSON blob Apple's is, not a
+    `!/`-splittable string, so there was never a "generic" path that could have covered it by
+    accident.
     """
     if source == "apple":
         with open_apple_locator(original_path) as stream:
+            yield stream
+        return
+    if source == "facebook":
+        with open_facebook_locator(original_path) as stream:
             yield stream
         return
     if "!/" in original_path:
@@ -106,6 +119,23 @@ def _clear_transcripts(connection: Connection, partition_key: str) -> None:
     )
 
 
+_SAFE_SUFFIX = re.compile(r"^\.[A-Za-z0-9]{1,5}$")
+
+
+def _temp_file_suffix(filename: str) -> str:
+    """A real bug the first real rollout found: deriving the temp file's suffix from
+    `original_path` broke Apple and Facebook, whose `original_path` is a whole locator JSON blob,
+    not a plain filename -- `Path(...).suffix` on that blob produced garbage like
+    `.m4a",5]]}`, which Windows then rejected outright (`OSError: [Errno 22] Invalid argument`)
+    for every single Apple/Facebook file, not just a few. `assets.filename` is always a plain,
+    clean filename regardless of source-specific locator format -- use that instead, and validate
+    the extracted suffix is actually a short, simple extension before trusting it, rather than
+    assuming any given filename is well-formed.
+    """
+    suffix = Path(filename).suffix
+    return suffix if _SAFE_SUFFIX.match(suffix) else ".audio"
+
+
 def _transcribe_one(asset, epoch_id: int) -> dict:
     base = {
         "asset_id": asset.id, "source": asset.source, "model": _WHISPER_MODEL_NAME,
@@ -114,13 +144,13 @@ def _transcribe_one(asset, epoch_id: int) -> dict:
     try:
         with _open_asset_bytes(asset.source, asset.original_path) as stream:
             data = stream.read()
-    except (OSError, AppleInventoryError, zipfile.BadZipFile, KeyError) as error:
+    except (OSError, AppleInventoryError, FacebookInventoryError, zipfile.BadZipFile, KeyError) as error:
         return {
             **base, "language": None, "text": "", "duration_seconds": None,
             "status": "unreadable", "error": str(error)[:500],
         }
 
-    suffix = Path(asset.original_path.split("!/")[-1]).suffix or ".audio"
+    suffix = _temp_file_suffix(asset.filename)
     tmp_path = None
     try:
         with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
@@ -159,7 +189,7 @@ def media_transcribe_whisper(connection: Connection, partition_key: str, epoch_i
     if start is None:
         rows = connection.execute(
             text(
-                "SELECT id, source, original_path FROM assets "
+                "SELECT id, source, original_path, filename FROM assets "
                 "WHERE source = :source AND mime_type LIKE 'audio/%' "
                 "AND lifecycle_state = 'active' AND COALESCE(captured_at, created_at) IS NULL "
                 "ORDER BY id"
@@ -169,7 +199,7 @@ def media_transcribe_whisper(connection: Connection, partition_key: str, epoch_i
     else:
         rows = connection.execute(
             text(
-                "SELECT id, source, original_path FROM assets "
+                "SELECT id, source, original_path, filename FROM assets "
                 "WHERE source = :source AND mime_type LIKE 'audio/%' "
                 "AND lifecycle_state = 'active' "
                 "AND COALESCE(captured_at, created_at) >= :start "

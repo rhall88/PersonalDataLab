@@ -24,6 +24,7 @@ from personal_data_lab.derive import sync as derive_sync
 from personal_data_lab.derive.derivers.media import (
     _open_asset_bytes,
     _open_zip_member,
+    _temp_file_suffix,
     _transcribe_one,
 )
 from personal_data_lab.models import NormalizedAsset, ParsedExport
@@ -87,6 +88,20 @@ def _silent_wav_bytes(seconds: float = 1.0) -> bytes:
     return buf.getvalue()
 
 
+def test_temp_file_suffix_uses_filename_not_a_locator_blob() -> None:
+    """Real bug the first real rollout found: deriving the suffix from a source's original_path
+    (a whole locator JSON blob for Apple/Facebook, not a plain filename) produced garbage like
+    `.m4a",5]]}`, which Windows then rejected outright for every single Apple/Facebook file.
+    assets.filename is always a plain, clean filename regardless of locator format.
+    """
+    assert _temp_file_suffix("New Recording 5.m4a") == ".m4a"
+    assert _temp_file_suffix("voicemail.mp3") == ".mp3"
+    # A malformed or extension-less filename falls back to a safe default rather than producing
+    # an invalid temp-file suffix.
+    assert _temp_file_suffix('weird",5]]}') == ".audio"
+    assert _temp_file_suffix("no_extension") == ".audio"
+
+
 def test_open_zip_member_reads_the_right_bytes(tmp_path) -> None:
     zip_path = tmp_path / "archive.zip"
     payload = b"hello from inside the zip"
@@ -146,6 +161,7 @@ def test_transcribe_one_real_whisper_call_on_a_tiny_synthetic_file(tmp_path) -> 
         id = 1
         source = "google"
         original_path = str(wav_path)
+        filename = "silent.wav"
 
     row = _transcribe_one(_FakeAsset(), epoch_id=1)
 
@@ -162,6 +178,7 @@ def test_transcribe_one_unreadable_asset_reports_unreadable_not_a_crash() -> Non
         id = 2
         source = "google"
         original_path = "/does/not/exist.wav"
+        filename = "missing.wav"
 
     row = _transcribe_one(_FakeAsset(), epoch_id=1)
 
