@@ -6,7 +6,7 @@ from datetime import date
 from sqlalchemy import text
 from sqlalchemy.engine import Connection
 
-from .partitions import GLOBAL_PARTITION_KEY, halo_months, interval_to_days, month_key
+from .partitions import GLOBAL_PARTITION_KEY, halo_months, interval_to_days, month_key, undated_key
 from .registry import Deriver
 from .versioning import active_version_id
 
@@ -145,13 +145,19 @@ def _root_keys_from_contracts(connection: Connection, partition_class: str) -> f
     if partition_class == "GLOBAL":
         return frozenset({GLOBAL_PARTITION_KEY})
     rows = connection.execute(
-        text(
-            "SELECT source, covered_range_start, covered_range_end FROM declare.source_contract "
-            "WHERE covered_range_start IS NOT NULL AND covered_range_end IS NOT NULL"
-        )
+        text("SELECT source, covered_range_start, covered_range_end FROM declare.source_contract")
     ).all()
     keys: set[str] = set()
     for row in rows:
+        # Every declared source gets its own undated bucket seeded regardless of whether it also
+        # has a covered_range -- a real gap Phase 6's media-transcription rollout found: 487 of
+        # 494 real audio assets (apple/facebook/google) have neither captured_at nor created_at
+        # at all, so they only ever exist in the undated partition, which this function never
+        # seeded before. The dated month range below covers whatever DOES have a usable date;
+        # this covers what doesn't.
+        keys.add(undated_key(row.source))
+        if row.covered_range_start is None or row.covered_range_end is None:
+            continue
         cursor = date(row.covered_range_start.year, row.covered_range_start.month, 1)
         while cursor <= row.covered_range_end:
             keys.add(month_key(row.source, cursor))

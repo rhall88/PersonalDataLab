@@ -653,9 +653,23 @@ filenames during grounding. He explicitly chose to transcribe the full library w
 exclusions. Not filtered by this code -- that was his call to make, not this session's to make for
 him, and it's recorded here rather than silently acted on.
 
-Real rollout against the canonical database: in progress as of this write-up (~470 real audio
-assets across facebook/google/apple/openai/imessages, real total bytes ~8.6GB). Final counts and
-verification to follow once the run completes -- see the next dated update to this file.
+**A real, more foundational bug the first real rollout attempt found**: the first `derive-run`
+against the canonical database finished almost immediately and produced only 7 transcripts (5
+succeeded, 2 unreadable) out of 494 real audio assets -- `derive-status` showed zero dirty, so
+nothing *looked* wrong. Diagnosed directly: **487 of 494 real audio assets (apple/facebook/google)
+have neither `captured_at` nor `created_at` at all**, so they only ever belong in the
+`source:undated` partition bucket -- and `scheduler.py`'s `_root_keys_from_contracts` (the
+function `backfill_new_derivers` uses to seed a brand-new root deriver's initial partition space,
+added this same session for the new-deriver-onboarding fix) only ever generated *dated* month keys
+from a contract's `covered_range`, never the undated bucket. `know_claim_evaluate` doesn't use
+dated LOCAL keys at all and `semantic_text_unit`'s events almost always have a real timestamp, so
+neither earlier use of this function that same evening exposed the gap -- `media_transcribe_whisper`
+is the first root deriver whose real underlying data is overwhelmingly undated. Fixed by seeding
+every declared source's undated bucket unconditionally, in addition to its dated range (see
+`scheduler.py`); one new assertion added to the existing backfill test proving the undated key is
+now seeded, not just dated months. The real canonical database's `apple`/`facebook`/`google`
+undated partitions were then marked dirty by hand and re-run to actually process the missing 487
+files -- see the next dated update below for final rollout numbers.
 
 8 new tests (`test_media.py`: zip-member reading, source dispatch including a real unreadable-path
 case, deriver registration, one genuine end-to-end call through the real Whisper model on a tiny

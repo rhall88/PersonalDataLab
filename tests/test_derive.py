@@ -229,8 +229,9 @@ def test_backfill_seeds_a_new_root_deriver_from_declared_contracts(database_engi
         # A root deriver's key space is every declared source's covered_range, not just this
         # test's own -- declare.source_contract is standing config other test modules also
         # declare into and never truncate (same convention as derive.deriver*), so this only
-        # asserts our source's own three months are present, not the exact total.
-        assert seeded[name] >= 3
+        # asserts our source's own three months (plus its undated bucket) are present, not the
+        # exact total.
+        assert seeded[name] >= 4
         dirty = set(
             connection.execute(
                 text(
@@ -243,7 +244,12 @@ def test_backfill_seeds_a_new_root_deriver_from_declared_contracts(database_engi
                 {"name": name},
             ).scalars()
         )
-        assert {f"{source}:2023-01", f"{source}:2023-02", f"{source}:2023-03"} <= dirty
+        # The undated bucket is seeded too -- a real gap found during Phase 6's media rollout:
+        # 487 of 494 real audio assets have neither captured_at nor created_at at all, so they
+        # only ever exist there, and the original backfill logic never seeded it.
+        assert {
+            f"{source}:2023-01", f"{source}:2023-02", f"{source}:2023-03", f"{source}:undated",
+        } <= dirty
 
 
 def test_backfill_seeds_a_new_local_deriver_from_upstream_partition_state(
