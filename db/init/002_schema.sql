@@ -1268,4 +1268,25 @@ CREATE INDEX embedding_bge_small_en_v15_hnsw_idx
     ON semantic.embedding_bge_small_en_v15
     USING hnsw (vector vector_cosine_ops);
 
-INSERT INTO schema_migrations (version) VALUES (2), (3), (4), (5), (6), (7), (8), (9), (10), (11), (12), (13), (14), (15), (16), (17) ON CONFLICT DO NOTHING;
+CREATE SCHEMA IF NOT EXISTS media;
+
+-- One row per audio asset (at most -- see migration 018's comment on `status`).
+CREATE TABLE media.transcript (
+    id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    asset_id BIGINT NOT NULL REFERENCES assets(id) ON DELETE CASCADE,
+    source TEXT NOT NULL,
+    model TEXT NOT NULL,
+    language TEXT,
+    text TEXT NOT NULL DEFAULT '',
+    duration_seconds DOUBLE PRECISION,
+    status TEXT NOT NULL CHECK (status IN ('succeeded', 'failed', 'unreadable')),
+    error TEXT,
+    computed_epoch_id BIGINT NOT NULL REFERENCES derive.evidence_epoch(id),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE (asset_id)
+);
+
+CREATE INDEX transcript_source_idx ON media.transcript (source);
+CREATE INDEX transcript_status_idx ON media.transcript (status);
+
+INSERT INTO schema_migrations (version) VALUES (2), (3), (4), (5), (6), (7), (8), (9), (10), (11), (12), (13), (14), (15), (16), (17), (18) ON CONFLICT DO NOTHING;

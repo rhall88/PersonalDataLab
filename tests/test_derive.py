@@ -176,6 +176,9 @@ def test_sync_dirties_local_and_propagates_across_the_month_boundary(database_en
         ("semantic_embedding_bge_small", "google:2024-02"),
         ("semantic_embedding_bge_small", "google:2024-03"),
         ("semantic_embedding_bge_small", "google:2024-04"),
+        # media_transcribe_whisper is LOCAL (no halo), so just the one exact month, unlike
+        # semantic_text_unit's HALO expansion above.
+        ("media_transcribe_whisper", "google:2024-03"),
     }
 
 
@@ -421,6 +424,9 @@ def test_run_computes_daily_and_7d_rows(database_engine: Engine) -> None:
         ("semantic_embedding_bge_small", "google:2024-02"),
         ("semantic_embedding_bge_small", "google:2024-03"),
         ("semantic_embedding_bge_small", "google:2024-04"),
+        # media_transcribe_whisper is LOCAL (no halo), so just the one exact month, unlike
+        # semantic_text_unit's HALO expansion above.
+        ("media_transcribe_whisper", "google:2024-03"),
     }
 
     with database_engine.connect() as connection:

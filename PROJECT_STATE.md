@@ -628,6 +628,40 @@ review already identified and confirmed as episode claims 3-7 -- independent con
 completely different derivation path, that the semantic layer is finding real, correct signal in
 the corpus, not just returning syntactically valid rows.
 
+## Media transcription: item 6 started (2026-09-25)
+
+Schema (018, `media.transcript`) and runtime (`derive/derivers/media.py`'s
+`media_transcribe_whisper`) built and shipped together in one PR, not this project's usual
+plan-then-schema-then-runtime cadence -- an explicit, one-off trade-off at Ry's request to move
+fast and get a long-running job going, not a new default for future work.
+
+Local transcription via `faster-whisper` (CTranslate2, `small` model, int8, fully local CPU --
+same dependency ethos as Phase 6's embedding model). `media_transcribe_whisper` is LOCAL, keyed
+by `source:YYYY-MM` via `COALESCE(captured_at, created_at)` (assets have no natural month key the
+way events do; `changefeed.py`'s own `WATCHED_KINDS` already uses that same expression) --
+deliberately not GLOBAL/single-partition, so a crash partway through an hours-long run only loses
+the one in-flight partition's work, not everything already transcribed. Reuses
+`apple_export.inventory.open_apple_locator` for Apple's nested-zip locator format; a new small
+helper (`_open_zip_member`) handles the simpler `<zip>!/<member>` convention every other source
+uses. A file that can't be opened is recorded `status='unreadable'`; a file Whisper itself fails
+on is recorded `status='failed'` -- neither crashes the partition's other files, and neither is
+silently omitted (invariant 2).
+
+**Before this ran, Ry was told plainly what the real audio population contains**: some of it is
+intimate/personal recordings, at least one naming a real partner, discovered while checking real
+filenames during grounding. He explicitly chose to transcribe the full library with no
+exclusions. Not filtered by this code -- that was his call to make, not this session's to make for
+him, and it's recorded here rather than silently acted on.
+
+Real rollout against the canonical database: in progress as of this write-up (~470 real audio
+assets across facebook/google/apple/openai/imessages, real total bytes ~8.6GB). Final counts and
+verification to follow once the run completes -- see the next dated update to this file.
+
+8 new tests (`test_media.py`: zip-member reading, source dispatch including a real unreadable-path
+case, deriver registration, one genuine end-to-end call through the real Whisper model on a tiny
+synthetic file, and partition scoping against a real imported asset). 387 tests pass, ruff clean,
+compileall clean.
+
 ## Verification state
 
 - The repository currently collects 311 tests: non-integration tests plus PostgreSQL-marked
