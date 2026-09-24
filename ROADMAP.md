@@ -181,6 +181,16 @@ of 2026-09-22 — see `PROJECT_STATE.md` for full rollout evidence on each. That
 phase numbering does not map one-to-one onto items 3–6 above; item 3 (claims) remains the next
 item genuinely outstanding in this list.
 
+### Phase 5: claims + evidence challenge — plan published 2026-09-24, not yet implemented
+
+[`PHASE5_IMPLEMENTATION_PLAN.md`](PHASE5_IMPLEMENTATION_PLAN.md) scopes `DERIVED_MEANING_ARCHITECTURE.md`
+section 15's phase 5 against what already exists after Phases 0–4: a `know.claim`/
+`know.claim_evidence` schema wrapping the real `signal.anomaly` and `episode.episode` rows into
+inspectable claims (two claim templates, `communication_change` and `episode_evidence`), 4 of the
+architecture's 9 confidence dimensions (the ones this corpus can actually compute today), and
+`claims-list`/`claims-why` CLI verbs realizing section 9's evidence inspector without a query
+router or LLM layer this project hasn't built yet. Schema/runtime/rollout are the next PRs.
+
 ## 4. Build user and agent experiences
 
 See [`COCKPIT_VISION.md`](COCKPIT_VISION.md) for the full end-state product vision (an adaptive,
