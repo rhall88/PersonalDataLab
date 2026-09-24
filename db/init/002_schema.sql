@@ -1206,4 +1206,39 @@ CREATE INDEX interaction_dynamics_bucket_idx ON measure.interaction_dynamics (bu
 CREATE INDEX change_point_metric_idx ON signal.change_point (metric_id, at_date);
 CREATE INDEX episode_kind_status_idx ON episode.episode (kind, status);
 
-INSERT INTO schema_migrations (version) VALUES (2), (3), (4), (5), (6), (7), (8), (9), (10), (11), (12), (13), (14) ON CONFLICT DO NOTHING;
+CREATE SCHEMA IF NOT EXISTS know;
+
+-- One row per claim (PHASE5_IMPLEMENTATION_PLAN.md). `class` is assigned by the claim template,
+-- independent of whatever final_inference tag the underlying deriver happens to carry.
+-- `confidence` is a per-dimension profile object -- an inapplicable dimension is simply absent,
+-- never a null standing in for "not computed".
+CREATE TABLE know.claim (
+    id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    template TEXT NOT NULL CHECK (template IN ('communication_change', 'episode_evidence')),
+    template_version TEXT NOT NULL DEFAULT '1',
+    class TEXT NOT NULL CHECK (
+        class IN ('OBSERVED', 'COMPUTED', 'STATISTICAL', 'SEMANTIC', 'DECLARED', 'HYPOTHESIS')
+    ),
+    statement TEXT NOT NULL,
+    subject JSONB NOT NULL DEFAULT '{}'::jsonb,
+    confidence JSONB NOT NULL,
+    status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'superseded')),
+    computed_epoch_id BIGINT NOT NULL REFERENCES derive.evidence_epoch(id),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+-- One row per cited evidence item, referenced by natural key (evidence_ref), not FK -- the same
+-- precedent episode.episode.evidence already set, since every cited table is a GLOBAL
+-- clear-and-replace deriver output with no stable surrogate id to reference safely across runs.
+CREATE TABLE know.claim_evidence (
+    id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    claim_id BIGINT NOT NULL REFERENCES know.claim(id) ON DELETE CASCADE,
+    role TEXT NOT NULL CHECK (role IN ('supports', 'contradicts', 'qualifies', 'contextualizes')),
+    evidence_table TEXT NOT NULL,
+    evidence_ref JSONB NOT NULL
+);
+
+CREATE INDEX claim_template_idx ON know.claim (template, class);
+CREATE INDEX claim_evidence_claim_idx ON know.claim_evidence (claim_id);
+
+INSERT INTO schema_migrations (version) VALUES (2), (3), (4), (5), (6), (7), (8), (9), (10), (11), (12), (13), (14), (15) ON CONFLICT DO NOTHING;

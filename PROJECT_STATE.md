@@ -197,8 +197,10 @@ local execution order, path changes, and repeated exports from becoming accident
 
 ## Schema and migrations
 
-Fresh databases initialize directly at schema version 10. `personal-data-lab migrate` upgrades a
-PR2 database idempotently through the tracked migrations:
+Fresh databases initialize directly at the latest schema version (`db/init/002_schema.sql` is kept
+as a hand-maintained mirror of every migration's cumulative effect, updated alongside each new
+migration file). `personal-data-lab migrate` upgrades a PR2 database idempotently through the
+tracked migrations:
 
 | Version | Purpose |
 |---:|---|
@@ -211,6 +213,11 @@ PR2 database idempotently through the tracked migrations:
 | 9 | `records.actor_person_id` (matching the existing `events` column) + the `identity_links` table for reversible identity merges |
 | 10 | `derive`/`declare`/`policy`/`measure` schemas: the derived-meaning foundation (deriver registry,
      versioning, change feed, partition scheduling, egress policy). No canonical table altered. |
+| 11 | `measure.coverage`: Phase 1's day-grain source coverage against `declare.source_contract`. |
+| 12 | `identity.assertion`/`identity.not_same_as`, `identity_links.tier`/`resolution_version`: Phase 2's append-only rules-tier assertion log underneath the existing manual `identity_links`. |
+| 13 | `derive.metric_def`/`derive.metric_dependency`/`measure.metric_daily`: Phase 3's life-ledger metric catalog and daily values. |
+| 14 | `signal`/`episode` schemas: Phase 4's baselines, change points, anomalies, interaction dynamics/states, and declared/detected episodes. |
+| 15 | `know.claim`/`know.claim_evidence`: Phase 5's claims ledger, wrapping already-computed `signal.anomaly`/`episode.episode` rows into inspectable claims with a confidence profile. Schema only in this PR; the `know_claim_evaluate` deriver that populates these tables is the next PR. No canonical table altered. |
 
 Apple, Facebook, iMessages, OpenAI, and Anthropic v2 required no later schema migration because the
 version-7 universal record, event, asset, and relationship model already expresses their data.
