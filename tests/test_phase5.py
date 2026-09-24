@@ -250,6 +250,68 @@ def test_episode_evidence_claims_by_kind_and_status(database_engine: Engine) -> 
     assert "coincidence, not real" in rejected["statement"]
 
 
+def test_episode_coverage_averages_the_range_not_the_worst_single_day(
+    database_engine: Engine,
+) -> None:
+    """Real weakness the 2026-09-24 Phase 5 rollout found and this fix corrects: a strict minimum
+    across only the literal change-point dates meant one naturally sparse day dragged a whole
+    multi-day episode's coverage to 0.0, even when the rest of its span was well covered. This
+    proves the fix is a genuine mean over the episode's full range, not still a hidden floor.
+    """
+    _settle_one_dummy_event(database_engine)
+
+    with database_engine.begin() as connection:
+        epoch_id = connection.execute(text("SELECT MAX(id) FROM derive.evidence_epoch")).scalar_one()
+        for day, completeness in (("2020-01-01", 1.0), ("2020-01-15", 0.0)):
+            connection.execute(
+                text(
+                    """
+                    INSERT INTO measure.coverage
+                        (source, bucket_start, grain, object_kind, expected, observed,
+                         completeness, computed_epoch_id)
+                    VALUES ('facebook', :day, 'day', 'event', 1, :observed, :completeness, :epoch)
+                    """
+                ),
+                {
+                    "day": day, "observed": int(completeness), "completeness": completeness,
+                    "epoch": epoch_id,
+                },
+            )
+        connection.execute(
+            text(
+                """
+                INSERT INTO episode.episode
+                    (kind, status, start_range_low, start_range_high, end_range_low,
+                     end_range_high, evidence)
+                VALUES ('detected', 'confirmed', '2020-01-01', '2020-01-01', '2020-01-15',
+                        '2020-01-15', CAST(:evidence AS jsonb))
+                """
+            ),
+            {
+                "evidence": json.dumps(
+                    {
+                        "change_points": [
+                            # Deliberately cites only the sparse (completeness=0.0) day -- the
+                            # old min-over-literal-days logic would report 0.0 here.
+                            {"metric": "facebook.messages_count", "source": "facebook",
+                             "date": "2020-01-15"},
+                        ]
+                    }
+                )
+            },
+        )
+
+    _rerun_claims_only(database_engine)
+
+    [claim] = [
+        c for c in list_claims(database_engine, template="episode_evidence")
+        if c["evidence"]["change_points"][0]["date"] == "2020-01-15"
+    ]
+    # Mean of 1.0 (Jan 1) and 0.0 (Jan 15) across the episode's full range, not the 0.0 floor
+    # a strict minimum over just the cited day would have produced.
+    assert claim["confidence"]["coverage"] == pytest.approx(0.5)
+
+
 def test_claims_why_refetches_every_cited_row_independently(database_engine: Engine) -> None:
     _settle_one_dummy_event(database_engine)
 
