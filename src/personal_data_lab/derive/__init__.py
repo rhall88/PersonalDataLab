@@ -9,7 +9,7 @@ are the pieces it composes.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from sqlalchemy import text
 from sqlalchemy.engine import Engine
@@ -18,7 +18,7 @@ from . import derivers as _derivers  # noqa: F401 -- import side effect populate
 from .changefeed import advance_cursor, cursor_value, read_dirty_local_keys
 from .derivers.metrics import sync_metric_catalog
 from .registry import REGISTRY, DeriverRegistry
-from .scheduler import mark_dirty_and_propagate
+from .scheduler import backfill_new_derivers, mark_dirty_and_propagate
 from .versioning import VersioningError, ensure_deriver_version
 from .versioning import promote as _promote
 from .worker import WorkerOutcome, run_pending
@@ -39,6 +39,7 @@ __all__ = [
 class SyncOutcome:
     epoch_id: int | None
     dirtied_local_keys: int
+    backfilled_derivers: dict[str, int] = field(default_factory=dict)
 
     @property
     def is_noop(self) -> bool:
@@ -52,23 +53,40 @@ def sync(
     evidence epoch if anything is new, and dirty every root deriver's affected partitions
     (propagating downstream through the DAG). A no-op sync (nothing new since the cursor)
     closes no epoch and dirties nothing -- this is exit test 1 from the Phase 0 plan.
+
+    Before any of that, any deriver seeing its first-ever `derive.deriver_version` row (i.e.
+    genuinely new to this database, not just freshly cleared) gets backfilled: its initial
+    partition space is seeded from whatever history its upstream (or, for a root deriver,
+    `declare.source_contract`) already has, so a deriver added after the change-feed cursor has
+    already moved past all existing evidence still gets a chance to compute over that evidence.
+    See `scheduler.backfill_new_derivers` for why this exists and how it stays safe to call on
+    every sync, not just the first one after a new deriver ships.
     """
     with engine.begin() as connection:
         registry.sync(connection)
         sync_metric_catalog(connection)
+        known_before = set(
+            connection.execute(
+                text("SELECT DISTINCT deriver_name FROM derive.deriver_version")
+            ).scalars()
+        )
         for deriver_obj in registry:
             ensure_deriver_version(connection, deriver_obj)
+        new_derivers = [d for d in registry if d.name not in known_before]
+        backfilled = backfill_new_derivers(connection, new_derivers)
 
         since = cursor_value(connection, cursor_name=cursor_name)
         dirty_keys, max_run_id = read_dirty_local_keys(connection, since_import_run_id=since)
         if max_run_id is None:
-            return SyncOutcome(epoch_id=None, dirtied_local_keys=0)
+            return SyncOutcome(epoch_id=None, dirtied_local_keys=0, backfilled_derivers=backfilled)
 
         epoch_id = advance_cursor(connection, max_run_id=max_run_id, cursor_name=cursor_name)
         roots = [deriver_obj for deriver_obj in registry if not deriver_obj.inputs]
         for root in roots:
             mark_dirty_and_propagate(connection, root.name, dirty_keys)
-        return SyncOutcome(epoch_id=epoch_id, dirtied_local_keys=len(dirty_keys))
+        return SyncOutcome(
+            epoch_id=epoch_id, dirtied_local_keys=len(dirty_keys), backfilled_derivers=backfilled
+        )
 
 
 def run(

@@ -4,7 +4,7 @@ import hashlib
 import os
 import uuid
 from collections.abc import Iterator
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 
 import pytest
 from sqlalchemy import Engine, text
@@ -13,6 +13,7 @@ from personal_data_lab.database import create_database_engine, import_parsed_exp
 from personal_data_lab.derive import REGISTRY, sync
 from personal_data_lab.derive import rebuild as derive_rebuild
 from personal_data_lab.derive import run as derive_run
+from personal_data_lab.derive.partitions import GLOBAL_PARTITION_KEY
 from personal_data_lab.derive.policy import (
     PolicyError,
     apply_egress_override,
@@ -26,6 +27,7 @@ from personal_data_lab.derive.registry import (
     DeriverRegistry,
     _assert_acyclic,
 )
+from personal_data_lab.derive.scheduler import backfill_new_derivers
 from personal_data_lab.derive.versioning import ensure_deriver_version, promote, version_hash
 from personal_data_lab.models import NormalizedEvent, ParsedExport
 
@@ -171,6 +173,216 @@ def test_second_sync_with_nothing_new_is_a_noop(database_engine: Engine) -> None
     sync(database_engine)
 
     assert sync(database_engine).is_noop
+
+
+# --- backfill_new_derivers: a deriver added after history already exists -------------------
+#
+# These exercise scheduler.backfill_new_derivers directly rather than through sync(), the same
+# way the versioning tests below exercise ensure_deriver_version directly -- sync() always runs
+# against the one shared, persistent REGISTRY (see test_the_real_registry_has_no_cycles...), so
+# none of its derivers are ever "new" once the test database has run once, and mutating REGISTRY
+# mid-suite would leak between tests. A fresh, uniquely-named DeriverRegistry sidesteps that.
+
+
+def test_backfill_seeds_a_new_root_deriver_from_declared_contracts(database_engine: Engine) -> None:
+    source = f"test_backfill_source_{uuid.uuid4().hex[:8]}"
+    name = f"test_backfill_root_{uuid.uuid4().hex[:8]}"
+    root = Deriver(
+        name=name, compute=_noop_compute, clear_partition=_noop_clear,
+        partition_class="LOCAL", final_inference="COMPUTED", description="",
+        output_relation=f"measure.{name}",
+    )
+    registry = DeriverRegistry()
+    registry.register(root)
+
+    with database_engine.begin() as connection:
+        registry.sync(connection)
+        ensure_deriver_version(connection, root)
+        connection.execute(
+            text(
+                """
+                INSERT INTO declare.source_contract
+                    (source, observable_kinds, covered_range_start, covered_range_end,
+                     gap_semantics, default_timezone)
+                VALUES (:source, ARRAY['event'], :start, :end, 'unknown', 'UTC')
+                """
+            ),
+            {"source": source, "start": date(2023, 1, 10), "end": date(2023, 3, 5)},
+        )
+
+        seeded = backfill_new_derivers(connection, [root])
+
+        # A root deriver's key space is every declared source's covered_range, not just this
+        # test's own -- declare.source_contract is standing config other test modules also
+        # declare into and never truncate (same convention as derive.deriver*), so this only
+        # asserts our source's own three months are present, not the exact total.
+        assert seeded[name] >= 3
+        dirty = set(
+            connection.execute(
+                text(
+                    """
+                    SELECT ps.partition_key FROM derive.partition_state ps
+                    JOIN derive.deriver_version dv ON dv.id = ps.deriver_version_id
+                    WHERE dv.deriver_name = :name AND ps.state = 'dirty'
+                    """
+                ),
+                {"name": name},
+            ).scalars()
+        )
+        assert {f"{source}:2023-01", f"{source}:2023-02", f"{source}:2023-03"} <= dirty
+
+
+def test_backfill_seeds_a_new_local_deriver_from_upstream_partition_state(
+    database_engine: Engine,
+) -> None:
+    suffix = uuid.uuid4().hex[:8]
+    upstream_name = f"test_backfill_upstream_{suffix}"
+    downstream_name = f"test_backfill_downstream_{suffix}"
+    upstream = Deriver(
+        name=upstream_name, compute=_noop_compute, clear_partition=_noop_clear,
+        partition_class="LOCAL", final_inference="COMPUTED", description="",
+        output_relation=f"measure.{upstream_name}",
+    )
+    downstream = Deriver(
+        name=downstream_name, compute=_noop_compute, clear_partition=_noop_clear,
+        partition_class="LOCAL", final_inference="COMPUTED", description="",
+        output_relation=f"measure.{downstream_name}", inputs=(upstream_name,),
+    )
+    registry = DeriverRegistry()
+    registry.register(upstream)
+    registry.register(downstream)
+
+    with database_engine.begin() as connection:
+        registry.sync(connection)
+        ensure_deriver_version(connection, upstream)
+        ensure_deriver_version(connection, downstream)
+        # Simulate upstream already having real history -- e.g. it shipped in an earlier phase
+        # and has been computing for a while -- unrelated to whatever's currently dirty.
+        upstream_version_id = connection.execute(
+            text(
+                "SELECT id FROM derive.deriver_version WHERE deriver_name = :n AND status = 'active'"
+            ),
+            {"n": upstream_name},
+        ).scalar_one()
+        for key in ("src:2024-01", "src:2024-02"):
+            connection.execute(
+                text(
+                    """
+                    INSERT INTO derive.partition_state
+                        (deriver_version_id, partition_key, state, input_fingerprint, computed_at)
+                    VALUES (:vid, :key, 'clean', :fp, CURRENT_TIMESTAMP)
+                    """
+                ),
+                {"vid": upstream_version_id, "key": key, "fp": b"x"},
+            )
+
+        seeded = backfill_new_derivers(connection, [downstream])
+
+        assert seeded == {downstream_name: 2}
+        dirty = set(
+            connection.execute(
+                text(
+                    """
+                    SELECT ps.partition_key FROM derive.partition_state ps
+                    JOIN derive.deriver_version dv ON dv.id = ps.deriver_version_id
+                    WHERE dv.deriver_name = :name AND ps.state = 'dirty'
+                    """
+                ),
+                {"name": downstream_name},
+            ).scalars()
+        )
+        assert dirty == {"src:2024-01", "src:2024-02"}
+
+
+def test_backfill_projects_upstream_keys_through_a_global_downstream(
+    database_engine: Engine,
+) -> None:
+    suffix = uuid.uuid4().hex[:8]
+    upstream_name = f"test_backfill_global_upstream_{suffix}"
+    downstream_name = f"test_backfill_global_downstream_{suffix}"
+    upstream = Deriver(
+        name=upstream_name, compute=_noop_compute, clear_partition=_noop_clear,
+        partition_class="LOCAL", final_inference="COMPUTED", description="",
+        output_relation=f"measure.{upstream_name}",
+    )
+    downstream = Deriver(
+        name=downstream_name, compute=_noop_compute, clear_partition=_noop_clear,
+        partition_class="GLOBAL", final_inference="COMPUTED", description="",
+        output_relation=f"measure.{downstream_name}", inputs=(upstream_name,),
+    )
+    registry = DeriverRegistry()
+    registry.register(upstream)
+    registry.register(downstream)
+
+    with database_engine.begin() as connection:
+        registry.sync(connection)
+        ensure_deriver_version(connection, upstream)
+        ensure_deriver_version(connection, downstream)
+        upstream_version_id = connection.execute(
+            text(
+                "SELECT id FROM derive.deriver_version WHERE deriver_name = :n AND status = 'active'"
+            ),
+            {"n": upstream_name},
+        ).scalar_one()
+        connection.execute(
+            text(
+                """
+                INSERT INTO derive.partition_state
+                    (deriver_version_id, partition_key, state, input_fingerprint, computed_at)
+                VALUES (:vid, 'src:2024-05', 'clean', :fp, CURRENT_TIMESTAMP)
+                """
+            ),
+            {"vid": upstream_version_id, "fp": b"x"},
+        )
+
+        seeded = backfill_new_derivers(connection, [downstream])
+
+        assert seeded == {downstream_name: 1}
+        dirty = set(
+            connection.execute(
+                text(
+                    """
+                    SELECT ps.partition_key FROM derive.partition_state ps
+                    JOIN derive.deriver_version dv ON dv.id = ps.deriver_version_id
+                    WHERE dv.deriver_name = :name AND ps.state = 'dirty'
+                    """
+                ),
+                {"name": downstream_name},
+            ).scalars()
+        )
+        assert dirty == {GLOBAL_PARTITION_KEY}
+
+
+def test_backfill_of_a_non_root_deriver_with_no_upstream_history_seeds_nothing(
+    database_engine: Engine,
+) -> None:
+    # The whole chain is new at once (e.g. a fresh install) and its root upstream has never
+    # computed anything yet -- there is no partition space to adopt, so backfill is a no-op
+    # rather than inventing one. Deliberately does not touch declare.source_contract, which
+    # other test modules declare into and never truncate -- see the root-deriver test above.
+    suffix = uuid.uuid4().hex[:8]
+    upstream_name = f"test_backfill_empty_upstream_{suffix}"
+    downstream_name = f"test_backfill_empty_downstream_{suffix}"
+    upstream = Deriver(
+        name=upstream_name, compute=_noop_compute, clear_partition=_noop_clear,
+        partition_class="LOCAL", final_inference="COMPUTED", description="",
+        output_relation=f"measure.{upstream_name}",
+    )
+    downstream = Deriver(
+        name=downstream_name, compute=_noop_compute, clear_partition=_noop_clear,
+        partition_class="LOCAL", final_inference="COMPUTED", description="",
+        output_relation=f"measure.{downstream_name}", inputs=(upstream_name,),
+    )
+    registry = DeriverRegistry()
+    registry.register(upstream)
+    registry.register(downstream)
+
+    with database_engine.begin() as connection:
+        registry.sync(connection)
+        ensure_deriver_version(connection, upstream)
+        ensure_deriver_version(connection, downstream)
+
+        assert backfill_new_derivers(connection, [downstream]) == {downstream_name: 0}
 
 
 # --- worker: compute, write, skip-unchanged ------------------------------------------------
