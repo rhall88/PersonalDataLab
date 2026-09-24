@@ -593,14 +593,14 @@ evidence); ruff clean; `python -m compileall` clean.
    not been re-verified for exact replay against the canonical database (see the canonical baseline
    section above). Low priority: the fix is narrow, unit-tested, and was verified directly against
    the real corpus bytes before merging.
-2. **Continue the derived-meaning layer past Phase 5.** Phase 5 (the claims ledger --
-   `know.claim`, two claim templates, 4 of 9 confidence dimensions, `claims-list`/`claims-why`)
-   is live against the real canonical database as of 2026-09-24 (1,181 real claims; see "Phase 5
-   claims ledger: rollout" above). Next per `DERIVED_MEANING_ARCHITECTURE.md` §15: OCR/
-   transcription, chunks, and embeddings, all as separately versioned, disposable layers whose
-   outputs cite immutable observations -- plus the real, un-fixed `coverage`-dimension weakness
-   the Phase 5 rollout found (worth a better aggregation before claims lean on that dimension for
-   anything user-facing).
+2. **Implement Phase 6.** [`PHASE6_SEMANTIC_LAYER_IMPLEMENTATION_PLAN.md`](PHASE6_SEMANTIC_LAYER_IMPLEMENTATION_PLAN.md)
+   (published 2026-09-24) scopes `ROADMAP.md` item 5 (semantic retrieval) against the real
+   200,914-message conversational population: `semantic.text_unit`/
+   `semantic.embedding_bge_small_en_v15` (pgvector, `fastembed`-computed, fully local), and a
+   `semantic-search` CLI verb. OCR (item 6) and claim-template growth (item 3) come after. The
+   real, un-fixed `coverage`-dimension weakness the Phase 5 rollout found (see above) is worth a
+   better aggregation before claims lean on that dimension for anything user-facing, but isn't
+   blocking.
 3. **Continue the operational track.** Encrypted backup/restore, integrity audits, sensitive-field
    controls, incremental scheduling, performance budgets, derived-data invalidation, and corpus
    exportability remain permanent requirements.

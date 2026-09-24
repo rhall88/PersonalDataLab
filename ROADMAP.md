@@ -166,20 +166,22 @@ explicit disposition rather than optimistic format assumptions.
    points across multiple source families). Also delivered `measure.interaction_dynamics`/
    `signal.interaction_state` for per-correspondent communication-pattern segmentation. See
    `PROJECT_STATE.md`'s Phase 4 rollout section.
-5. **Semantic retrieval:** deterministic chunking and locally controlled embeddings as
-   disposable derived data, never as canonical evidence.
+5. ~~**Semantic retrieval:** deterministic chunking and locally controlled embeddings as
+   disposable derived data, never as canonical evidence.~~ **Plan published 2026-09-24** --
+   see [`PHASE6_SEMANTIC_LAYER_IMPLEMENTATION_PLAN.md`](PHASE6_SEMANTIC_LAYER_IMPLEMENTATION_PLAN.md).
 6. **Optional media enrichment:** OCR, transcription, and document/image analysis only in a
    separately versioned derived layer. Core ingestion never fabricates these results.
 
 Deep understanding begins in this layer. Import adapters know what provider objects say; derived
 claims express what multiple observations may mean together.
 
-Phases 0–4 of [`DERIVED_MEANING_ARCHITECTURE.md`](DERIVED_MEANING_ARCHITECTURE.md) (activity
+Phases 0–5 of [`DERIVED_MEANING_ARCHITECTURE.md`](DERIVED_MEANING_ARCHITECTURE.md) (activity
 coverage, as-of/contract derivation, identity's COMPUTED rules tier, the life-ledger metrics/
-compare layer, and signals + episodes above) are all live against the real canonical database as
-of 2026-09-22 — see `PROJECT_STATE.md` for full rollout evidence on each. That architecture's own
-phase numbering does not map one-to-one onto items 3–6 above; item 3 (claims) remains the next
-item genuinely outstanding in this list.
+compare layer, signals + episodes, and the claims ledger above) are all live against the real
+canonical database as of 2026-09-24 — see `PROJECT_STATE.md` for full rollout evidence on each.
+That architecture's own phase numbering does not map one-to-one onto items 3–6 above; item 5
+(semantic retrieval) is the next item genuinely outstanding in this list, with its plan published;
+item 6 (OCR/media enrichment) and item 3's own further claim-template growth remain after that.
 
 ### Phase 5: claims + evidence challenge — landed and rolled out 2026-09-24
 
