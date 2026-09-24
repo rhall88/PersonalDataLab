@@ -9,12 +9,14 @@ registry.Deriver.register enforces) is consistent.
 from __future__ import annotations  # noqa: I001 -- import order below is dependency order, not alphabetical
 
 # metrics's derivers must register before signals's and episode's (both declare inputs
-# referencing metrics.py's deriver names); interaction only depends on coverage.
+# referencing metrics.py's deriver names); interaction only depends on coverage. claims must
+# register last: it declares inputs referencing both signals's and episode's deriver names.
 from . import activity  # noqa: F401 -- imported for its @deriver registration side effect
 from . import coverage  # noqa: F401 -- imported for its @deriver registration side effect
 from . import metrics  # noqa: F401 -- imported for its @deriver registration side effect
 from . import signals  # noqa: F401 -- imported for its @deriver registration side effect
 from . import interaction  # noqa: F401 -- imported for its @deriver registration side effect
 from . import episode  # noqa: F401 -- imported for its @deriver registration side effect
+from . import claims  # noqa: F401 -- imported for its @deriver registration side effect
 
 __all__: list[str] = []

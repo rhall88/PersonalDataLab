@@ -1,5 +1,9 @@
 # PersonalDataLab project state
 
+Updated 2026-09-24, after Phase 5 (the claims ledger) landed and ran against the real canonical
+database: schema (015, corrected same-day by 016), the `know_claim_evaluate` runtime and
+`claims-list`/`claims-why` CLI, and a real scheduler ordering defect the runtime surfaced and
+fixed (`derive/worker.py`'s `_claim_one` tiebreak) -- see "Phase 5 claims ledger: rollout" below.
 Updated 2026-09-24, after a real review session with Ry closed Phase 2's identity queue and
 Phase 4's episode candidates (built `episode-confirm`/`episode-reject` first, since it didn't
 exist), and after publishing `PHASE5_IMPLEMENTATION_PLAN.md` (schema/runtime/rollout not yet
@@ -217,7 +221,8 @@ tracked migrations:
 | 12 | `identity.assertion`/`identity.not_same_as`, `identity_links.tier`/`resolution_version`: Phase 2's append-only rules-tier assertion log underneath the existing manual `identity_links`. |
 | 13 | `derive.metric_def`/`derive.metric_dependency`/`measure.metric_daily`: Phase 3's life-ledger metric catalog and daily values. |
 | 14 | `signal`/`episode` schemas: Phase 4's baselines, change points, anomalies, interaction dynamics/states, and declared/detected episodes. |
-| 15 | `know.claim`/`know.claim_evidence`: Phase 5's claims ledger, wrapping already-computed `signal.anomaly`/`episode.episode` rows into inspectable claims with a confidence profile. Schema only in this PR; the `know_claim_evaluate` deriver that populates these tables is the next PR. No canonical table altered. |
+| 15 | `know.claim`/`know.claim_evidence`: Phase 5's claims ledger schema as first designed. No canonical table altered. |
+| 16 | Corrects migration 15: drops `know.claim_evidence`, adds `know.claim.evidence` (inline JSONB) instead -- this project's deriver framework writes one output table per `compute()` call with no `RETURNING`, so a claim and a child evidence row referencing its worker-generated id can never be written together; `episode.episode.evidence` had already solved this exact problem the same way. Discovered building the runtime, not caught at schema-review time. No canonical table altered. |
 
 Apple, Facebook, iMessages, OpenAI, and Anthropic v2 required no later schema migration because the
 version-7 universal record, event, asset, and relationship model already expresses their data.
@@ -488,6 +493,64 @@ and a `GLOBAL` downstream projection, and a fresh chain whose upstream has no hi
 correctly seeding nothing). 361 tests pass, ruff clean, `python -m compileall` clean. The
 now-permanently-superseded `seed_phase4_dirty.py` one-off script has been deleted.
 
+## Phase 5 claims ledger: rollout (2026-09-24)
+
+`PHASE5_IMPLEMENTATION_PLAN.md`'s claims ledger landed in three PRs: migration 015 (`know.claim`/
+`know.claim_evidence` as first designed), migration 016 (a same-day correction -- see the schema
+table above -- folding evidence inline as `know.claim.evidence` JSONB once building the runtime
+showed the separate child table couldn't actually be populated by this project's one-output-table-
+per-deriver worker), and the runtime itself: `derive/derivers/claims.py`'s `know_claim_evaluate`
+(GLOBAL, `inputs=("signal_anomaly", "episode_detect_candidates")`) plus `claims-list`/`claims-why`
+CLI verbs.
+
+Building the runtime surfaced a second real, pre-existing scheduler defect, not specific to
+claims: every partition a single `mark_dirty_and_propagate` call dirties shares one `dirty_since`
+(Postgres's `CURRENT_TIMESTAMP` is constant for a transaction), so `derive/worker.py`'s
+`ORDER BY dirty_since` alone gave no deterministic order among a LOCAL deriver and the HALO/
+GLOBAL downstream it had just dirtied together -- a downstream partition could be claimed and
+computed before its own upstream partition in the same batch, silently producing a stale result
+nothing re-triggers within that batch. This had always been possible but only started actually
+flipping observed test order once Phase 5 added more sibling fan-out into the same propagation
+transaction (`test_run_computes_daily_and_7d_rows` started failing intermittently). Fixed with a
+`ps.ctid` secondary sort key in `_claim_one` -- not a full scheduler redesign, but it restores
+correct order for the common case (partitions freshly dirtied together), matching how
+`mark_dirty_and_propagate`'s recursion always inserts a deriver's own rows before its downstream's.
+See `derive/worker.py`'s own docstring for the full reasoning and its limits.
+
+Rollout against the real canonical database: `derive-sync` correctly auto-backfilled
+`know_claim_evaluate`'s initial `GLOBAL` partition via the 2026-09-24 new-deriver-onboarding fix
+(the first real end-to-end proof that fix was worth landing before this phase, not just a
+synthetic test of it) -- `{"know_claim_evaluate": 1}`. `derive-run --global` then computed it in
+one pass: **1,181 claims** -- 1,172 `communication_change` (one per real `signal.anomaly` row,
+exact match) and 9 `episode_evidence` (8 `STATISTICAL` for confirmed detected episodes, 1
+`DECLARED` for the father's declared episode; the 1 remaining `candidate` episode correctly
+produced no claim, per invariant 38). `derive-status` reports zero dirty and zero failed across
+all 12 registered derivers. `claims-why` on the daughter's-birth claim and the grandmother's-
+death claim both independently re-fetched every cited `signal.change_point`/`episode.episode` row
+from its real source table with an exact match -- invariant 30's "terminates in something
+concrete," verified mechanically, not just asserted.
+
+**A real, honest limitation found during this spot-check, not fixed here:** both of those claims'
+`coverage` confidence dimension came back `0.0`. This is not a bug -- `measure.coverage.
+completeness` (Phase 1) is a binary per-(source, day, kind) signal ("did anything land that
+day"), and `_coverage_for` takes the *minimum* across every individual change-point day an
+episode's evidence cites; a multi-point episode spanning several source families very often
+includes at least one day where that day's specific `object_kind='event'` completeness is
+genuinely 0 (confirmed directly: `anthropic`/`google` on several of these claims' own cited dates
+really do show `completeness = 0`), which drags the whole claim's coverage dimension to the
+floor even when most of its evidence is well-covered. The dimension is computing exactly what it
+was defined to compute; the definition itself (min-across-every-cited-day against a binary
+per-day signal) makes it a weak, close-to-uninformative signal for any `episode_evidence` claim
+with more than a couple of change points. Not redesigned in this PR -- a better aggregation (e.g.
+scoring over the episode's overall date range rather than each literal change-point day) is real,
+separable scope for a later pass, not a blocker to shipping the rest of the ledger.
+
+367 tests passed before this rollout (371 including four new `test_phase5.py` cases covering
+exit tests 1-4: `know_claim_evaluate` registration, a synthetic anomaly producing exactly the
+expected `communication_change` claim, all four `episode.episode` kind/status combinations
+producing the right claim/no-claim outcome, and `claims-why` independently re-fetching cited
+evidence); ruff clean; `python -m compileall` clean.
+
 ## Verification state
 
 - The repository currently collects 311 tests: non-integration tests plus PostgreSQL-marked
@@ -530,12 +593,14 @@ now-permanently-superseded `seed_phase4_dirty.py` one-off script has been delete
    not been re-verified for exact replay against the canonical database (see the canonical baseline
    section above). Low priority: the fix is narrow, unit-tested, and was verified directly against
    the real corpus bytes before merging.
-2. **Implement Phase 5.** [`PHASE5_IMPLEMENTATION_PLAN.md`](PHASE5_IMPLEMENTATION_PLAN.md)
-   (published 2026-09-24) scopes `DERIVED_MEANING_ARCHITECTURE.md` §15's claims layer against
-   what Phases 0-4 already computed: a `know.claim`/`know.claim_evidence` schema, two claim
-   templates (`communication_change`, `episode_evidence`), 4 of the architecture's 9 confidence
-   dimensions, and `claims-list`/`claims-why` CLI verbs. Schema, runtime, and rollout PRs are next.
-   OCR/transcription, chunks, and embeddings (the rest of §15's remaining scope) come after.
+2. **Continue the derived-meaning layer past Phase 5.** Phase 5 (the claims ledger --
+   `know.claim`, two claim templates, 4 of 9 confidence dimensions, `claims-list`/`claims-why`)
+   is live against the real canonical database as of 2026-09-24 (1,181 real claims; see "Phase 5
+   claims ledger: rollout" above). Next per `DERIVED_MEANING_ARCHITECTURE.md` §15: OCR/
+   transcription, chunks, and embeddings, all as separately versioned, disposable layers whose
+   outputs cite immutable observations -- plus the real, un-fixed `coverage`-dimension weakness
+   the Phase 5 rollout found (worth a better aggregation before claims lean on that dimension for
+   anything user-facing).
 3. **Continue the operational track.** Encrypted backup/restore, integrity audits, sensitive-field
    controls, incremental scheduling, performance budgets, derived-data invalidation, and corpus
    exportability remain permanent requirements.

@@ -33,6 +33,7 @@ from .database import (
     list_sibling_databases,
 )
 from .derive import asof
+from .derive.derivers.claims import claim_why, list_claims
 from .derive.derivers.episode import confirm_episode, declare_episode, list_episodes, reject_episode
 from .facebook_export.inventory import inspect_facebook
 from .facebook_export.inventory import render_inventory_table as render_facebook_table
@@ -426,6 +427,21 @@ def _parser() -> argparse.ArgumentParser:
     episode_reject.add_argument("episode_id", type=int)
     episode_reject.add_argument("--note")
     episode_reject.add_argument("--database-url", help="overrides DATABASE_URL from .env")
+    claims_list = subparsers.add_parser(
+        "claims-list", help="list know.claim rows, most recent first"
+    )
+    claims_list.add_argument("--template", choices=("communication_change", "episode_evidence"))
+    claims_list.add_argument(
+        "--class", dest="claim_class",
+        choices=("OBSERVED", "COMPUTED", "STATISTICAL", "SEMANTIC", "DECLARED", "HYPOTHESIS"),
+    )
+    claims_list.add_argument("--status", choices=("active", "superseded"))
+    claims_list.add_argument("--database-url", help="overrides DATABASE_URL from .env")
+    claims_why = subparsers.add_parser(
+        "claims-why", help="show a claim's full evidence trail (section 9's evidence inspector)"
+    )
+    claims_why.add_argument("claim_id", type=int)
+    claims_why.add_argument("--database-url", help="overrides DATABASE_URL from .env")
     declare_add = subparsers.add_parser("declare-add", help="record a user-asserted declaration")
     declare_add.add_argument(
         "kind",
@@ -1387,6 +1403,22 @@ def main(argv: Sequence[str] | None = None) -> int:
             print(f"error: {error}", file=sys.stderr, flush=True)
             return 1
         print(json.dumps(episode, indent=2, default=str))
+        return 0
+    if args.command == "claims-list":
+        engine = _resolve_guarded_engine(args.database_url, canonical_import=False)
+        claims = list_claims(
+            engine, template=args.template, claim_class=args.claim_class, status=args.status
+        )
+        print(json.dumps(claims, indent=2, default=str))
+        return 0
+    if args.command == "claims-why":
+        engine = _resolve_guarded_engine(args.database_url, canonical_import=False)
+        try:
+            report = claim_why(engine, args.claim_id)
+        except ValueError as error:
+            print(f"error: {error}", file=sys.stderr, flush=True)
+            return 1
+        print(json.dumps(report, indent=2, default=str))
         return 0
     if args.command == "declare-add":
         engine = _resolve_guarded_engine(args.database_url, canonical_import=False)

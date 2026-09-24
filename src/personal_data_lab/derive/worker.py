@@ -41,6 +41,23 @@ def run_pending(
     makes `FOR UPDATE ... SKIP LOCKED` actually let multiple workers make concurrent progress --
     each claim's lock is held only as long as that one partition takes to compute, and a
     failure on one partition can never roll back another partition's already-committed result.
+
+    A real finding from Phase 5's implementation: every partition `mark_dirty_and_propagate`
+    dirties within one `sync()` transaction shares the exact same `dirty_since` (Postgres's
+    `CURRENT_TIMESTAMP` is constant for a whole transaction), so `ORDER BY dirty_since` alone
+    gives no deterministic order among a LOCAL deriver and the HALO/GLOBAL downstream it just
+    dirtied together -- a downstream partition could be claimed and computed before its own
+    upstream partition in the same batch, silently producing an empty or stale result that
+    nothing re-triggers within that batch. `mark_dirty_and_propagate`'s recursion always inserts
+    a deriver's own partition rows before recursing into its downstream, so for the common case
+    (partitions freshly dirtied together, not merely re-dirtied) physical insertion order tracks
+    topological order -- `ps.ctid` is added as a secondary sort key to make the claim order
+    respect that, rather than leaving it to whatever order Postgres's query plan happens to
+    return ties in. This is a tiebreak, not a scheduler redesign: it does not guarantee
+    topological order for every scenario (e.g. partitions re-dirtied by an UPDATE, whose ctid
+    reflects the new physical tuple location, not original insertion order), so a deriver that
+    truly cannot tolerate stale sibling state should still recompute its own inputs inline, the
+    same precedent signals.py and interaction.py already established for GLOBAL siblings.
     """
     outcomes: list[WorkerOutcome] = []
     while limit is None or len(outcomes) < limit:
@@ -65,7 +82,7 @@ def _claim_one(connection, *, include_global: bool):
             JOIN derive.deriver_version dv ON dv.id = ps.deriver_version_id AND dv.status = 'active'
             JOIN derive.deriver d ON d.name = dv.deriver_name
             WHERE ps.state = 'dirty' {partition_filter}
-            ORDER BY ps.dirty_since NULLS LAST
+            ORDER BY ps.dirty_since NULLS LAST, ps.ctid
             FOR UPDATE OF ps SKIP LOCKED
             LIMIT 1
             """

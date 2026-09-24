@@ -181,15 +181,21 @@ of 2026-09-22 — see `PROJECT_STATE.md` for full rollout evidence on each. That
 phase numbering does not map one-to-one onto items 3–6 above; item 3 (claims) remains the next
 item genuinely outstanding in this list.
 
-### Phase 5: claims + evidence challenge — plan published 2026-09-24, not yet implemented
+### Phase 5: claims + evidence challenge — landed and rolled out 2026-09-24
 
-[`PHASE5_IMPLEMENTATION_PLAN.md`](PHASE5_IMPLEMENTATION_PLAN.md) scopes `DERIVED_MEANING_ARCHITECTURE.md`
-section 15's phase 5 against what already exists after Phases 0–4: a `know.claim`/
-`know.claim_evidence` schema wrapping the real `signal.anomaly` and `episode.episode` rows into
+[`PHASE5_IMPLEMENTATION_PLAN.md`](PHASE5_IMPLEMENTATION_PLAN.md) scoped `DERIVED_MEANING_ARCHITECTURE.md`
+section 15's phase 5 against what already existed after Phases 0–4: a `know.claim` schema
+(evidence cited inline as JSONB, after a same-day correction to the plan's original separate
+`know.claim_evidence` table — this project's deriver framework can't populate a child table from
+the same `compute()` call) wrapping the real `signal.anomaly` and `episode.episode` rows into
 inspectable claims (two claim templates, `communication_change` and `episode_evidence`), 4 of the
 architecture's 9 confidence dimensions (the ones this corpus can actually compute today), and
 `claims-list`/`claims-why` CLI verbs realizing section 9's evidence inspector without a query
-router or LLM layer this project hasn't built yet. Schema/runtime/rollout are the next PRs.
+router or LLM layer this project hasn't built yet. Building the runtime also surfaced and fixed a
+real pre-existing scheduler ordering defect (`derive/worker.py`). Rolled out against the real
+canonical database: 1,181 claims, `claims-why` independently re-fetched every cited evidence row
+with an exact match. See `PROJECT_STATE.md`'s "Phase 5 claims ledger: rollout" for full evidence,
+including a real, un-fixed weakness the rollout found in the `coverage` dimension's aggregation.
 
 ## 4. Build user and agent experiences
 
@@ -248,6 +254,8 @@ chain must never depend on an embedding model, UI, or agent remaining available.
 | Completed 2026-09-22 | Phase 3: life ledger metrics and `compare` | Schema version 13 (`derive.metric_def`, `measure.metric_daily`), 20 per-source/composite communication metrics; real values cross-checked against independent raw-event counts, 37/37 matched exactly |
 | Completed 2026-09-22 | Phase 4: signals and episodes | Schema version 14 (`signal`/`episode` schemas), baselines/change-points/anomalies over Phase 3's metrics, per-correspondent interaction dynamics/states, and cross-source `detected` episode candidates; top anomaly independently cross-checked against raw events, 106/106 matched exactly; 9 real episode candidates spanning 2016–2026 — see `PROJECT_STATE.md` for full rollout evidence |
 | Completed 2026-09-24 | Fix the recurring new-deriver onboarding gap | `sync()` now backfills any deriver seeing its first-ever `derive.deriver_version` row from its upstream's (or, for a root, `declare.source_contract`'s) existing partition space, permanently replacing the one-off script each of Phases 1/3/4 needed on rollout; 4 new tests, 361 total passing, ruff clean — see `PROJECT_STATE.md`'s "New-deriver onboarding fix" |
-| Then | Derived entities and claims, semantic retrieval | Every derived object cites evidence, is versioned, and can be removed without changing source truth |
+| Completed 2026-09-24 | Phase 2/4 human review session | Identity: both cross-source name-candidates confirmed and merged, queue now empty. Episodes: `episode-confirm`/`episode-reject` built (didn't exist), 8/9 detected episodes confirmed with real evidence-backed labels, 1 left honestly unresolved, 1 additional declared episode added for a death the automatic detector missed entirely — see `PROJECT_STATE.md`'s "Done 2026-09-24" notes (private details intentionally not in this repo) |
+| Completed 2026-09-24 | Phase 5: claims + evidence challenge | Schema (`know.claim`, corrected same-day from a separate child table to inline JSONB evidence), `know_claim_evaluate` runtime, `claims-list`/`claims-why` CLI, and a real scheduler ordering defect found and fixed (`derive/worker.py`); rolled out against the real canonical database, 1,181 real claims, every cited evidence row independently re-fetched and matched exactly by `claims-why` — see `PROJECT_STATE.md`'s "Phase 5 claims ledger: rollout" |
+| Then | OCR/transcription, chunks, and embeddings | Every derived object cites evidence, is versioned, and can be removed without changing source truth |
 | Final product track | Timeline, exploration, analytics, read-only MCP, and agents | Fast normal queries, permission boundaries, and evidence-citing answers |
 

@@ -1,0 +1,396 @@
+"""Phase 5's claims ledger (PHASE5_IMPLEMENTATION_PLAN.md): `know_claim_evaluate` wraps Phase
+3/4's already-computed `signal.anomaly` and confirmed/rejected `episode.episode` rows into
+first-class, inspectable `know.claim` objects with a per-dimension confidence profile and cited
+evidence. No new statistics are computed here -- this deriver reads what Phases 3/4 already wrote
+and cites it, exactly two claim templates (plan decision 2): `communication_change` (one claim per
+`signal.anomaly` row) and `episode_evidence` (one claim per `episode.episode` row that has
+actually been reviewed -- `status IN ('confirmed', 'rejected')`, never `candidate`; invariant 38,
+"review queues fail unresolved, never optimistic").
+
+Evidence is cited inline as JSONB on `know.claim.evidence` (migration 016's correction to
+migration 015's original separate `know.claim_evidence` table): this project's deriver framework
+(`derive/worker.py`'s `_write_rows`) writes `ComputeResult.rows` to exactly one `output_relation`
+per deriver, via a plain multi-row INSERT with no `RETURNING`, so a claim and a child evidence row
+referencing its worker-generated id can never be written from the same `compute()` call. This is
+the same problem, and the same fix, `episode.episode.evidence` already established for Phase 4.
+
+Same GLOBAL-sibling ordering caveat signals.py's and interaction.py's own module docstrings
+document: this deriver declares `inputs=("signal_anomaly", "episode_detect_candidates")` for
+correct dirtying propagation, but within one `derive run --global` invocation the worker claims
+dirty partitions in `dirty_since` order, not topological order, so `know_claim_evaluate` is not
+guaranteed to run *after* those two GLOBAL siblings finish in the same batch. Unlike
+signal_anomaly/signal_interaction_state (which sidestep this by recomputing their own inputs
+inline from a shared upstream table), `know_claim_evaluate`'s entire job is to wrap those two
+tables' *output* rows -- there is no inline recomputation available here. A claims run inside the
+same batch as the anomaly/episode data that produced it may reflect a stale snapshot until the
+next `derive run --global` picks it up again. Documented as a real, accepted limitation (same
+precedent as signals.py's own docstring), not solved here: rollout calls `derive run --global`
+repeatedly until `derive-status` reports zero dirty, the same operational pattern already used for
+every prior phase's own real-database rollout.
+"""
+
+from __future__ import annotations
+
+import json
+from datetime import date
+
+from sqlalchemy import text
+from sqlalchemy.engine import Connection, Engine
+
+from ...fingerprints import fingerprint_value
+from ..registry import ComputeResult, deriver
+
+_CLASS_BY_EPISODE_KIND = {"declared": "DECLARED", "detected": "STATISTICAL"}
+
+
+def _clear_claims(connection: Connection, partition_key: str) -> None:
+    connection.execute(text("DELETE FROM know.claim"))
+
+
+def _coverage_for(connection: Connection, pairs: set[tuple[str, date]]) -> float | None:
+    """Minimum `measure.coverage.completeness` across a set of (source, day) pairs, object_kind
+    'event' -- the same object_kind every current metric and episode evidence source uses. `None`
+    (dimension absent, not a fabricated 1.0) if `pairs` is empty or any pair has no coverage row
+    at all -- an undeclared/uncovered day is unknown, never silently treated as fully covered.
+    """
+    if not pairs:
+        return None
+    values: list[float] = []
+    for source, day in pairs:
+        row = connection.execute(
+            text(
+                "SELECT completeness FROM measure.coverage "
+                "WHERE source = :source AND bucket_start = :day AND object_kind = 'event'"
+            ),
+            {"source": source, "day": day},
+        ).scalar_one_or_none()
+        if row is None:
+            return None
+        values.append(float(row))
+    return min(values)
+
+
+def _communication_change_claims(connection: Connection, epoch_id: int) -> list[dict]:
+    """One claim per `signal.anomaly` row -- the architecture's own worked example (section 9) of
+    a `communication_change` claim. `identity` is never computed here: none of Phase 3's current
+    metrics are per-correspondent (plan decision 3's own grounding), so every claim from this
+    template has that dimension correctly absent today, not a bug to fix later.
+    """
+    rows = connection.execute(
+        text(
+            """
+            SELECT sa.metric_id, md.name AS metric_name, sa.bucket_start, sa.observed,
+                   sa.expected_low, sa.expected_high, sa.z_score, sa.baseline_kind
+            FROM signal.anomaly sa
+            JOIN derive.metric_def md ON md.id = sa.metric_id
+            ORDER BY sa.metric_id, sa.bucket_start
+            """
+        )
+    ).mappings().all()
+    if not rows:
+        return []
+
+    sources_by_metric: dict[int, set[str]] = {}
+    for metric_id, source in connection.execute(
+        text("SELECT metric_id, source FROM derive.metric_dependency")
+    ).all():
+        sources_by_metric.setdefault(metric_id, set()).add(source)
+
+    claims: list[dict] = []
+    for row in rows:
+        sources = sources_by_metric.get(row["metric_id"], set())
+        coverage = _coverage_for(connection, {(s, row["bucket_start"]) for s in sources})
+        confidence: dict = {
+            "statistical_strength": abs(row["z_score"]),
+            "source_independence": 1,
+        }
+        if coverage is not None:
+            confidence["coverage"] = coverage
+        statement = (
+            f"{row['metric_name']} on {row['bucket_start'].isoformat()} was "
+            f"{row['observed']:g}, far outside its expected range of roughly "
+            f"{row['expected_low']:.1f} to {row['expected_high']:.1f} "
+            f"(z={row['z_score']:.1f} against its {row['baseline_kind']} baseline)."
+        )
+        evidence = {
+            "anomalies": [
+                {
+                    "metric_id": row["metric_id"],
+                    "metric": row["metric_name"],
+                    "bucket_start": row["bucket_start"].isoformat(),
+                }
+            ]
+        }
+        claims.append(
+            {
+                "template": "communication_change",
+                "template_version": "1",
+                "class": "STATISTICAL",
+                "statement": statement,
+                "subject": json.dumps(
+                    {"metric": row["metric_name"], "bucket_start": row["bucket_start"].isoformat()}
+                ),
+                "confidence": json.dumps(confidence),
+                "evidence": json.dumps(evidence),
+                "status": "active",
+                "computed_epoch_id": epoch_id,
+            }
+        )
+    return claims
+
+
+def _episode_statement(
+    *, kind: str, status: str, label: str | None, note: str | None,
+    start_low: date, end_high: date, n_change_points: int, n_sources: int,
+) -> str:
+    if status == "rejected":
+        base = (
+            f"Episode candidate ({start_low.isoformat()}–{end_high.isoformat()}, "
+            f"{n_change_points} change points across {n_sources} source families) was reviewed "
+            "and rejected"
+        )
+        return f"{base}: {note}" if note else f"{base}."
+    if label:
+        return label
+    if kind == "declared":
+        return f"Declared period: {start_low.isoformat()}–{end_high.isoformat()}."
+    return (
+        f"Detected and confirmed period ({start_low.isoformat()}–{end_high.isoformat()}), "
+        f"clustering {n_change_points} change points across {n_sources} source families."
+    )
+
+
+def _episode_evidence_claims(connection: Connection, epoch_id: int) -> list[dict]:
+    """One claim per `episode.episode` row that has actually been reviewed (plan decision 2):
+    `class` is DECLARED for a human's own stated period, STATISTICAL for a detected candidate a
+    human confirmed -- the episode itself is a statistical inference (change-point clustering)
+    that a human then verified; verification raises confidence, it does not change what kind of
+    assertion the underlying evidence is (the architecture's own rule that a declaration is
+    authoritative about what you declared, not about what you're declaring is true of). A
+    `rejected` episode still gets a claim: rejecting is itself a fact worth an inspectable trace,
+    not something to silently delete.
+    """
+    rows = connection.execute(
+        text(
+            "SELECT id, kind, status, start_range_low, end_range_high, label, note, evidence "
+            "FROM episode.episode WHERE status IN ('confirmed', 'rejected')"
+        )
+    ).mappings().all()
+
+    claims: list[dict] = []
+    for row in rows:
+        change_points = (row["evidence"] or {}).get("change_points", [])
+        n_change_points = len(change_points)
+        sources = {cp["source"] for cp in change_points}
+        confidence: dict = {}
+        if change_points:
+            confidence["statistical_strength"] = n_change_points
+            confidence["source_independence"] = len(sources)
+            pairs = {(cp["source"], date.fromisoformat(cp["date"])) for cp in change_points}
+            coverage = _coverage_for(connection, pairs)
+            if coverage is not None:
+                confidence["coverage"] = coverage
+        statement = _episode_statement(
+            kind=row["kind"], status=row["status"], label=row["label"], note=row["note"],
+            start_low=row["start_range_low"], end_high=row["end_range_high"],
+            n_change_points=n_change_points, n_sources=len(sources),
+        )
+        claims.append(
+            {
+                "template": "episode_evidence",
+                "template_version": "1",
+                "class": _CLASS_BY_EPISODE_KIND[row["kind"]],
+                "statement": statement,
+                "subject": json.dumps({"episode_id": row["id"], "episode_status": row["status"]}),
+                "confidence": json.dumps(confidence),
+                "evidence": json.dumps(
+                    {
+                        "episode_id": row["id"],
+                        "change_points": [
+                            {
+                                "metric": cp["metric"],
+                                "source": cp["source"],
+                                "date": cp["date"],
+                            }
+                            for cp in change_points
+                        ],
+                    }
+                ),
+                "status": "active",
+                "computed_epoch_id": epoch_id,
+            }
+        )
+    return claims
+
+
+@deriver(
+    name="know_claim_evaluate",
+    partition_class="GLOBAL",
+    final_inference="COMPUTED",
+    description=(
+        "Wraps signal.anomaly (communication_change) and reviewed episode.episode rows "
+        "(episode_evidence) into inspectable know.claim objects with a confidence profile "
+        "(PHASE5_IMPLEMENTATION_PLAN.md)."
+    ),
+    output_relation="know.claim",
+    inputs=("signal_anomaly", "episode_detect_candidates"),
+    clear_partition=_clear_claims,
+)
+def know_claim_evaluate(connection: Connection, partition_key: str, epoch_id: int) -> ComputeResult:
+    rows = _communication_change_claims(connection, epoch_id) + _episode_evidence_claims(
+        connection, epoch_id
+    )
+    fingerprint_source = sorted(
+        (row["template"], row["subject"], row["statement"]) for row in rows
+    )
+    return ComputeResult(input_fingerprint=fingerprint_value(fingerprint_source), rows=rows)
+
+
+# --- claims-list / claims-why: plain read functions the CLI calls directly, same precedent as
+# episode.py's declare_episode/list_episodes -- browsing already-computed claims isn't itself a
+# derivation. ------------------------------------------------------------------------------------
+
+_CLAIM_COLUMNS = (
+    "id, template, template_version, class, statement, subject, confidence, evidence, status, "
+    "computed_epoch_id, created_at"
+)
+
+
+def list_claims(
+    engine: Engine, *, template: str | None = None, claim_class: str | None = None,
+    status: str | None = None,
+) -> list[dict]:
+    query = f"SELECT {_CLAIM_COLUMNS} FROM know.claim"
+    clauses = []
+    params: dict = {}
+    if template is not None:
+        clauses.append("template = :template")
+        params["template"] = template
+    if claim_class is not None:
+        clauses.append("class = :claim_class")
+        params["claim_class"] = claim_class
+    if status is not None:
+        clauses.append("status = :status")
+        params["status"] = status
+    if clauses:
+        query += " WHERE " + " AND ".join(clauses)
+    query += " ORDER BY id DESC"
+    with engine.connect() as connection:
+        rows = connection.execute(text(query), params).mappings().all()
+    return [dict(row) for row in rows]
+
+
+def _upstream_chain(connection: Connection, name: str) -> set[str]:
+    """Every deriver name reachable by walking derive.deriver_dependency upstream from `name`,
+    including `name` itself -- the real dependency chain the registry's own acyclicity check
+    already guarantees terminates, used here to report which deriver versions were active when
+    a claim was computed (a partial stand-in for the architecture's full version vector -- this
+    project has no model/embedding/prompt versioning yet to extend it with).
+    """
+    seen = {name}
+    frontier = [name]
+    while frontier:
+        current = frontier.pop()
+        upstream = connection.execute(
+            text("SELECT upstream FROM derive.deriver_dependency WHERE downstream = :d"),
+            {"d": current},
+        ).scalars().all()
+        for u in upstream:
+            if u not in seen:
+                seen.add(u)
+                frontier.append(u)
+    return seen
+
+
+def claim_why(engine: Engine, claim_id: int) -> dict:
+    """Section 9's evidence-inspector shape, for the parts this phase implements: the claim
+    itself, each cited evidence row re-fetched independently from its own source table (not just
+    echoed back from know.claim.evidence -- invariant 30's "terminates in something concrete",
+    checked mechanically here rather than merely asserted), and the active version_hash of every
+    deriver in this claim's dependency chain. Raises ValueError for an unknown id.
+    """
+    with engine.connect() as connection:
+        claim = connection.execute(
+            text(f"SELECT {_CLAIM_COLUMNS} FROM know.claim WHERE id = :id"), {"id": claim_id}
+        ).mappings().first()
+        if claim is None:
+            raise ValueError(f"no claim with id {claim_id}")
+        claim = dict(claim)
+
+        evidence_detail: list[dict] = []
+        if claim["template"] == "communication_change":
+            for item in claim["evidence"].get("anomalies", []):
+                row = connection.execute(
+                    text(
+                        "SELECT metric_id, bucket_start, observed, expected_low, expected_high, "
+                        "z_score, baseline_kind FROM signal.anomaly "
+                        "WHERE metric_id = :mid AND bucket_start = :day"
+                    ),
+                    {"mid": item["metric_id"], "day": item["bucket_start"]},
+                ).mappings().first()
+                evidence_detail.append(
+                    {
+                        "role": "supports",
+                        "source_table": "signal.anomaly",
+                        "cited": item,
+                        "refetched": dict(row) if row is not None else None,
+                    }
+                )
+        elif claim["template"] == "episode_evidence":
+            episode_id = claim["evidence"].get("episode_id")
+            episode = connection.execute(
+                text(
+                    "SELECT id, kind, status, start_range_low, end_range_high, label, note "
+                    "FROM episode.episode WHERE id = :id"
+                ),
+                {"id": episode_id},
+            ).mappings().first()
+            evidence_detail.append(
+                {
+                    "role": "supports",
+                    "source_table": "episode.episode",
+                    "cited": {"episode_id": episode_id},
+                    "refetched": dict(episode) if episode is not None else None,
+                }
+            )
+            for cp in claim["evidence"].get("change_points", []):
+                metric_id = connection.execute(
+                    text("SELECT id FROM derive.metric_def WHERE name = :name"),
+                    {"name": cp["metric"]},
+                ).scalar_one_or_none()
+                row = None
+                if metric_id is not None:
+                    row = connection.execute(
+                        text(
+                            "SELECT metric_id, at_date, method FROM signal.change_point "
+                            "WHERE metric_id = :mid AND at_date = :day"
+                        ),
+                        {"mid": metric_id, "day": cp["date"]},
+                    ).mappings().first()
+                evidence_detail.append(
+                    {
+                        "role": "supports",
+                        "source_table": "signal.change_point",
+                        "cited": cp,
+                        "refetched": dict(row) if row is not None else None,
+                    }
+                )
+
+        version_state = {
+            name: connection.execute(
+                text(
+                    "SELECT version_hash FROM derive.deriver_version "
+                    "WHERE deriver_name = :name AND status = 'active'"
+                ),
+                {"name": name},
+            ).scalar_one_or_none()
+            for name in sorted(_upstream_chain(connection, "know_claim_evaluate"))
+        }
+
+    return {
+        "claim": claim,
+        "evidence_detail": evidence_detail,
+        "deriver_version_state": {
+            name: (h.hex() if h is not None else None) for name, h in version_state.items()
+        },
+    }
