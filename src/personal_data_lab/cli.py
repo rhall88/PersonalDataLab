@@ -1265,6 +1265,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                     "epoch_id": outcome.epoch_id,
                     "dirtied_local_keys": outcome.dirtied_local_keys,
                     "is_noop": outcome.is_noop,
+                    "backfilled_derivers": outcome.backfilled_derivers,
                 },
                 indent=2,
             )

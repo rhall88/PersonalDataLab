@@ -1,6 +1,7 @@
 # PersonalDataLab project state
 
-Updated 2026-09-22, after schema version 14 added Phase 4's signals and episodes layer (baselines,
+Updated 2026-09-24, after fixing the recurring new-deriver retroactive-dirtying gap in `sync()`
+permanently (no schema change; see "New-deriver onboarding fix" below). Updated 2026-09-22, after schema version 14 added Phase 4's signals and episodes layer (baselines,
 change points, anomalies, interaction dynamics/states, and cross-source detected episodes), which
 ran against the real canonical database. Updated 2026-09-22, after schema version 13 added Phase 3's life ledger (per-source and composite
 metrics, day-grain, and the `compare` command) and its runtime landed and ran against the real
@@ -444,6 +445,39 @@ Rollout findings against the real data:
   queue and `identity-merge <person_id> <source> <identity_value>` to act on either one, or
   `identity-not-same-as <source> <identity_value>` to reject it permanently.
 
+## New-deriver onboarding fix (2026-09-24)
+
+Phases 1, 3 and 4 each independently hit the same real architectural gap on rollout (see those
+sections above): a deriver added to the registry after `derive sync` has already advanced the
+shared change-feed cursor past all existing history gets no retroactive dirtying from `sync()`
+(only reacts to observations after the cursor) or `rebuild()` (only re-dirties partition keys
+already present in `partition_state`, and a brand-new deriver has none). Each time, this was
+worked around with a disposable one-off script calling `derive.scheduler.mark_dirty()` or
+`mark_dirty_and_propagate()` directly -- functionally correct, but something that had to be
+rediscovered and rewritten by hand three times, and would have needed writing a fourth time for
+Phase 5.
+
+`sync()` now does this automatically and permanently: before reading the change feed, it detects
+which derivers are getting their `derive.deriver_version` row for the very first time in this
+call (genuinely new to the database, not merely a deriver whose `partition_state` happens to be
+empty right now -- a distinction that matters for a `derive-rebuild` or, in tests, a truncated
+table) and seeds each one's initial partition space -- from `declare.source_contract`'s declared
+`covered_range` per source for a root deriver, or from whatever keys its upstream deriver(s)
+already carry in `partition_state`, projected through its own `partition_class`/halo, for a
+non-root deriver -- then dirties it (and cascades downstream) via the existing
+`mark_dirty_and_propagate`. `derive-sync`'s CLI output now reports `backfilled_derivers` so a
+rollout can see this happened without reading logs. See
+[`scheduler.backfill_new_derivers`](src/personal_data_lab/derive/scheduler.py) for the full
+reasoning, including why re-seeding an already-backfilled deriver via this path is intentionally
+harmless (idempotent dirtying) rather than something that needs guarding against on every sync.
+
+Covered by four new `test_derive.py` cases exercising `backfill_new_derivers` directly against
+the real PostgreSQL test service (a fresh root deriver adopting a declared contract's covered
+months, a non-root deriver adopting its upstream's existing partition keys under both a `LOCAL`
+and a `GLOBAL` downstream projection, and a fresh chain whose upstream has no history yet
+correctly seeding nothing). 361 tests pass, ruff clean, `python -m compileall` clean. The
+now-permanently-superseded `seed_phase4_dirty.py` one-off script has been deleted.
+
 ## Verification state
 
 - The repository currently collects 311 tests: non-integration tests plus PostgreSQL-marked
@@ -496,6 +530,16 @@ Rollout findings against the real data:
 3. **Continue the operational track.** Encrypted backup/restore, integrity audits, sensitive-field
    controls, incremental scheduling, performance budgets, derived-data invalidation, and corpus
    exportability remain permanent requirements.
+4. **Human review of Phase 2/4 candidates -- not automatable, waiting on Ry.**
+   `DERIVED_MEANING_ARCHITECTURE.md` §15's exit tests for these phases are explicitly a human
+   judgment step, not an engineering one: Phase 2's cross-source identity name-candidate queue
+   (`identity-candidates --cross-source`) hasn't been worked through, and all 9 real Phase 4
+   `episode.episode` rows are still `status = 'candidate'` -- none confirmed via `episode-declare`
+   or rejected. Both are ready to review now; nothing further needs to be built first.
+
+Done 2026-09-24: the recurring "brand-new deriver gets no retroactive dirtying" gap that hit
+Phases 1, 3, and 4 on rollout is now fixed permanently in `sync()` itself -- see "New-deriver
+onboarding fix" above -- rather than remaining a workaround to rediscover for Phase 5.
 
 Do not start MCP, an agent layer, or a second analytical source of truth before ordinary canonical
 queries are fast, evidence-citing, access-controlled, and covered by the same migration and replay
