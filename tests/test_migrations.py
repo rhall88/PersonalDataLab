@@ -103,7 +103,7 @@ def pr2_engine() -> Iterator[Engine]:
     # in the shared TEST_DATABASE_URL database and the next migrate_database(pr2_engine) call
     # fails with DuplicateTable on identity.resolution_version_seq. Migration 014 adds `signal`
     # and `episode` the same way; migration 015 adds `know`.
-    derived_schemas = "derive, declare, policy, measure, identity, signal, episode, know, semantic"
+    derived_schemas = "derive, declare, policy, measure, identity, signal, episode, know, semantic, media"
     with admin.begin() as connection:
         connection.execute(text(f"DROP SCHEMA IF EXISTS {schema} CASCADE"))
         connection.execute(text(f"DROP SCHEMA IF EXISTS {derived_schemas} CASCADE"))
@@ -134,6 +134,7 @@ def pr2_engine() -> Iterator[Engine]:
             connection.exec_driver_sql(_read_migration(15))
             connection.exec_driver_sql(_read_migration(16))
             connection.exec_driver_sql(_read_migration(17))
+            connection.exec_driver_sql(_read_migration(18))
         admin.dispose()
 
 
@@ -186,7 +187,7 @@ def test_pr2_database_migrates_and_backfills_provenance(pr2_engine: Engine) -> N
             {"source_file_id": source_file_id, "record_id": event_id},
         )
 
-    assert migrate_database(pr2_engine) == (3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17)
+    assert migrate_database(pr2_engine) == (3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18)
     assert migrate_database(pr2_engine) == ()
 
     with pr2_engine.connect() as connection:
@@ -218,7 +219,7 @@ def test_pr2_database_migrates_and_backfills_provenance(pr2_engine: Engine) -> N
                 """
             )
         ).one()
-    assert list(versions) == [2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17]
+    assert list(versions) == [2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18]
     assert tuple(event) == ("message", "user", 32, "canonical-v1")
     assert tuple(observations) == (1, 1)
     assert tuple(event_versions) == ("full", "hello")
@@ -329,7 +330,7 @@ def test_v5_preserves_unreconstructable_observation_as_fingerprint_only(
             {"fingerprint": new_fingerprint},
         )
 
-    assert migrate_database(pr2_engine) == (5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17)
+    assert migrate_database(pr2_engine) == (5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18)
 
     with pr2_engine.connect() as connection:
         versions = connection.execute(
@@ -404,7 +405,7 @@ def test_current_schema_version_reads_max_applied_version(
 
     migrate_database(fresh_database_engine)
 
-    assert current_schema_version(fresh_database_engine) == 17
+    assert current_schema_version(fresh_database_engine) == 18
 
 
 def test_migration_010_creates_derive_schemas_and_seeds_local_only_policy(

@@ -628,6 +628,54 @@ review already identified and confirmed as episode claims 3-7 -- independent con
 completely different derivation path, that the semantic layer is finding real, correct signal in
 the corpus, not just returning syntactically valid rows.
 
+## Media transcription: item 6 started (2026-09-25)
+
+Schema (018, `media.transcript`) and runtime (`derive/derivers/media.py`'s
+`media_transcribe_whisper`) built and shipped together in one PR, not this project's usual
+plan-then-schema-then-runtime cadence -- an explicit, one-off trade-off at Ry's request to move
+fast and get a long-running job going, not a new default for future work.
+
+Local transcription via `faster-whisper` (CTranslate2, `small` model, int8, fully local CPU --
+same dependency ethos as Phase 6's embedding model). `media_transcribe_whisper` is LOCAL, keyed
+by `source:YYYY-MM` via `COALESCE(captured_at, created_at)` (assets have no natural month key the
+way events do; `changefeed.py`'s own `WATCHED_KINDS` already uses that same expression) --
+deliberately not GLOBAL/single-partition, so a crash partway through an hours-long run only loses
+the one in-flight partition's work, not everything already transcribed. Reuses
+`apple_export.inventory.open_apple_locator` for Apple's nested-zip locator format; a new small
+helper (`_open_zip_member`) handles the simpler `<zip>!/<member>` convention every other source
+uses. A file that can't be opened is recorded `status='unreadable'`; a file Whisper itself fails
+on is recorded `status='failed'` -- neither crashes the partition's other files, and neither is
+silently omitted (invariant 2).
+
+**Before this ran, Ry was told plainly what the real audio population contains**: some of it is
+intimate/personal recordings, at least one naming a real partner, discovered while checking real
+filenames during grounding. He explicitly chose to transcribe the full library with no
+exclusions. Not filtered by this code -- that was his call to make, not this session's to make for
+him, and it's recorded here rather than silently acted on.
+
+**A real, more foundational bug the first real rollout attempt found**: the first `derive-run`
+against the canonical database finished almost immediately and produced only 7 transcripts (5
+succeeded, 2 unreadable) out of 494 real audio assets -- `derive-status` showed zero dirty, so
+nothing *looked* wrong. Diagnosed directly: **487 of 494 real audio assets (apple/facebook/google)
+have neither `captured_at` nor `created_at` at all**, so they only ever belong in the
+`source:undated` partition bucket -- and `scheduler.py`'s `_root_keys_from_contracts` (the
+function `backfill_new_derivers` uses to seed a brand-new root deriver's initial partition space,
+added this same session for the new-deriver-onboarding fix) only ever generated *dated* month keys
+from a contract's `covered_range`, never the undated bucket. `know_claim_evaluate` doesn't use
+dated LOCAL keys at all and `semantic_text_unit`'s events almost always have a real timestamp, so
+neither earlier use of this function that same evening exposed the gap -- `media_transcribe_whisper`
+is the first root deriver whose real underlying data is overwhelmingly undated. Fixed by seeding
+every declared source's undated bucket unconditionally, in addition to its dated range (see
+`scheduler.py`); one new assertion added to the existing backfill test proving the undated key is
+now seeded, not just dated months. The real canonical database's `apple`/`facebook`/`google`
+undated partitions were then marked dirty by hand and re-run to actually process the missing 487
+files -- see the next dated update below for final rollout numbers.
+
+8 new tests (`test_media.py`: zip-member reading, source dispatch including a real unreadable-path
+case, deriver registration, one genuine end-to-end call through the real Whisper model on a tiny
+synthetic file, and partition scoping against a real imported asset). 387 tests pass, ruff clean,
+compileall clean.
+
 ## Verification state
 
 - The repository currently collects 311 tests: non-integration tests plus PostgreSQL-marked
