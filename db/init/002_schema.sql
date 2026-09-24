@@ -1211,7 +1211,13 @@ CREATE SCHEMA IF NOT EXISTS know;
 -- One row per claim (PHASE5_IMPLEMENTATION_PLAN.md). `class` is assigned by the claim template,
 -- independent of whatever final_inference tag the underlying deriver happens to carry.
 -- `confidence` is a per-dimension profile object -- an inapplicable dimension is simply absent,
--- never a null standing in for "not computed".
+-- never a null standing in for "not computed". `evidence` cites its supporting rows inline as
+-- JSONB (migration 016's correction), the same precedent episode.episode.evidence already set:
+-- this project's deriver framework writes one output_relation per compute() call with no
+-- RETURNING, so a claim and its evidence can't live in separate tables linked by a
+-- worker-generated id. Cited evidence rows are referenced by natural key inside this JSONB, not
+-- FK, since every cited table (signal.anomaly, signal.change_point, episode.episode) is a GLOBAL
+-- clear-and-replace deriver output with no stable surrogate id to reference safely across runs.
 CREATE TABLE know.claim (
     id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     template TEXT NOT NULL CHECK (template IN ('communication_change', 'episode_evidence')),
@@ -1222,23 +1228,12 @@ CREATE TABLE know.claim (
     statement TEXT NOT NULL,
     subject JSONB NOT NULL DEFAULT '{}'::jsonb,
     confidence JSONB NOT NULL,
+    evidence JSONB NOT NULL DEFAULT '{}'::jsonb,
     status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'superseded')),
     computed_epoch_id BIGINT NOT NULL REFERENCES derive.evidence_epoch(id),
     created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
--- One row per cited evidence item, referenced by natural key (evidence_ref), not FK -- the same
--- precedent episode.episode.evidence already set, since every cited table is a GLOBAL
--- clear-and-replace deriver output with no stable surrogate id to reference safely across runs.
-CREATE TABLE know.claim_evidence (
-    id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-    claim_id BIGINT NOT NULL REFERENCES know.claim(id) ON DELETE CASCADE,
-    role TEXT NOT NULL CHECK (role IN ('supports', 'contradicts', 'qualifies', 'contextualizes')),
-    evidence_table TEXT NOT NULL,
-    evidence_ref JSONB NOT NULL
-);
-
 CREATE INDEX claim_template_idx ON know.claim (template, class);
-CREATE INDEX claim_evidence_claim_idx ON know.claim_evidence (claim_id);
 
-INSERT INTO schema_migrations (version) VALUES (2), (3), (4), (5), (6), (7), (8), (9), (10), (11), (12), (13), (14), (15) ON CONFLICT DO NOTHING;
+INSERT INTO schema_migrations (version) VALUES (2), (3), (4), (5), (6), (7), (8), (9), (10), (11), (12), (13), (14), (15), (16) ON CONFLICT DO NOTHING;

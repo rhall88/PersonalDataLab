@@ -165,6 +165,7 @@ def test_sync_dirties_local_and_propagates_across_the_month_boundary(database_en
         ("episode_detect_candidates", "GLOBAL"),
         ("measure_interaction_dynamics", "GLOBAL"),
         ("signal_interaction_state", "GLOBAL"),
+        ("know_claim_evaluate", "GLOBAL"),
     }
 
 
