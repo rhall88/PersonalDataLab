@@ -1,7 +1,10 @@
 # PersonalDataLab project state
 
-Updated 2026-09-24, after fixing the recurring new-deriver retroactive-dirtying gap in `sync()`
-permanently (no schema change; see "New-deriver onboarding fix" below). Updated 2026-09-22, after schema version 14 added Phase 4's signals and episodes layer (baselines,
+Updated 2026-09-24, after a real review session with Ry closed Phase 2's identity queue and
+Phase 4's episode candidates (built `episode-confirm`/`episode-reject` first, since it didn't
+exist), and after publishing `PHASE5_IMPLEMENTATION_PLAN.md` (schema/runtime/rollout not yet
+built). Updated 2026-09-24, after fixing the recurring new-deriver retroactive-dirtying gap in
+`sync()` permanently (no schema change; see "New-deriver onboarding fix" below). Updated 2026-09-22, after schema version 14 added Phase 4's signals and episodes layer (baselines,
 change points, anomalies, interaction dynamics/states, and cross-source detected episodes), which
 ran against the real canonical database. Updated 2026-09-22, after schema version 13 added Phase 3's life ledger (per-source and composite
 metrics, day-grain, and the `compare` command) and its runtime landed and ran against the real
@@ -520,26 +523,35 @@ now-permanently-superseded `seed_phase4_dirty.py` one-off script has been delete
    not been re-verified for exact replay against the canonical database (see the canonical baseline
    section above). Low priority: the fix is narrow, unit-tested, and was verified directly against
    the real corpus bytes before merging.
-2. **Continue the derived-meaning layer past Phase 4.** Phases 0-4 (activity coverage, as-of
-   contracts, identity resolution, the life-ledger metrics/compare layer, and signals + episodes --
-   baselines, change points, anomalies, interaction dynamics/states, declared/detected episodes)
-   are all live against the real canonical database (see the sections above). Next per
-   `DERIVED_MEANING_ARCHITECTURE.md` §15: claims and cross-source correlations, OCR/transcription,
-   chunks, and embeddings, all as separately versioned, disposable layers whose outputs cite
-   immutable observations.
+2. **Implement Phase 5.** [`PHASE5_IMPLEMENTATION_PLAN.md`](PHASE5_IMPLEMENTATION_PLAN.md)
+   (published 2026-09-24) scopes `DERIVED_MEANING_ARCHITECTURE.md` §15's claims layer against
+   what Phases 0-4 already computed: a `know.claim`/`know.claim_evidence` schema, two claim
+   templates (`communication_change`, `episode_evidence`), 4 of the architecture's 9 confidence
+   dimensions, and `claims-list`/`claims-why` CLI verbs. Schema, runtime, and rollout PRs are next.
+   OCR/transcription, chunks, and embeddings (the rest of §15's remaining scope) come after.
 3. **Continue the operational track.** Encrypted backup/restore, integrity audits, sensitive-field
    controls, incremental scheduling, performance budgets, derived-data invalidation, and corpus
    exportability remain permanent requirements.
-4. **Human review of Phase 2/4 candidates -- not automatable, waiting on Ry.**
-   `DERIVED_MEANING_ARCHITECTURE.md` §15's exit tests for these phases are explicitly a human
-   judgment step, not an engineering one: Phase 2's cross-source identity name-candidate queue
-   (`identity-candidates --cross-source`) hasn't been worked through, and all 9 real Phase 4
-   `episode.episode` rows are still `status = 'candidate'` -- none confirmed via `episode-declare`
-   or rejected. Both are ready to review now; nothing further needs to be built first.
 
-Done 2026-09-24: the recurring "brand-new deriver gets no retroactive dirtying" gap that hit
-Phases 1, 3, and 4 on rollout is now fixed permanently in `sync()` itself -- see "New-deriver
-onboarding fix" above -- rather than remaining a workaround to rediscover for Phase 5.
+Done 2026-09-24:
+- The recurring "brand-new deriver gets no retroactive dirtying" gap that hit Phases 1, 3, and 4
+  on rollout is now fixed permanently in `sync()` itself -- see "New-deriver onboarding fix" above
+  -- rather than remaining a workaround to rediscover for Phase 5.
+- **Phase 2's identity queue and Phase 4's episode candidates were reviewed with Ry and
+  resolved**, closing both phases' own exit tests (§15: "top 200 correspondents verified" and
+  "detected episodes reviewed against 10 periods you know"). Identity: both cross-source
+  name-candidates (`identity-candidates --cross-source`) confirmed as real people and merged via
+  `identity-merge`; the queue is now empty. Episodes: `episode-confirm`/`episode-reject` (PR #60)
+  were built first, since no CLI verb existed to transition a `detected` candidate's status in
+  place. 8 of the 9 detected candidates were confirmed with real, evidence-backed labels tying
+  each to a specific real event Ry identified and I corroborated against the underlying message
+  content (not just the change-point dates); 1 was left as an honestly-unresolved `candidate`
+  rather than guessed at (invariant 38: unreviewed stays unreviewed, never optimistically
+  resolved). One additional `declared` episode was added for a real event that fell in the gap
+  between two detected candidates and was never caught by automatic detection at all -- a real,
+  useful finding about the detector's own recall, not just a review outcome. Specific labels/notes
+  (family names, dates, circumstances) are private data and intentionally not reproduced in this
+  file; see `episode.episode`/`identity_links` in the canonical database directly.
 
 Do not start MCP, an agent layer, or a second analytical source of truth before ordinary canonical
 queries are fast, evidence-citing, access-controlled, and covered by the same migration and replay
