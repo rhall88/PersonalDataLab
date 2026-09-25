@@ -745,6 +745,49 @@ database after dropping schemas for its own test -- missing migration 19 silentl
 `signal.annotation` dropped for every test file that happened to run afterward in the same pytest
 process. Fixed the teardown and the two hardcoded expected-version-tuple assertions it fed.
 
+## Phase 8: documents into the semantic layer -- schema + runtime shipped, no real rollout yet (2026-09-25)
+
+`PHASE8_DOCUMENT_SEMANTIC_LAYER_IMPLEMENTATION_PLAN.md`, found while investigating whether the
+media-transcription job was re-deriving text that already exists (it partially is -- 39+ of 45
+Recorder-sourced Google audio files already have real, verbatim, speaker-labeled transcripts in
+`records`, confirmed by reading real rows). Migration 021 (`semantic.text_unit_document`/
+`semantic.embedding_bge_small_en_v15_document`), and two new derivers mirroring Phase 6's own
+`semantic_text_unit`/`semantic_embedding_bge_small` split exactly: `semantic_text_unit_document`
+(HALO root, reads `records` instead of `events`, filtered to a grounded 10-namespace allowlist --
+Drive documents, NotebookLM notebooks/sources, Recorder transcripts, Gemini conversations, Apple
+Notes) and `semantic_embedding_document_bge_small` (LOCAL, reuses `semantic.py`'s pinned
+`embed_texts()`, no second model load). `semantic-search` gains `--include-documents`, merging
+both embedding spaces by distance -- an explicit opt-in, so Phase 6's already-verified
+message-search behavior is unchanged by default.
+
+**Two real bugs found building this, both fixed before merging**:
+1. `started_at`/`ended_at` were initially `NOT NULL`, copying `semantic.text_unit`'s own column
+   definitions -- but unlike Phase 6's events (which almost always have a real timestamp), nearly
+   all of the real in-scope `records` population has no `occurred_at`/`created_at`/`updated_at` at
+   all. A `NOT NULL` constraint would have forced fabricating a placeholder timestamp, exactly the
+   invented-value invariant 2 already argues against. Fixed by making both columns nullable, and
+   by writing `semantic_text_unit_document`/`semantic_embedding_document_bge_small`'s `compute()`
+   with a real `IS NULL` branch for the undated case (copying `media_transcribe_whisper`'s own
+   pattern) instead of `semantic_text_unit`'s "return empty for undated" shortcut, which is only
+   valid there because Phase 6's events always have dates -- reusing it here would have silently
+   produced zero document units for the whole corpus and looked like success.
+2. A `%` character in migration 021's own SQL comment ("99.97%") broke `psycopg`'s parameter
+   substitution (`incomplete placeholder`) the moment any test tried to apply it via
+   `exec_driver_sql` -- no other migration file in this project uses a bare `%` in SQL at all.
+   Found immediately by running the full test suite, not assumed safe from a smaller check;
+   fixed by rewording the comment. The failure cascaded through the same shared-`TEST_DATABASE_URL`
+   mechanism the migration-19 and migration-20 gaps did (`test_migrations.py`'s `pr2_engine`
+   fixture drops shared schemas as part of its own test, then reapplies migrations 10+ in its
+   teardown) -- fixed the same way: added `_read_migration(21)` to that teardown and bumped its
+   hardcoded expected-version tuples, then manually repaired the already-broken shared test
+   database (`DROP SCHEMA ... CASCADE` on all ten derived schemas + `DELETE FROM schema_migrations
+   WHERE version >= 10` + `migrate`) since the damage predated the fix.
+
+Not yet run against the real canonical database -- `semantic_text_unit_document` is a HALO root
+deriver and would need `derive sync` (to backfill/register) then `derive run` against canonical,
+deliberately deferred until the still-running media-transcription job finishes, same
+single-active-process caution as Phase 7 and the `relationship_state_shift` claim template.
+
 ## Claim-template growth: relationship_state_shift (2026-09-25)
 
 ROADMAP.md item 3's "further claim-template growth" (the `communication_change`/`episode_evidence`

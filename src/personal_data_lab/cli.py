@@ -472,6 +472,10 @@ def _parser() -> argparse.ArgumentParser:
     semantic_search_parser.add_argument("query")
     semantic_search_parser.add_argument("--limit", type=int, default=10)
     semantic_search_parser.add_argument("--source")
+    semantic_search_parser.add_argument(
+        "--include-documents", action="store_true",
+        help="also rank semantic.text_unit_document (Drive/NotebookLM/Recorder/Notes content)",
+    )
     semantic_search_parser.add_argument("--database-url", help="overrides DATABASE_URL from .env")
     declare_add = subparsers.add_parser("declare-add", help="record a user-asserted declaration")
     declare_add.add_argument(
@@ -1482,7 +1486,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 0
     if args.command == "semantic-search":
         engine = _resolve_guarded_engine(args.database_url, canonical_import=False)
-        hits = semantic_search(engine, args.query, limit=args.limit, source=args.source)
+        hits = semantic_search(
+            engine, args.query, limit=args.limit, source=args.source,
+            include_documents=args.include_documents,
+        )
         print(json.dumps(hits, indent=2, default=str))
         return 0
     if args.command == "declare-add":
