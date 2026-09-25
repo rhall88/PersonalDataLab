@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "personal-data-lab"
-version = "0.23.0"
+version = "0.24.0"
 description = "A provenance-first local archive and importer for personal data exports"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -14,6 +14,7 @@ dependencies = [
     "fastembed>=0.4,<0.5",
     "faster-whisper>=1.0,<2",
     "llama-cpp-python>=0.3,<0.4",
+    "cryptography>=43,<44",
     "psycopg[binary]>=3.2,<4",
     "pydantic>=2.9,<3",
     "python-dotenv>=1.0,<2",

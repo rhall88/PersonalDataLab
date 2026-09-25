@@ -18,8 +18,10 @@ from .anthropic_export.orchestrator import import_anthropic_all
 from .apple_export.inventory import inspect_apple
 from .apple_export.inventory import render_inventory_table as render_apple_table
 from .apple_export.orchestrator import import_apple_all
+from .backup import BackupError, create_backup, restore_backup
 from .compare import DateRangeError, compare_periods, parse_date_range
 from .config import (
+    DatabaseTargetGuardError,
     canonical_database_name,
     database_url,
     guard_acceptance_run_not_canonical,
@@ -228,6 +230,27 @@ def _parser() -> argparse.ArgumentParser:
     imessages_all.add_argument("--database-url", help="overrides DATABASE_URL from .env")
     migrate = subparsers.add_parser("migrate", help="upgrade an existing database schema")
     migrate.add_argument("--database-url", help="overrides DATABASE_URL from .env")
+    backup = subparsers.add_parser(
+        "backup", help="pg_dump + encrypt the database to a timestamped file"
+    )
+    backup.add_argument("--database-url", help="overrides DATABASE_URL from .env")
+    backup.add_argument(
+        "--output-dir", default="backups", help="directory to write the encrypted backup into"
+    )
+    restore = subparsers.add_parser(
+        "restore", help="decrypt + pg_restore a backup created by `backup`"
+    )
+    restore.add_argument("--file", required=True, help="path to the .dump.enc file to restore")
+    restore.add_argument(
+        "--target-database-url", required=True,
+        help="database to restore into -- never defaults to DATABASE_URL, to avoid an "
+        "accidental overwrite of whatever the current environment happens to point at",
+    )
+    restore.add_argument(
+        "--force", action="store_true",
+        help="required in addition to --target-database-url to restore into the canonical "
+        "database by name",
+    )
     doctor = subparsers.add_parser(
         "doctor",
         help="report the configured database target, schema version, and every "
@@ -1179,6 +1202,35 @@ def main(argv: Sequence[str] | None = None) -> int:
                 indent=2,
             )
         )
+        return 0
+    if args.command == "backup":
+        url = database_url(args.database_url)
+        try:
+            result = create_backup(url, output_dir=Path(args.output_dir))
+        except BackupError as error:
+            print(json.dumps({"error": str(error)}, indent=2), file=sys.stderr)
+            return 1
+        print(
+            json.dumps(
+                {
+                    "path": str(result.path),
+                    "database_name": result.database_name,
+                    "size_bytes": result.size_bytes,
+                    "created_at": result.created_at.isoformat(),
+                },
+                indent=2,
+            )
+        )
+        return 0
+    if args.command == "restore":
+        try:
+            restore_backup(
+                Path(args.file), args.target_database_url, force=args.force,
+            )
+        except (BackupError, DatabaseTargetGuardError) as error:
+            print(json.dumps({"error": str(error)}, indent=2), file=sys.stderr)
+            return 1
+        print(json.dumps({"restored_into": args.target_database_url}, indent=2))
         return 0
     if args.command == "doctor":
         report = _build_doctor_report(args.database_url)
