@@ -745,6 +745,35 @@ database after dropping schemas for its own test -- missing migration 19 silentl
 `signal.annotation` dropped for every test file that happened to run afterward in the same pytest
 process. Fixed the teardown and the two hardcoded expected-version-tuple assertions it fed.
 
+## Claim-template growth: relationship_state_shift (2026-09-25)
+
+ROADMAP.md item 3's "further claim-template growth" (the `communication_change`/`episode_evidence`
+pair from Phase 5's rollout was always explicitly two of the eventual set, not the whole set).
+`relationship_state_shift` wraps Phase 4's already-computed `signal.interaction_state` (PELT
+segmentation of each correspondent's monthly reciprocity into states) the same way
+`episode_evidence` wraps episode detection: one claim per consecutive pair of states for the same
+(source, correspondent) -- a correspondent whose interaction pattern only ever had one detected
+state produces no claim (nothing to compare), one with two or more states produces a claim per
+transition. `class` is always STATISTICAL (automatic segmentation, no human review step exists for
+this data the way episodes have one); `confidence.statistical_strength` is the absolute change in
+mean reciprocity index between the two states; `confidence.source_independence` is always 1,
+matching `communication_change`'s own honesty precedent -- `measure.interaction_dynamics` is
+computed per single source (Phase 4 decision 10), never fabricated as corroborated by more than
+one; `confidence.coverage` reuses `_coverage_for_range` unchanged (zero new coverage logic).
+
+Grounded against the real canonical database before writing any code: 77 `signal.interaction_state`
+rows across 69 (source, correspondent) pairs, of which only 7 correspondents have 2+ states (8 real
+consecutive-pair transitions total) -- the actual, honest small-N population this template has to
+work with, not an invented one. Migration 020 widens `know.claim`'s `template` CHECK constraint
+(the actual constraint name, `claim_template_check`, was confirmed directly against the database
+rather than assumed from Postgres's usual default-naming convention, which would have been wrong
+here). 2 new tests in `test_phase5.py`: a synthetic two-vs-one-state scenario confirming only the
+real transition produces a claim (not the solo state), and a `claim_why` check confirming both
+cited `signal.interaction_state` rows are independently re-fetched and match. Not yet rolled out
+against the real canonical database (`know_claim_evaluate` is GLOBAL and would need a
+`derive run --global` pass, deliberately deferred until the transcription job finishes, same
+single-active-process caution as Phase 7).
+
 ## Operational track: encrypted backup/restore (2026-09-25)
 
 `personal-data-lab backup`/`restore` (no separate plan doc -- a self-contained utility, not a
@@ -752,22 +781,38 @@ derivation-pipeline phase). `pg_dump`/`pg_restore` run inside the project's own 
 (`docker exec personal-data-db ...`, container name overridable via `PDL_DB_CONTAINER`) rather than
 requiring host-installed Postgres client tools -- this dev machine (and CI, via the same
 `compose.yaml`) only ever runs Postgres in Docker, confirmed directly (`pg_dump`/`pg_restore` are
-not on this machine's PATH at all). Encryption is a passphrase-derived Fernet key
-(PBKDF2HMAC-SHA256, 600k iterations, a fresh random salt per backup) via the `cryptography`
-package, not a new external binary dependency -- `PDL_BACKUP_PASSPHRASE` lives wherever the caller
-keeps it; there is no recovery path if it's lost, by design. `restore` refuses to target the
-canonical database by name unless `force=True`, reusing `config.py`'s existing
-`DatabaseTargetGuardError` pattern rather than inventing a second safety mechanism.
+not on this machine's PATH at all). Encryption keys are passphrase-derived (PBKDF2HMAC-SHA256, 600k
+iterations, a fresh random salt per backup) via the `cryptography` package, not a new external
+binary dependency -- `PDL_BACKUP_PASSPHRASE` lives wherever the caller keeps it; there is no
+recovery path if it's lost, by design. `restore` refuses to target the canonical database by name
+unless `force=True`, reusing `config.py`'s existing `DatabaseTargetGuardError` pattern rather than
+inventing a second safety mechanism.
 
 Replaces the ad hoc unencrypted `pg_dump` this project had relied on manually until now (e.g.
 `backups/20260921T195110Z/`, used once before applying migration 010). Real, non-mocked round-trip
 test: a real event imported into the test database, backed up, decrypted, and restored into a
 genuinely separate scratch database (`pdl_backup_restore_test`, created/dropped per test), with
 the restored row's content verified to match byte-for-byte -- plus coverage for a missing
-passphrase, a wrong passphrase failing to decrypt, and the canonical-database guard firing. Not
-yet run against the real canonical database (deliberately deferred until the transcription job
-above finishes, for the same single-active-process caution, even though `pg_dump` itself is safe
-to run concurrently with an active writer via Postgres's own MVCC snapshot isolation).
+passphrase, a wrong passphrase failing to decrypt, and the canonical-database guard firing.
+
+**A real bug the first actual production run found, same day**: the initial implementation used
+`cryptography.fernet.Fernet`, which encrypts its entire input in one call and therefore holds the
+whole payload in memory. Running `backup` for real against the canonical database (13GB+,
+concurrently with the still-running media-transcription job) raised a genuine `MemoryError` inside
+`Fernet.encrypt()` -- caught immediately because this was run for real, not left as a
+theoretical concern the test suite's small-scale round-trip test could never have caught. Fixed by
+switching to a fully streaming design: `pg_dump`'s stdout is read and encrypted (AES-256-CTR via
+`cryptography`'s low-level `Cipher`/`CipherContext` API) in bounded 4MB chunks, so memory use stays
+roughly constant regardless of database size. CTR alone gives no tamper detection, so integrity is
+a separate encrypt-then-MAC step (HMAC-SHA256 over the ciphertext) verified in a first full
+streaming pass over the file *before* any byte is decrypted or handed to `pg_restore` on restore --
+a wrong passphrase or a corrupted file is still caught cleanly as a `BackupError`, never fed as
+garbage into `pg_restore`'s stdin. All round-trip and guard tests re-verified passing against the
+new implementation; a real backup of the canonical database was then re-run with the fix in place
+and completed successfully: `pdl_backup_personaldata_20260925T150003Z.dump.enc`, 2,847,912,765
+bytes (~2.85GB), ~7 minutes wall time, run concurrently with the still-active media-transcription
+job with no interference (Postgres's own MVCC snapshot isolation, as expected). The passphrase was
+generated for Ry and shown once in chat, never stored in this repo or the backup file.
 
 ## Verification state
 

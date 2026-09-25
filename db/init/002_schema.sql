@@ -1220,7 +1220,9 @@ CREATE SCHEMA IF NOT EXISTS know;
 -- clear-and-replace deriver output with no stable surrogate id to reference safely across runs.
 CREATE TABLE know.claim (
     id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-    template TEXT NOT NULL CHECK (template IN ('communication_change', 'episode_evidence')),
+    template TEXT NOT NULL CHECK (
+        template IN ('communication_change', 'episode_evidence', 'relationship_state_shift')
+    ),
     template_version TEXT NOT NULL DEFAULT '1',
     class TEXT NOT NULL CHECK (
         class IN ('OBSERVED', 'COMPUTED', 'STATISTICAL', 'SEMANTIC', 'DECLARED', 'HYPOTHESIS')
@@ -1306,4 +1308,4 @@ CREATE TABLE media.transcript (
 CREATE INDEX transcript_source_idx ON media.transcript (source);
 CREATE INDEX transcript_status_idx ON media.transcript (status);
 
-INSERT INTO schema_migrations (version) VALUES (2), (3), (4), (5), (6), (7), (8), (9), (10), (11), (12), (13), (14), (15), (16), (17), (18), (19) ON CONFLICT DO NOTHING;
+INSERT INTO schema_migrations (version) VALUES (2), (3), (4), (5), (6), (7), (8), (9), (10), (11), (12), (13), (14), (15), (16), (17), (18), (19), (20) ON CONFLICT DO NOTHING;
