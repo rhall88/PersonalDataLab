@@ -676,6 +676,99 @@ case, deriver registration, one genuine end-to-end call through the real Whisper
 synthetic file, and partition scoping against a real imported asset). 387 tests pass, ruff clean,
 compileall clean.
 
+## Media transcription: undated-bucket rerun (2026-09-25, in progress)
+
+Two more real bugs found live rolling out the undated-bucket fix above, both fixed and merged
+(PR #68's own follow-up commits): (1) `_open_asset_bytes` had no Facebook dispatch case at all,
+falling through to a generic `!/`-split path that can't parse Facebook's `facebook-zip:{...}` JSON
+locator; (2) the temp-file suffix was derived from `original_path.split("!/")[-1]` then
+`Path(...).suffix` -- for Apple/Facebook, `original_path` is the *whole locator JSON blob*, not a
+plain filename, producing garbage like `.m4a",5]]}` that Windows rejected as an invalid temp-file
+suffix. Fixed by adding a Facebook case (reusing `facebook_export.inventory.open_facebook_locator`,
+exactly parallel to Apple's existing helper) and by deriving the suffix from `assets.filename`
+(always a clean plain filename regardless of locator format) via a new `_temp_file_suffix()`
+helper, validated against a strict `^\.[A-Za-z0-9]{1,5}$` pattern with an `.audio` fallback.
+
+**A second, purely operational bug** (not a code defect): the first attempt to re-run the
+undated buckets with this fix used a `derive-run` process that had been launched *before* the fix
+was merged to `main` (11 minutes earlier) -- Python doesn't hot-reload, so that process kept
+running the old buggy code in memory and reproduced the exact same suffix-garbage/Facebook
+failures on the re-dirtied partitions, even though the fix was correctly on disk. Diagnosed by
+comparing the running process's start time against the merge commit's timestamp; fixed by killing
+the stale process, deleting the 28 garbage rows it wrote, and launching a genuinely fresh process.
+
+That fresh run is real, non-mocked CPU transcription of the actual canonical audio corpus (22
+Apple + 6 Facebook + 459 Google files, ~8GB combined raw audio, several individual Apple Voice
+Memos files 130-300MB at low-bitrate encoding, likely representing many hours each) via the
+`faster-whisper` "small" model -- still in progress as of this note, 14+ hours of continuous,
+steady CPU usage (~4 cores) with zero anomalies, each source's partition committing as one
+uncommitted transaction (nothing lands in `media.transcript` until a whole partition finishes).
+Final rollout numbers to follow once it completes.
+
+**A real gap this rollout surfaced, not a bug**: Apple's official privacy export contains only 22
+audio files total (verified by recursively scanning every raw export ZIP directly, not just the
+canonical database) -- all Voice Memos, none from any other app. Apple's privacy-export mechanism
+only ever includes Apple's own first-party apps; a third-party audio app Ry also used on his phone
+was never part of this export and isn't recoverable from it. Ry is considering a full iMazing
+device-backup source to close this gap, explicitly deferred to a future "v1.1" phase -- see
+`ROADMAP.md`.
+
+## Phase 7: semantic annotation (topic labeling) -- schema + runtime shipped, no real rollout yet (2026-09-25)
+
+`PHASE7_SEMANTIC_ANNOTATION_IMPLEMENTATION_PLAN.md` (PR #69) scoped the annotation half of the
+semantic layer Phase 6 explicitly deferred. Schema + runtime (PR #70): migration 019
+(`signal.annotation`), and `signal_annotation_topic` -- the codebase's first real
+`final_inference="SEMANTIC"` deriver and first real use of `deriver_version.model_ref`. Topic
+labels come from an 18-label closed taxonomy enforced by a GBNF grammar at the token-sampling
+level via `llama-cpp-python` (`llama.cpp`, no PyTorch/CUDA, same dependency ethos as Phases 6/item
+6), so an out-of-taxonomy label is structurally impossible. Model/prompt/taxonomy identity is
+hashed into `model_ref`.
+
+Per the plan's decision 6, the real production model (Phi-3.5-mini-instruct) is deliberately
+**not** wired in yet -- C: was at ~24.8GB free and an external-drive migration for `DataLabData`
+was in progress in parallel, so this doesn't compete for that headroom. `PDL_ANNOTATION_MODEL_PATH`
+must point at a real `.gguf` file for the deriver to actually annotate anything; left unset (true
+of the canonical database today), the deriver registers cleanly with placeholder `model_ref`
+hashes and `compute()` raises a clear, caught error rather than crashing -- an intentional
+"registered but not runnable yet" state, not a bug. Real end-to-end test coverage
+(`test_annotation.py`) runs the actual `llama.cpp` completion API against a tiny (~12MB), openly
+licensed test-only GGUF model downloaded via `huggingface_hub`, proving grammar-constrained
+decoding, row shape, and `model_ref` hashing all genuinely work -- not the production model, per
+the same deferral. Migration 019 has been applied to the real canonical database; `signal
+_annotation_topic` has not yet been registered/dirtied there (deliberately held until the
+transcription job above finishes, to avoid any interaction with the single active `derive-run`
+process).
+
+Also fixed a real cross-test bug this PR's own test run surfaced: `test_migrations.py`'s
+`pr2_engine` fixture teardown hardcoded migrations 10-18 to restore the shared `TEST_DATABASE_URL`
+database after dropping schemas for its own test -- missing migration 19 silently left
+`signal.annotation` dropped for every test file that happened to run afterward in the same pytest
+process. Fixed the teardown and the two hardcoded expected-version-tuple assertions it fed.
+
+## Operational track: encrypted backup/restore (2026-09-25)
+
+`personal-data-lab backup`/`restore` (no separate plan doc -- a self-contained utility, not a
+derivation-pipeline phase). `pg_dump`/`pg_restore` run inside the project's own Postgres container
+(`docker exec personal-data-db ...`, container name overridable via `PDL_DB_CONTAINER`) rather than
+requiring host-installed Postgres client tools -- this dev machine (and CI, via the same
+`compose.yaml`) only ever runs Postgres in Docker, confirmed directly (`pg_dump`/`pg_restore` are
+not on this machine's PATH at all). Encryption is a passphrase-derived Fernet key
+(PBKDF2HMAC-SHA256, 600k iterations, a fresh random salt per backup) via the `cryptography`
+package, not a new external binary dependency -- `PDL_BACKUP_PASSPHRASE` lives wherever the caller
+keeps it; there is no recovery path if it's lost, by design. `restore` refuses to target the
+canonical database by name unless `force=True`, reusing `config.py`'s existing
+`DatabaseTargetGuardError` pattern rather than inventing a second safety mechanism.
+
+Replaces the ad hoc unencrypted `pg_dump` this project had relied on manually until now (e.g.
+`backups/20260921T195110Z/`, used once before applying migration 010). Real, non-mocked round-trip
+test: a real event imported into the test database, backed up, decrypted, and restored into a
+genuinely separate scratch database (`pdl_backup_restore_test`, created/dropped per test), with
+the restored row's content verified to match byte-for-byte -- plus coverage for a missing
+passphrase, a wrong passphrase failing to decrypt, and the canonical-database guard firing. Not
+yet run against the real canonical database (deliberately deferred until the transcription job
+above finishes, for the same single-active-process caution, even though `pg_dump` itself is safe
+to run concurrently with an active writer via Postgres's own MVCC snapshot isolation).
+
 ## Verification state
 
 - The repository currently collects 311 tests: non-integration tests plus PostgreSQL-marked

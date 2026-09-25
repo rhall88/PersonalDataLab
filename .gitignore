@@ -13,6 +13,7 @@ data/raw/
 data/media/
 data/parquet/
 data/backups/
+/backups/
 
 *.log
 .DS_Store
