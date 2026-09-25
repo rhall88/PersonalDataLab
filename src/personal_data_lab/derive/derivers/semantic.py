@@ -253,11 +253,21 @@ def semantic_embedding_bge_small(
     return ComputeResult(input_fingerprint=fingerprint, rows=rows)
 
 
-def search(engine: Engine, query: str, *, limit: int = 10, source: str | None = None) -> list[dict]:
+def search(
+    engine: Engine, query: str, *, limit: int = 10, source: str | None = None,
+    include_documents: bool = False,
+) -> list[dict]:
     """Embed `query` with the same pinned model and rank semantic.text_unit by cosine distance
     (pgvector's `<=>` operator). A lookup tool, not a statistical finding (architecture section
     8 step 9: vectors only ever fetch examples, statistics decide what matters) -- this returns
     text units with their provenance, never a confidence profile or a know.claim row.
+
+    include_documents=True (PHASE8_DOCUMENT_SEMANTIC_LAYER_IMPLEMENTATION_PLAN.md decision 2) also
+    ranks semantic.text_unit_document (records -- Drive documents, NotebookLM, Recorder
+    transcripts, Apple Notes) and merges both result sets by distance -- an explicit opt-in, so
+    this function's already-verified message-search behavior (Phase 6's real rollout) is
+    unchanged by default. Each row carries `kind` ("message" or "document") since the two sources
+    have different provenance shapes (conversation_id/event_ids vs. record_id).
     """
     [vector] = embed_texts([query])
     query_clause = "AND tu.source = :source" if source is not None else ""
@@ -265,8 +275,8 @@ def search(engine: Engine, query: str, *, limit: int = 10, source: str | None = 
         rows = connection.execute(
             text(
                 f"""
-                SELECT tu.id, tu.source, tu.conversation_id, tu.event_ids, tu.started_at,
-                       tu.ended_at, tu.text, tu.truncated,
+                SELECT 'message' AS kind, tu.id, tu.source, tu.conversation_id, tu.event_ids,
+                       tu.started_at, tu.ended_at, tu.text, tu.truncated,
                        (e.vector <=> CAST(:vector AS vector)) AS distance
                 FROM semantic.embedding_bge_small_en_v15 e
                 JOIN semantic.text_unit tu ON tu.id = e.text_unit_id
@@ -277,4 +287,26 @@ def search(engine: Engine, query: str, *, limit: int = 10, source: str | None = 
             ),
             {"vector": _vector_literal(vector), "source": source, "limit": limit},
         ).mappings().all()
-    return [dict(row) for row in rows]
+        results = [dict(row) for row in rows]
+
+        if include_documents:
+            doc_query_clause = "AND tu.source = :source" if source is not None else ""
+            doc_rows = connection.execute(
+                text(
+                    f"""
+                    SELECT 'document' AS kind, tu.id, tu.source, tu.record_id, tu.started_at,
+                           tu.ended_at, tu.text, tu.truncated,
+                           (e.vector <=> CAST(:vector AS vector)) AS distance
+                    FROM semantic.embedding_bge_small_en_v15_document e
+                    JOIN semantic.text_unit_document tu ON tu.id = e.text_unit_document_id
+                    WHERE TRUE {doc_query_clause}
+                    ORDER BY distance ASC
+                    LIMIT :limit
+                    """
+                ),
+                {"vector": _vector_literal(vector), "source": source, "limit": limit},
+            ).mappings().all()
+            results.extend(dict(row) for row in doc_rows)
+
+    results.sort(key=lambda row: row["distance"])
+    return results[:limit]

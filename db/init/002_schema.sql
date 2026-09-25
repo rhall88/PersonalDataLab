@@ -1270,6 +1270,35 @@ CREATE INDEX embedding_bge_small_en_v15_hnsw_idx
     ON semantic.embedding_bge_small_en_v15
     USING hnsw (vector vector_cosine_ops);
 
+-- Documents into the semantic layer (PHASE8_DOCUMENT_SEMANTIC_LAYER_IMPLEMENTATION_PLAN.md): a
+-- parallel table to semantic.text_unit/semantic.embedding_bge_small_en_v15 for record-sourced
+-- (not event-sourced) prose -- see that plan's decision 2 for why this is a separate table.
+CREATE TABLE semantic.text_unit_document (
+    id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    source TEXT NOT NULL,
+    record_id BIGINT NOT NULL REFERENCES records(id),
+    started_at TIMESTAMPTZ,
+    ended_at TIMESTAMPTZ,
+    text TEXT NOT NULL,
+    truncated BOOLEAN NOT NULL DEFAULT FALSE,
+    computed_epoch_id BIGINT NOT NULL REFERENCES derive.evidence_epoch(id),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE (record_id)
+);
+
+CREATE INDEX text_unit_document_source_started_idx ON semantic.text_unit_document (source, started_at);
+
+CREATE TABLE semantic.embedding_bge_small_en_v15_document (
+    text_unit_document_id BIGINT PRIMARY KEY
+        REFERENCES semantic.text_unit_document(id) ON DELETE CASCADE,
+    vector vector(384) NOT NULL,
+    computed_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX embedding_bge_small_en_v15_document_hnsw_idx
+    ON semantic.embedding_bge_small_en_v15_document
+    USING hnsw (vector vector_cosine_ops);
+
 -- Semantic annotation (PHASE7_SEMANTIC_ANNOTATION_IMPLEMENTATION_PLAN.md): named directly in
 -- DERIVED_MEANING_ARCHITECTURE.md's own schema table. No FK from any canonical table -- only a
 -- reference to semantic.text_unit -- so it can be dropped and rebuilt at any time (invariant 20).
@@ -1308,4 +1337,4 @@ CREATE TABLE media.transcript (
 CREATE INDEX transcript_source_idx ON media.transcript (source);
 CREATE INDEX transcript_status_idx ON media.transcript (status);
 
-INSERT INTO schema_migrations (version) VALUES (2), (3), (4), (5), (6), (7), (8), (9), (10), (11), (12), (13), (14), (15), (16), (17), (18), (19), (20) ON CONFLICT DO NOTHING;
+INSERT INTO schema_migrations (version) VALUES (2), (3), (4), (5), (6), (7), (8), (9), (10), (11), (12), (13), (14), (15), (16), (17), (18), (19), (20), (21) ON CONFLICT DO NOTHING;

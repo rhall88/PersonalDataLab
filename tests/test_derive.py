@@ -182,6 +182,16 @@ def test_sync_dirties_local_and_propagates_across_the_month_boundary(database_en
         ("signal_annotation_topic", "google:2024-02"),
         ("signal_annotation_topic", "google:2024-03"),
         ("signal_annotation_topic", "google:2024-04"),
+        # semantic_text_unit_document is Phase 8's own root HALO deriver (records, not events) --
+        # backfilled from declare.source_contract the same way semantic_text_unit itself was, so
+        # it gets the same 3-month set; semantic_embedding_document_bge_small is its LOCAL
+        # 1:1 downstream, same shape as semantic_embedding_bge_small above.
+        ("semantic_text_unit_document", "google:2024-02"),
+        ("semantic_text_unit_document", "google:2024-03"),
+        ("semantic_text_unit_document", "google:2024-04"),
+        ("semantic_embedding_document_bge_small", "google:2024-02"),
+        ("semantic_embedding_document_bge_small", "google:2024-03"),
+        ("semantic_embedding_document_bge_small", "google:2024-04"),
         # media_transcribe_whisper is LOCAL (no halo), so just the one exact month, unlike
         # semantic_text_unit's HALO expansion above.
         ("media_transcribe_whisper", "google:2024-03"),
@@ -443,6 +453,12 @@ def test_run_computes_daily_and_7d_rows(database_engine: Engine) -> None:
         ("signal_annotation_topic", "google:2024-02"),
         ("signal_annotation_topic", "google:2024-03"),
         ("signal_annotation_topic", "google:2024-04"),
+        ("semantic_text_unit_document", "google:2024-02"),
+        ("semantic_text_unit_document", "google:2024-03"),
+        ("semantic_text_unit_document", "google:2024-04"),
+        ("semantic_embedding_document_bge_small", "google:2024-02"),
+        ("semantic_embedding_document_bge_small", "google:2024-03"),
+        ("semantic_embedding_document_bge_small", "google:2024-04"),
         # media_transcribe_whisper is LOCAL (no halo), so just the one exact month, unlike
         # semantic_text_unit's HALO expansion above.
         ("media_transcribe_whisper", "google:2024-03"),
