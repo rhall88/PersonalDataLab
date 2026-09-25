@@ -808,9 +808,11 @@ a separate encrypt-then-MAC step (HMAC-SHA256 over the ciphertext) verified in a
 streaming pass over the file *before* any byte is decrypted or handed to `pg_restore` on restore --
 a wrong passphrase or a corrupted file is still caught cleanly as a `BackupError`, never fed as
 garbage into `pg_restore`'s stdin. All round-trip and guard tests re-verified passing against the
-new implementation; a real backup of the canonical database was re-run with the fix in place and
-observed streaming steadily to disk with no memory error (final size/completion to follow once it
-finishes -- canonical is large and this is running concurrently with the media-transcription job).
+new implementation; a real backup of the canonical database was then re-run with the fix in place
+and completed successfully: `pdl_backup_personaldata_20260925T150003Z.dump.enc`, 2,847,912,765
+bytes (~2.85GB), ~7 minutes wall time, run concurrently with the still-active media-transcription
+job with no interference (Postgres's own MVCC snapshot isolation, as expected). The passphrase was
+generated for Ry and shown once in chat, never stored in this repo or the backup file.
 
 ## Verification state
 
