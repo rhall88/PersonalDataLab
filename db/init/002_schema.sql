@@ -1268,6 +1268,23 @@ CREATE INDEX embedding_bge_small_en_v15_hnsw_idx
     ON semantic.embedding_bge_small_en_v15
     USING hnsw (vector vector_cosine_ops);
 
+-- Semantic annotation (PHASE7_SEMANTIC_ANNOTATION_IMPLEMENTATION_PLAN.md): named directly in
+-- DERIVED_MEANING_ARCHITECTURE.md's own schema table. No FK from any canonical table -- only a
+-- reference to semantic.text_unit -- so it can be dropped and rebuilt at any time (invariant 20).
+CREATE TABLE signal.annotation (
+    id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    text_unit_id BIGINT NOT NULL REFERENCES semantic.text_unit(id) ON DELETE CASCADE,
+    kind TEXT NOT NULL CHECK (kind IN ('topic', 'event_mention', 'intent')),
+    value TEXT NOT NULL,
+    score DOUBLE PRECISION NOT NULL CHECK (score >= 0 AND score <= 1),
+    computed_epoch_id BIGINT NOT NULL REFERENCES derive.evidence_epoch(id),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE (text_unit_id, kind)
+);
+
+CREATE INDEX annotation_text_unit_idx ON signal.annotation (text_unit_id);
+CREATE INDEX annotation_kind_value_idx ON signal.annotation (kind, value);
+
 CREATE SCHEMA IF NOT EXISTS media;
 
 -- One row per audio asset (at most -- see migration 018's comment on `status`).
@@ -1289,4 +1306,4 @@ CREATE TABLE media.transcript (
 CREATE INDEX transcript_source_idx ON media.transcript (source);
 CREATE INDEX transcript_status_idx ON media.transcript (status);
 
-INSERT INTO schema_migrations (version) VALUES (2), (3), (4), (5), (6), (7), (8), (9), (10), (11), (12), (13), (14), (15), (16), (17), (18) ON CONFLICT DO NOTHING;
+INSERT INTO schema_migrations (version) VALUES (2), (3), (4), (5), (6), (7), (8), (9), (10), (11), (12), (13), (14), (15), (16), (17), (18), (19) ON CONFLICT DO NOTHING;

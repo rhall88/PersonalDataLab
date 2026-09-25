@@ -23,5 +23,6 @@ from . import episode  # noqa: F401 -- imported for its @deriver registration si
 from . import claims  # noqa: F401 -- imported for its @deriver registration side effect
 from . import semantic  # noqa: F401 -- imported for its @deriver registration side effect
 from . import media  # noqa: F401 -- imported for its @deriver registration side effect
+from . import annotation  # noqa: F401 -- imported for its @deriver registration side effect; depends on semantic
 
 __all__: list[str] = []

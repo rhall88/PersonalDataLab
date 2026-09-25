@@ -176,6 +176,12 @@ def test_sync_dirties_local_and_propagates_across_the_month_boundary(database_en
         ("semantic_embedding_bge_small", "google:2024-02"),
         ("semantic_embedding_bge_small", "google:2024-03"),
         ("semantic_embedding_bge_small", "google:2024-04"),
+        # signal_annotation_topic is also LOCAL with inputs=("semantic_text_unit",), same 1:1
+        # projection of semantic_text_unit's own HALO-expanded dirty set as the embedding deriver
+        # above.
+        ("signal_annotation_topic", "google:2024-02"),
+        ("signal_annotation_topic", "google:2024-03"),
+        ("signal_annotation_topic", "google:2024-04"),
         # media_transcribe_whisper is LOCAL (no halo), so just the one exact month, unlike
         # semantic_text_unit's HALO expansion above.
         ("media_transcribe_whisper", "google:2024-03"),
@@ -423,13 +429,20 @@ def test_run_computes_daily_and_7d_rows(database_engine: Engine) -> None:
         ("measure_metric_daily", "google:2024-03"),
         # semantic_text_unit/semantic_embedding_bge_small are LOCAL/HALO, not GLOBAL, so they
         # run in a plain (non --global) derive_run too -- see the dirty-set test above for why
-        # three months each, not just March.
+        # three months each, not just March. _import_event's event_type ("message") doesn't
+        # match google's own event-type mapping (semantic.py's _SOURCE_EVENT_TYPES requires
+        # "mail_message" for google), so these three derivers all genuinely process zero rows
+        # here -- this test is about scheduling mechanics, not annotation content, matching
+        # semantic_embedding_bge_small's own already-established treatment in this same test.
         ("semantic_text_unit", "google:2024-02"),
         ("semantic_text_unit", "google:2024-03"),
         ("semantic_text_unit", "google:2024-04"),
         ("semantic_embedding_bge_small", "google:2024-02"),
         ("semantic_embedding_bge_small", "google:2024-03"),
         ("semantic_embedding_bge_small", "google:2024-04"),
+        ("signal_annotation_topic", "google:2024-02"),
+        ("signal_annotation_topic", "google:2024-03"),
+        ("signal_annotation_topic", "google:2024-04"),
         # media_transcribe_whisper is LOCAL (no halo), so just the one exact month, unlike
         # semantic_text_unit's HALO expansion above.
         ("media_transcribe_whisper", "google:2024-03"),
