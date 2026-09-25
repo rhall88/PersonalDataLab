@@ -2,10 +2,16 @@
 3/4's already-computed `signal.anomaly` and confirmed/rejected `episode.episode` rows into
 first-class, inspectable `know.claim` objects with a per-dimension confidence profile and cited
 evidence. No new statistics are computed here -- this deriver reads what Phases 3/4 already wrote
-and cites it, exactly two claim templates (plan decision 2): `communication_change` (one claim per
-`signal.anomaly` row) and `episode_evidence` (one claim per `episode.episode` row that has
-actually been reviewed -- `status IN ('confirmed', 'rejected')`, never `candidate`; invariant 38,
-"review queues fail unresolved, never optimistic").
+and cites it: `communication_change` (one claim per `signal.anomaly` row), `episode_evidence` (one
+claim per `episode.episode` row that has actually been reviewed -- `status IN ('confirmed',
+'rejected')`, never `candidate`; invariant 38, "review queues fail unresolved, never optimistic"),
+and `relationship_state_shift` (added 2026-09-25, ROADMAP.md item 3's "further claim-template
+growth": one claim per consecutive pair of `signal.interaction_state` segments for the same
+(source, correspondent) -- Phase 4's own PELT segmentation already found these transitions, this
+template just wraps them the same way `episode_evidence` wraps episode detection. Grounded against
+the real canonical database: 77 states across 69 (source, correspondent) pairs, of which 7
+correspondents have 2+ states (8 real consecutive-pair transitions total) -- the honest small-N
+population this template actually has to work with, not invented).
 
 Evidence is cited inline as JSONB on `know.claim.evidence` (migration 016's correction to
 migration 015's original separate `know.claim_evidence` table): this project's deriver framework
@@ -33,6 +39,7 @@ from __future__ import annotations
 
 import json
 from datetime import date
+from itertools import pairwise
 
 from sqlalchemy import text
 from sqlalchemy.engine import Connection, Engine
@@ -262,22 +269,97 @@ def _episode_evidence_claims(connection: Connection, epoch_id: int) -> list[dict
     return claims
 
 
+def _relationship_state_shift_claims(connection: Connection, epoch_id: int) -> list[dict]:
+    """One claim per consecutive pair of `signal.interaction_state` segments for the same
+    (source, correspondent) -- a correspondent with N states produces N-1 transition claims, and
+    one with a single state (most of them, per the real grounding above) produces none: a single
+    state is "no change detected yet", not itself a claim-worthy transition.
+    """
+    rows = connection.execute(
+        text(
+            "SELECT source, correspondent, state_start, state_end, mean_messages_in, "
+            "mean_messages_out, mean_reciprocity_index, n_months "
+            "FROM signal.interaction_state ORDER BY source, correspondent, state_start"
+        )
+    ).mappings().all()
+
+    by_pair: dict[tuple[str, str], list[dict]] = {}
+    for row in rows:
+        by_pair.setdefault((row["source"], row["correspondent"]), []).append(dict(row))
+
+    claims: list[dict] = []
+    for (source, correspondent), states in by_pair.items():
+        for before, after in pairwise(states):
+            reciprocity_delta = abs(
+                after["mean_reciprocity_index"] - before["mean_reciprocity_index"]
+            )
+            coverage = _coverage_for_range(
+                connection, {source}, before["state_start"], after["state_end"]
+            )
+            confidence: dict = {
+                "statistical_strength": reciprocity_delta,
+                # Interaction dynamics is computed per single source (PHASE4_IMPLEMENTATION_PLAN.md
+                # decision 10) -- one family, never fabricated as corroborated by more.
+                "source_independence": 1,
+            }
+            if coverage is not None:
+                confidence["coverage"] = coverage
+            direction = "increased" if after["mean_reciprocity_index"] > before["mean_reciprocity_index"] else "decreased"
+            statement = (
+                f"Your interaction pattern with {correspondent} on {source} {direction}: "
+                f"reciprocity went from {before['mean_reciprocity_index']:.2f} "
+                f"(msgs in/out ~{before['mean_messages_in']:.1f}/{before['mean_messages_out']:.1f}, "
+                f"{before['state_start'].isoformat()}–{before['state_end'].isoformat()}) to "
+                f"{after['mean_reciprocity_index']:.2f} "
+                f"(msgs in/out ~{after['mean_messages_in']:.1f}/{after['mean_messages_out']:.1f}, "
+                f"{after['state_start'].isoformat()}–{after['state_end'].isoformat()})."
+            )
+            claims.append(
+                {
+                    "template": "relationship_state_shift",
+                    "template_version": "1",
+                    "class": "STATISTICAL",
+                    "statement": statement,
+                    "subject": json.dumps({"source": source, "correspondent": correspondent}),
+                    "confidence": json.dumps(confidence),
+                    "evidence": json.dumps(
+                        {
+                            "before": {
+                                "source": source, "correspondent": correspondent,
+                                "state_start": before["state_start"].isoformat(),
+                            },
+                            "after": {
+                                "source": source, "correspondent": correspondent,
+                                "state_start": after["state_start"].isoformat(),
+                            },
+                        }
+                    ),
+                    "status": "active",
+                    "computed_epoch_id": epoch_id,
+                }
+            )
+    return claims
+
+
 @deriver(
     name="know_claim_evaluate",
     partition_class="GLOBAL",
     final_inference="COMPUTED",
     description=(
-        "Wraps signal.anomaly (communication_change) and reviewed episode.episode rows "
-        "(episode_evidence) into inspectable know.claim objects with a confidence profile "
-        "(PHASE5_IMPLEMENTATION_PLAN.md)."
+        "Wraps signal.anomaly (communication_change), reviewed episode.episode rows "
+        "(episode_evidence), and consecutive signal.interaction_state pairs "
+        "(relationship_state_shift) into inspectable know.claim objects with a confidence "
+        "profile (PHASE5_IMPLEMENTATION_PLAN.md; relationship_state_shift added 2026-09-25)."
     ),
     output_relation="know.claim",
-    inputs=("signal_anomaly", "episode_detect_candidates"),
+    inputs=("signal_anomaly", "episode_detect_candidates", "signal_interaction_state"),
     clear_partition=_clear_claims,
 )
 def know_claim_evaluate(connection: Connection, partition_key: str, epoch_id: int) -> ComputeResult:
-    rows = _communication_change_claims(connection, epoch_id) + _episode_evidence_claims(
-        connection, epoch_id
+    rows = (
+        _communication_change_claims(connection, epoch_id)
+        + _episode_evidence_claims(connection, epoch_id)
+        + _relationship_state_shift_claims(connection, epoch_id)
     )
     fingerprint_source = sorted(
         (row["template"], row["subject"], row["statement"]) for row in rows
@@ -411,6 +493,30 @@ def claim_why(engine: Engine, claim_id: int) -> dict:
                         "role": "supports",
                         "source_table": "signal.change_point",
                         "cited": cp,
+                        "refetched": dict(row) if row is not None else None,
+                    }
+                )
+        elif claim["template"] == "relationship_state_shift":
+            for role in ("before", "after"):
+                item = claim["evidence"][role]
+                row = connection.execute(
+                    text(
+                        "SELECT source, correspondent, state_start, state_end, "
+                        "mean_messages_in, mean_messages_out, mean_reciprocity_index, n_months "
+                        "FROM signal.interaction_state "
+                        "WHERE source = :source AND correspondent = :correspondent "
+                        "AND state_start = :state_start"
+                    ),
+                    {
+                        "source": item["source"], "correspondent": item["correspondent"],
+                        "state_start": item["state_start"],
+                    },
+                ).mappings().first()
+                evidence_detail.append(
+                    {
+                        "role": "supports",
+                        "source_table": "signal.interaction_state",
+                        "cited": {**item, "state_role": role},
                         "refetched": dict(row) if row is not None else None,
                     }
                 )

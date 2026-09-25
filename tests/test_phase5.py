@@ -250,6 +250,57 @@ def test_episode_evidence_claims_by_kind_and_status(database_engine: Engine) -> 
     assert "coincidence, not real" in rejected["statement"]
 
 
+def test_relationship_state_shift_pairs_consecutive_states_only(database_engine: Engine) -> None:
+    """Added 2026-09-25 (ROADMAP.md item 3): a correspondent with a single state produces no
+    claim (no transition to report yet); one with two states produces exactly one
+    relationship_state_shift claim for that consecutive pair.
+    """
+    _settle_one_dummy_event(database_engine)
+
+    with database_engine.begin() as connection:
+        for correspondent, state_start, state_end, in_msgs, out_msgs, reciprocity in (
+            ("Solo Friend", "2018-01-01", "2020-01-01", 5.0, 5.0, 0.5),
+            ("Fading Friend", "2015-01-01", "2018-01-01", 10.0, 8.0, 0.6),
+            ("Fading Friend", "2018-01-01", "2021-01-01", 2.0, 0.5, 0.1),
+        ):
+            connection.execute(
+                text(
+                    """
+                    INSERT INTO signal.interaction_state
+                        (source, correspondent, state_start, state_end, mean_messages_in,
+                         mean_messages_out, mean_reciprocity_index, n_months)
+                    VALUES ('facebook', :correspondent, :state_start, :state_end, :in_msgs,
+                            :out_msgs, :reciprocity, 24)
+                    """
+                ),
+                {
+                    "correspondent": correspondent, "state_start": state_start,
+                    "state_end": state_end, "in_msgs": in_msgs, "out_msgs": out_msgs,
+                    "reciprocity": reciprocity,
+                },
+            )
+
+    _rerun_claims_only(database_engine)
+
+    claims = list_claims(database_engine, template="relationship_state_shift")
+    assert len(claims) == 1
+    claim = claims[0]
+    assert claim["subject"]["correspondent"] == "Fading Friend"
+    assert claim["class"] == "STATISTICAL"
+    assert "decreased" in claim["statement"]
+    assert claim["confidence"]["statistical_strength"] == pytest.approx(0.5)
+    assert claim["confidence"]["source_independence"] == 1
+    assert claim["evidence"]["before"]["state_start"] == "2015-01-01"
+    assert claim["evidence"]["after"]["state_start"] == "2018-01-01"
+
+    why = claim_why(database_engine, claim["id"])
+    assert len(why["evidence_detail"]) == 2
+    before_detail, after_detail = why["evidence_detail"]
+    assert before_detail["source_table"] == "signal.interaction_state"
+    assert before_detail["refetched"]["mean_reciprocity_index"] == pytest.approx(0.6)
+    assert after_detail["refetched"]["mean_reciprocity_index"] == pytest.approx(0.1)
+
+
 def test_episode_coverage_averages_the_range_not_the_worst_single_day(
     database_engine: Engine,
 ) -> None:

@@ -136,6 +136,7 @@ def pr2_engine() -> Iterator[Engine]:
             connection.exec_driver_sql(_read_migration(17))
             connection.exec_driver_sql(_read_migration(18))
             connection.exec_driver_sql(_read_migration(19))
+            connection.exec_driver_sql(_read_migration(20))
         admin.dispose()
 
 
@@ -188,7 +189,7 @@ def test_pr2_database_migrates_and_backfills_provenance(pr2_engine: Engine) -> N
             {"source_file_id": source_file_id, "record_id": event_id},
         )
 
-    assert migrate_database(pr2_engine) == (3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19)
+    assert migrate_database(pr2_engine) == (3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20)
     assert migrate_database(pr2_engine) == ()
 
     with pr2_engine.connect() as connection:
@@ -220,7 +221,7 @@ def test_pr2_database_migrates_and_backfills_provenance(pr2_engine: Engine) -> N
                 """
             )
         ).one()
-    assert list(versions) == [2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19]
+    assert list(versions) == [2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20]
     assert tuple(event) == ("message", "user", 32, "canonical-v1")
     assert tuple(observations) == (1, 1)
     assert tuple(event_versions) == ("full", "hello")
@@ -331,7 +332,7 @@ def test_v5_preserves_unreconstructable_observation_as_fingerprint_only(
             {"fingerprint": new_fingerprint},
         )
 
-    assert migrate_database(pr2_engine) == (5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19)
+    assert migrate_database(pr2_engine) == (5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20)
 
     with pr2_engine.connect() as connection:
         versions = connection.execute(
@@ -406,7 +407,7 @@ def test_current_schema_version_reads_max_applied_version(
 
     migrate_database(fresh_database_engine)
 
-    assert current_schema_version(fresh_database_engine) == 19
+    assert current_schema_version(fresh_database_engine) == 20
 
 
 def test_migration_010_creates_derive_schemas_and_seeds_local_only_policy(
