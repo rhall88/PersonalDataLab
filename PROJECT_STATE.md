@@ -700,10 +700,48 @@ the stale process, deleting the 28 garbage rows it wrote, and launching a genuin
 That fresh run is real, non-mocked CPU transcription of the actual canonical audio corpus (22
 Apple + 6 Facebook + 459 Google files, ~8GB combined raw audio, several individual Apple Voice
 Memos files 130-300MB at low-bitrate encoding, likely representing many hours each) via the
-`faster-whisper` "small" model -- still in progress as of this note, 14+ hours of continuous,
-steady CPU usage (~4 cores) with zero anomalies, each source's partition committing as one
-uncommitted transaction (nothing lands in `media.transcript` until a whole partition finishes).
-Final rollout numbers to follow once it completes.
+`faster-whisper` "small" model -- abandoned after 42+ hours of continuous CPU transcription with
+no completion in sight (the file-size distribution is extremely long-tailed: median file ~362KB,
+but a handful run to 300MB+, and CPU-only autoregressive decode of the long tail was the actual
+bottleneck, not a stuck process).
+
+**Completed 2026-09-26 via rented GPU instead of local CPU.** Same 487 real audio files (7.9GB),
+same real canonical database, no mocking -- just different hardware. Two RunPod GPU pods in
+sequence: an H200 (~1h53m, ~$8.63, mostly spent on two dead-end approaches -- vanilla
+`openai-whisper` single-file decode, and a naive 6-process parallel attempt that made things
+*worse* without NVIDIA MPS due to CUDA context-switch contention) then a much cheaper RTX 4090
+(~27min, ~$0.33) once `faster-whisper`'s `BatchedInferencePipeline` was used instead of one-file-
+at-a-time decode -- the real fix, since vanilla Whisper decode is autoregressive and latency-
+bound per token, so raw GPU FLOPS mostly sit idle regardless of card size; batching VAD-segmented
+chunks is what actually uses a GPU's parallelism. Total GPU spend: ~$9. All 483 extracted files
+transcribed (455 google + 22 apple + 6 facebook succeeded; 4 google files remain `unreadable`,
+the same known mbox-part extraction failures noted above -- not new). `media.transcript` now has
+494 total rows (487 from this rollout + 7 pre-existing from other sources); all three undated
+partitions (`google:undated`, `apple:undated`, `facebook:undated`) are `clean` in
+`derive.partition_state` with real fingerprints/epoch/`derivation_run` records, indistinguishable
+from a normal successful local `derive-run`.
+
+**Real data-quality bug found and fixed post-rollout, not yet caught by any test:** 51 of the 488
+`succeeded` rows contained Whisper hallucination artifacts -- the classic failure mode when the
+model hits silence, noise, or non-speech audio and, instead of returning empty, loops on a
+repeated token/phrase or fabricates gibberish in a random script (Georgian, Khmer, Tibetan,
+Cyrillic, IPA soup were all seen). Two distinct sub-patterns: single-token/short-phrase loops
+("Okay. Okay. Okay." x26, "ლლლლლ" x60) and long-phrase loops (an 8-word sentence repeated 35x).
+Found by manual spot-check of random samples, not by an automated check -- there was none. Fixed
+with a heuristic text cleaner (windowed non-standard-character/repeated-n-gram detection plus a
+sentence-level dedup pass for phrase loops longer than 3 words) applied directly to
+`media.transcript.text`; verified by re-scanning all 488 rows post-clean for zero residual
+hits. 25 rows were pure hallucination front-to-back and are now empty strings (correct: that's
+the right transcript of near-silent audio). This cleanup script is a one-off scratchpad tool, not
+yet promoted into the deriver itself -- a future rerun of `media_transcribe_whisper` (e.g. on new
+audio) would need the same fix applied again, or better, folded into the deriver's own
+post-processing so it's not a manual step.
+
+**Unexpected discovery, not a bug:** two of the transcribed files turned out to be full-length
+AI-generated "deep dive" podcast narrations, not personal voice recordings -- one analyzing real
+text-message chat logs between two named individuals (relationship conflict, sensitive personal
+content), the other analyzing Ry's own manuscript "The Hallway." Left as-is; flagged to Ry rather
+than assumed to need special handling.
 
 **A real gap this rollout surfaced, not a bug**: Apple's official privacy export contains only 22
 audio files total (verified by recursively scanning every raw export ZIP directly, not just the
