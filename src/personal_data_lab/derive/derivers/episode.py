@@ -171,6 +171,23 @@ def detect_episode_candidates(connection: Connection) -> list[dict]:
     source_family = _metric_source_families(connection)
     metric_names = dict(connection.execute(text("SELECT id, name FROM derive.metric_def")).all())
 
+    # clear_partition only ever removes kind='detected' AND status='candidate' rows (see module
+    # docstring) -- a range that's already been confirmed or rejected must not be re-clustered
+    # into a fresh duplicate candidate here. Found via a real disposability rebuild: re-detection
+    # reproduced 8 already-confirmed episodes as brand-new candidate rows sitting alongside the
+    # confirmed ones, since the clustering logic had no way to know they'd already been decided.
+    # This isn't specific to a rebuild -- any normal re-run after new signal data, with the same
+    # underlying change points still clustering the same way, would duplicate them too.
+    already_decided = {
+        (row.start_range_low, row.start_range_high, row.end_range_low, row.end_range_high)
+        for row in connection.execute(
+            text(
+                "SELECT start_range_low, start_range_high, end_range_low, end_range_high "
+                "FROM episode.episode WHERE kind = 'detected' AND status != 'candidate'"
+            )
+        )
+    }
+
     points: list[tuple[date, int, str]] = []
     for series in _all_known_series(connection):
         source = source_family.get(series.metric_id)
@@ -185,6 +202,9 @@ def detect_episode_candidates(connection: Connection) -> list[dict]:
         if len(families) < 2:
             continue
         dates = [p[0] for p in cluster]
+        date_range = (min(dates), max(dates), min(dates), max(dates))
+        if date_range in already_decided:
+            continue
         evidence = {
             "change_points": [
                 {"metric": metric_names[metric_id], "source": source, "date": cp_date.isoformat()}
@@ -195,10 +215,10 @@ def detect_episode_candidates(connection: Connection) -> list[dict]:
             {
                 "kind": "detected",
                 "status": "candidate",
-                "start_range_low": min(dates),
-                "start_range_high": max(dates),
-                "end_range_low": min(dates),
-                "end_range_high": max(dates),
+                "start_range_low": date_range[0],
+                "start_range_high": date_range[1],
+                "end_range_low": date_range[2],
+                "end_range_high": date_range[3],
                 "label": None,
                 "note": None,
                 "evidence": json.dumps(evidence),
@@ -224,6 +244,12 @@ def _clear_detected_candidates(connection: Connection, partition_key: str) -> No
     output_relation="episode.episode",
     inputs=("measure_metric_daily", "measure_metric_daily_global"),
     clear_partition=_clear_detected_candidates,
+    # v2: detect_episode_candidates now skips ranges already confirmed/rejected (see its own
+    # comment) -- a real disposability rebuild found this deriver re-proposing all 8 of
+    # canonical's already-confirmed episodes as duplicate fresh candidates. Bumped for the audit
+    # trail; it does not by itself defer the fix -- see semantic.py's semantic_text_unit v2 for
+    # why a code_version bump alone doesn't gate which code actually runs on the next recompute.
+    code_version="2",
 )
 def episode_detect_candidates(connection: Connection, partition_key: str, epoch_id: int) -> ComputeResult:
     candidates = detect_episode_candidates(connection)

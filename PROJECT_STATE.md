@@ -857,6 +857,67 @@ bytes (~2.85GB), ~7 minutes wall time, run concurrently with the still-active me
 job with no interference (Postgres's own MVCC snapshot isolation, as expected). The passphrase was
 generated for Ry and shown once in chat, never stored in this repo or the backup file.
 
+## Disposability verification (invariant 20) -- two real bugs found (2026-09-26)
+
+A real, empirical test of architecture invariant 20 ("everything in derive/signal/semantic/know
+can be wiped and rebuilt from canonical evidence with zero loss"), requested directly rather than
+taken on faith. Method: restored the real `pdl_backup_personaldata_20260925T150003Z.dump.enc`
+backup into a scratch database (`pdl_disposability_check`), captured content checksums (MD5 over
+`string_agg(row(...)::text, '|' ORDER BY <natural key>)`, deliberately excluding serial ids and
+wall-clock `computed_at`/`created_at` columns -- those are never expected to reproduce byte-for-byte
+across a wipe+rebuild, only content is) across 12 derived relations, ran `rebuild()` (all derivers
+except `media_transcribe_whisper`, deliberately excluded and reset back to `state='clean'` --
+rebuilding it would have re-run real Whisper transcription on the same machine as the actual
+production transcription job), then `derive-run --global` to completion, then recomputed the same
+checksums and compared.
+
+10 of 12 relations reproduced exactly. Two real, confirmed discrepancies (confirmed by also
+checksumming the real canonical database, which has been untouched in these schemas since the
+backup and independently validated the checksum methodology itself for 4 of the 12 relations):
+
+1. **`semantic.text_unit`: 12 of 70,145 real text units (0.017%) had different concatenated
+   content after rebuild.** Root cause: `semantic_text_unit`'s grouping query
+   (`derive/derivers/semantic.py`) sorted messages by `conversation_id, occurred_at` with no
+   tiebreaker. Two messages in the same session sharing an identical timestamp (common in real
+   iMessage/OpenAI data) have no guaranteed tie order across two physical copies of the same
+   logical rows -- a `pg_restore`'d copy isn't guaranteed to return ties in the same order as the
+   original. Fixed: added `id` as an explicit tiebreaker, both in the SQL `ORDER BY` (fixes the
+   `openai`/`anthropic` whole-conversation path, which has no Python-level sort at all) and in the
+   session-grouped path's Python `sorted()` key (fixes `facebook`/`imessages`). `code_version`
+   bumped to "2" for the audit trail. Regression test: `test_phase6.py`'s
+   `test_tied_timestamp_events_order_deterministically_by_id`.
+2. **`episode.episode`: the rebuild re-proposed all 8 of canonical's already-confirmed detected
+   episodes as brand-new duplicate `candidate` rows.** Root cause, and *not specific to a
+   rebuild*: `detect_episode_candidates` re-clusters change points from raw signal data completely
+   unconditionally on every run, with no check for whether a given date range was already decided.
+   `clear_partition` deliberately only ever deletes `kind='detected' AND status='candidate'` rows
+   (so a human's confirm/reject decision survives routine re-detection) -- but nothing stopped
+   fresh detection from proposing an identical range as a *new* candidate sitting right alongside
+   the already-confirmed one. Since `episode_detect_candidates` is a GLOBAL deriver that reruns
+   whenever upstream signal data changes, this would have silently duplicated all 8 confirmed
+   episodes for real the next time new data triggered a recompute -- the rebuild just made it
+   happen today instead of on some future ordinary import. Fixed: `detect_episode_candidates` now
+   queries existing non-candidate `kind='detected'` rows first and skips any freshly-clustered
+   range that exactly matches one already decided. `code_version` bumped to "2". Regression test:
+   `test_phase4.py`'s `test_confirmed_candidate_is_not_reproposed_on_redetection`.
+
+Neither fix required any cleanup in real canonical -- canonical never actually hit the duplicate-
+candidate bug (confirmed: it still shows exactly 1 candidate + 8 confirmed, no duplicates), and the
+text-unit ordering bug only affects which of several equally-valid concatenation orders a tied-
+timestamp session lands on, not data loss. Both `code_version` bumps are for the audit trail only:
+the worker calls whatever `compute()` is currently imported for a partition's still-active
+`deriver_version_id` (see `worker.py`'s `_claim_next`), so neither fix is gated behind an explicit
+`derive promote` -- each takes effect automatically the next time these partitions are genuinely
+recomputed, no separate real-canonical rollout step needed. The scratch database
+(`pdl_disposability_check`) was dropped after the comparison was documented.
+
+**A methodology note worth recording**: the original "before" checksum query text itself was not
+preserved verbatim across a context-window compaction mid-session, so the "after" comparison had to
+reconstruct an equivalent query rather than literally rerun the same one. This was validated, not
+assumed -- 4 of the 12 relations' reconstructed-query checksums matched the original "before" file
+exactly when run against real canonical (untouched since backup), confirming the reconstruction was
+faithful before trusting any mismatch as a real finding rather than a methodology artifact.
+
 ## Verification state
 
 - The repository currently collects 311 tests: non-integration tests plus PostgreSQL-marked

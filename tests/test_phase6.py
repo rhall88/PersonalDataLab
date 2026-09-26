@@ -155,6 +155,29 @@ def test_facebook_session_grouping_splits_on_45_minute_gap(database_engine: Engi
     assert units[1].text == "later msg"
 
 
+def test_tied_timestamp_events_order_deterministically_by_id(database_engine: Engine) -> None:
+    """Regression test for a real disposability-rebuild finding: two messages in the same
+    session sharing an identical occurred_at must always concatenate in event-id order, not
+    whatever order the query plan happens to return ties in (which a restored backup copy of
+    the same logical rows is not guaranteed to reproduce -- see semantic.py's ORDER BY comment).
+    """
+    tied = datetime(2024, 3, 15, 10, 0, tzinfo=UTC)
+    _import_events(
+        database_engine, "facebook", "fb_tied.json",
+        [
+            {"occurred_at": tied, "event_type": "message", "source_record_id": "1", "text": "first", "conversation_id": "c1"},
+            {"occurred_at": tied, "event_type": "message", "source_record_id": "2", "text": "second", "conversation_id": "c1"},
+        ],
+    )
+    _run_semantic(database_engine)
+
+    with database_engine.connect() as connection:
+        unit = connection.execute(
+            text("SELECT text FROM semantic.text_unit WHERE source='facebook'")
+        ).one()
+    assert unit.text == "first\n\nsecond"
+
+
 def test_openai_conversation_is_one_unit_regardless_of_gaps(database_engine: Engine) -> None:
     base = datetime(2024, 3, 15, 10, 0, tzinfo=UTC)
     _import_events(
