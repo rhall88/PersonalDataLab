@@ -113,10 +113,17 @@ def _build_units(source: str, events: list) -> list[dict]:
         return [_make_unit(source, conv_id, msgs) for conv_id, msgs in by_conversation.items()]
 
     # Session-grouped sources (facebook, imessages): split each conversation's messages into
-    # sessions wherever consecutive messages are more than _SESSION_GAP apart.
+    # sessions wherever consecutive messages are more than _SESSION_GAP apart. The tiebreaker on
+    # `m.id` (not just `m.occurred_at`) matters for real data: two messages in the same
+    # conversation can share an identical timestamp, and without a deterministic tiebreaker the
+    # concatenation order -- and therefore the resulting text -- depends on whatever order the
+    # SQL query happened to return them in, which is not guaranteed stable across two physically
+    # different copies of the same logical rows (found via the disposability rebuild: 12 of
+    # 70,145 real text units differed after a full wipe+rebuild against a restored backup, all
+    # tied-timestamp cases).
     units: list[dict] = []
     for conv_id, msgs in by_conversation.items():
-        msgs = sorted(msgs, key=lambda m: m.occurred_at)
+        msgs = sorted(msgs, key=lambda m: (m.occurred_at, m.id))
         current = [msgs[0]]
         for prev, cur in itertools.pairwise(msgs):
             if cur.occurred_at - prev.occurred_at > _SESSION_GAP:
@@ -153,6 +160,14 @@ def _make_unit(source: str, conversation_id, msgs: list) -> dict:
     ),
     output_relation="semantic.text_unit",
     clear_partition=_clear_text_unit,
+    # v2: added an `id` tiebreaker to the event ordering (see _build_units) -- a real
+    # disposability-rebuild test found 12/70,145 real text units whose concatenated text
+    # depended on tied-timestamp event order, which isn't guaranteed stable across two
+    # physical copies of the same rows. Bumped for the audit trail (this is a real behavior
+    # change, worth a recorded reason); it does not by itself defer the fix -- the worker calls
+    # whatever compute() is currently imported for a partition's still-active version_id, so this
+    # fix takes effect on that partition's next real recompute regardless of promote status.
+    code_version="2",
 )
 def semantic_text_unit(connection: Connection, partition_key: str, epoch_id: int) -> ComputeResult:
     source, start, end = parse_local_key(partition_key)
@@ -175,7 +190,7 @@ def semantic_text_unit(connection: Connection, partition_key: str, epoch_id: int
             WHERE source = :source AND event_type = ANY(:event_types)
               AND text IS NOT NULL AND text <> ''
               AND occurred_at >= :window_start AND occurred_at < :window_end
-            ORDER BY conversation_id NULLS FIRST, occurred_at
+            ORDER BY conversation_id NULLS FIRST, occurred_at, id
             """
         ),
         {

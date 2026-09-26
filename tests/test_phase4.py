@@ -402,6 +402,49 @@ def test_episode_confirm_sets_status_and_label(database_engine: Engine) -> None:
     assert any(e["id"] == episode_id and e["status"] == "confirmed" for e in again)
 
 
+def test_confirmed_candidate_is_not_reproposed_on_redetection(database_engine: Engine) -> None:
+    """Regression test for a real disposability-rebuild finding: re-running
+    episode_detect_candidates after a candidate has been confirmed must not insert a duplicate
+    'candidate' row for the same date range -- clear_partition deliberately never touches a
+    confirmed row (see episode.py's module docstring), so detect_episode_candidates itself must
+    skip ranges that are already decided, or a full rebuild (or any later re-run once new data
+    reaches the same change points) silently duplicates every already-confirmed episode.
+    """
+    from personal_data_lab.derive.derivers.episode import confirm_episode, detect_episode_candidates
+
+    baseline_pattern = [2, 3, 2, 4, 2, 3]
+    fb_counts = _shift_day_counts(50, 40, baseline_pattern, 30)
+    im_counts = _shift_day_counts(50, 42, baseline_pattern, 25)
+
+    _declare_contract(database_engine, "facebook", covered_start="2024-01-01", covered_end="2024-02-20")
+    _import_events(database_engine, "facebook", "fb-redetect.json", _facebook_message_specs(fb_counts, start_ordinal=0))
+    _declare_contract(database_engine, "imessages", covered_start="2024-01-01", covered_end="2024-02-20")
+    _import_events(
+        database_engine, "imessages", "im-redetect.json",
+        _imessages_incoming_specs(im_counts, start_ordinal=0),
+    )
+
+    derive_sync(database_engine)
+    derive_run(database_engine)
+    derive_sync(database_engine)
+    derive_run(database_engine, include_global=True)
+
+    detected = list_episodes(database_engine, kind="detected")
+    assert len(detected) == 1
+    confirm_episode(database_engine, detected[0]["id"], label="Confirmed period")
+
+    # Re-run detection against the exact same underlying change points -- nothing about the raw
+    # evidence changed, so the clustering result is identical to the first run's. Before the fix,
+    # this would insert a second, duplicate 'candidate' row for the range already confirmed above.
+    with database_engine.begin() as connection:
+        candidates = detect_episode_candidates(connection)
+    assert candidates == []
+
+    still_detected = list_episodes(database_engine, kind="detected")
+    assert len(still_detected) == 1
+    assert still_detected[0]["status"] == "confirmed"
+
+
 def test_episode_reject_sets_status_permanently(database_engine: Engine) -> None:
     from datetime import date
 
