@@ -751,7 +751,7 @@ was never part of this export and isn't recoverable from it. Ry is considering a
 device-backup source to close this gap, explicitly deferred to a future "v1.1" phase -- see
 `ROADMAP.md`.
 
-## Phase 7: semantic annotation (topic labeling) -- schema + runtime shipped, no real rollout yet (2026-09-25)
+## Phase 7: semantic annotation (topic labeling) -- schema + runtime shipped 2026-09-25, real rollout completed 2026-09-27
 
 `PHASE7_SEMANTIC_ANNOTATION_IMPLEMENTATION_PLAN.md` (PR #69) scoped the annotation half of the
 semantic layer Phase 6 explicitly deferred. Schema + runtime (PR #70): migration 019
@@ -783,7 +783,92 @@ database after dropping schemas for its own test -- missing migration 19 silentl
 `signal.annotation` dropped for every test file that happened to run afterward in the same pytest
 process. Fixed the teardown and the two hardcoded expected-version-tuple assertions it fed.
 
-## Phase 8: documents into the semantic layer -- schema + runtime shipped, no real rollout yet (2026-09-25)
+## Phase 7: real rollout against the real canonical database (2026-09-26 to 2026-09-27)
+
+The external-drive migration finished and C: had ~31GB free by the time this rollout started --
+comfortably clear of the 2.2GB model, so decision 6's deferral was lifted with Ry's explicit
+go-ahead rather than silently. Downloaded the real production model directly (no repo named
+`microsoft/Phi-3.5-mini-instruct-GGUF` actually exists on Hugging Face; `model_ref`'s `model_id`
+is just whatever local path is configured, not a hardcoded upstream repo string, so this was a
+free choice, not a deviation) -- `bartowski/Phi-3.5-mini-instruct-GGUF`'s `Phi-3.5-mini-instruct-
+Q4_K_M.gguf`, the same real quantization of the real `microsoft/Phi-3.5-mini-instruct` base model
+the plan named, sha256 `e4165e3a71af97f1b4820da61079826d8752a2088e313af0c7d346796c38eff5`.
+
+**A real CPU-infeasibility finding, benchmarked before committing to a plan, same discipline item
+6's local-vs-GPU decision already used.** A real-data timing test (12 representative real text
+units, median-length ~4,400 chars) measured ~42s/unit on this dev machine's CPU (Ryzen 5 3600) --
+extrapolated across the real 70,145-unit population, ~34 days. Not viable. Per Phase 7's own
+decision 6, this crossed into "eat real GPU-rental cost and ship real personal message content off
+this machine" territory -- a materially different privacy tradeoff than item 6's audio-only GPU
+rental, so it was surfaced to Ry explicitly rather than decided unilaterally, mirroring the
+precedent item 6's transcription content already set. Ry chose to proceed with rented GPU
+annotation.
+
+**Architecture, chosen to keep the canonical database itself off the public internet.** Rather than
+tunneling Postgres to a rented pod (rejected: unnecessary exposure of the real database, and
+RunPod's SSH proxy turned out not to support port-forwarding at all -- tested directly, not
+assumed), the real (id, text) pairs were exported to a local gzipped JSONL file (70,145 rows,
+86MB), uploaded once to the pod over HTTPS via a small purpose-built upload endpoint, annotated
+there, and the (id, label, score) results downloaded the same way. The actual database write went
+through the exact same production code path a local run would have used: `annotation.py`'s real
+`_annotate_one` was monkeypatched to a dict lookup over the downloaded results, then the real
+`derive.run()` was invoked locally -- same partitioning, clear-and-replace, fingerprinting, and
+epoch stamping as any other run, the GPU pod never touched the canonical database at all.
+
+**Three real infrastructure defects found and fixed live, none of them in this project's own
+code:**
+1. Two Community Cloud RunPod hosts in a row had a broken CUDA stack at the driver level
+   (`cudaGetDeviceCount` returned `cudaErrorUnknown`, confirmed directly, not assumed) --
+   unrelated to any code here. Switched to Secure Cloud (RunPod's own datacenters), which worked
+   immediately on the first host tried.
+2. A real context-window bug this rollout's own benchmark surfaced: a small fraction of real text
+   units tokenize to more than `_N_CTX - _MAX_TOKENS` tokens (dense/non-English/structured content
+   tokenizes less efficiently per character than typical English prose), which `llama.cpp` raises
+   on rather than truncates -- and since `compute()` builds every unit in one partition via a
+   single list comprehension, one such unit would have crashed its entire source/month partition,
+   silently losing every other unit alongside it. Fixed in `annotation.py` itself (`_bounded_prompt`,
+   tokenize-and-truncate-from-the-end with a safety margin), not just the rollout script, with a
+   regression test (`test_annotate_one_bounds_a_unit_too_long_for_the_context_window`) using a
+   ~100,000-char synthetic unit. This is a real, permanent fix to the production deriver, found
+   because this rollout used real data at real scale, not a synthetic smoke test.
+3. **Multi-process GPU parallelism failed twice, root-caused, and abandoned in favor of a
+   single-stream design that actually works.** 8 workers, then 4, then 4 again under NVIDIA MPS,
+   all produced a fast initial burst followed by a near-total stall at the same absolute position
+   regardless of worker count or process-spawning method (`multiprocessing.Process` fork vs.
+   independent `subprocess.Popen` vs. MPS-routed) -- ruling out CUDA-context-switch contention
+   (item 6's original diagnosis for its own multi-process stall) as the cause here, since MPS
+   exists specifically to fix that class of problem and made no difference. A definitive isolated
+   test (300 real sequential units, single process) never slowed down at all, proving the model/
+   GPU/data were never the problem -- only concurrent multi-process execution was. Root cause not
+   fully isolated (most likely aggregate GPU memory/KV-cache pressure across concurrent contexts,
+   not confirmed further given diminishing value of continuing to chase it), but the fix needed
+   was empirically clear: single-stream execution. `remote_annotate.py`'s worker dispatch was
+   changed from `multiprocessing.Process` to independent `subprocess.Popen` calls along the way
+   (a real, permanent improvement to the rollout tooling regardless of the parallelism question,
+   since it avoids fork+CUDA's well-documented bad interactions) even though the actual fix that
+   mattered was `n_workers=1`.
+
+**Real rollout result:** all 70,145 real text units annotated by the real Phi-3.5-mini-instruct
+model, single-stream, in 65,184s (~18.1 hours) -- rate held in a gently-stepping band throughout
+(0.52s/unit early, plateauing in stages up to ~0.93s/unit by the end; verified directly, at every
+step, to be a bounded plateau rather than runaway drift, never a stall). Written back through the
+real `derive.run()`: 933/933 partitions succeeded, 0 failed. `signal.annotation` now holds exactly
+70,145 rows, one per real `semantic.text_unit`, an exact 1:1 match verified directly against the
+canonical database (not assumed from the write-back script's own report). Real label distribution
+across the full closed taxonomy: `other` 21,943, `technology` 11,931, `shopping` 5,656, `work`
+5,644, `finances` 5,543, `relationships` 3,540, `logistics` 3,057, `news_politics` 3,043, `family`
+2,951, `entertainment` 1,878, `education` 1,136, `food` 1,105, `health` 701, `housing` 621,
+`travel` 506, `creative_projects` 347, `legal` 329, `pets` 214. All 370 tests pass, ruff clean.
+
+Real cost: one Secure Cloud NVIDIA A40 pod (RunPod's own datacenter, CA-MTL-1, $0.49/hr; the
+originally-requested RTX 4090 had zero Secure Cloud stock at request time and two Community Cloud
+4090 hosts both had the broken-CUDA defect above), ~19.3 hours total pod uptime including all
+diagnosis and the two failed parallelism attempts, ~$9.45 -- plus ~$0.30 across the two broken
+Community Cloud pods before switching to Secure Cloud. Total real spend ~$9.75, matching the
+project's own established "rent cheap GPU hardware for a bounded, disclosed cost rather than
+tie up this machine for weeks" pattern item 6 already set.
+
+## Phase 8: documents into the semantic layer -- schema + runtime shipped 2026-09-25, real rollout completed 2026-09-26
 
 `PHASE8_DOCUMENT_SEMANTIC_LAYER_IMPLEMENTATION_PLAN.md`, found while investigating whether the
 media-transcription job was re-deriving text that already exists (it partially is -- 39+ of 45
@@ -821,10 +906,20 @@ message-search behavior is unchanged by default.
    database (`DROP SCHEMA ... CASCADE` on all ten derived schemas + `DELETE FROM schema_migrations
    WHERE version >= 10` + `migrate`) since the damage predated the fix.
 
-Not yet run against the real canonical database -- `semantic_text_unit_document` is a HALO root
-deriver and would need `derive sync` (to backfill/register) then `derive run` against canonical,
-deliberately deferred until the still-running media-transcription job finishes, same
-single-active-process caution as Phase 7 and the `relationship_state_shift` claim template.
+## Phase 8: rollout against the real canonical database (2026-09-26)
+
+The media-transcription job finished (see "Media transcription: item 6 started" above), clearing
+the single-active-process caution this rollout was deferred behind. `derive sync` registered and
+backfilled `semantic_text_unit_document` and `semantic_embedding_document_bge_small` (939 seeded
+partitions each, from the same upstream history as Phase 6's own root), then `derive run`
+processed every partition to completion: 939/939 clean, zero dirty, zero failed, for both
+derivers. Real rollout counts: 597 real `semantic.text_unit_document` rows and 597 real
+`semantic.embedding_bge_small_en_v15_document` rows -- exact 1:1, same invariant Phase 6's message
+population already verified. Breakdown by source: 448 google (Drive documents, NotebookLM,
+Recorder transcripts, Gemini conversations), 149 apple (Notes) -- the grounded 10-namespace
+allowlist correctly excluded every other record type, and no Facebook/OpenAI/Anthropic/iMessages
+record matched the allowlist (expected: none of those sources' record types were in scope).
+`semantic-search --include-documents` is now live against real data.
 
 ## Claim-template growth: relationship_state_shift (2026-09-25)
 
@@ -998,15 +1093,19 @@ faithful before trusting any mismatch as a real finding rather than a methodolog
    not been re-verified for exact replay against the canonical database (see the canonical baseline
    section above). Low priority: the fix is narrow, unit-tested, and was verified directly against
    the real corpus bytes before merging.
-2. **Continue past Phase 6.** Phase 6 (the semantic layer -- `semantic.text_unit`/
-   `semantic.embedding_bge_small_en_v15`, `semantic-search`) is live against the real canonical
-   database as of 2026-09-24: 70,145 real text units, 70,145 real embeddings (exact 1:1, verified),
-   zero dirty/failed across all 14 derivers -- see "Phase 6 semantic layer: rollout" above. Next
-   per `ROADMAP.md`: item 6 (OCR/transcription, explicitly deferred out of Phase 6), semantic
-   *annotation*/topic-labeling (also explicitly deferred, needs a local generative model and its
-   own invariant-7 discipline), and further claim-template growth (item 3). The `coverage`-dimension
-   weakness the Phase 5 rollout found was fixed the same day (see "Phase 5 claims ledger: rollout"
-   above for both the original finding and the fix).
+2. **Phases 6, 7, 8, and item 3's `relationship_state_shift` are all now real-rolled-out against
+   the real canonical database, not just schema+runtime.** Phase 6 (messages): 70,145 text units,
+   70,145 embeddings. Phase 7 (topic annotation): 70,145 real annotations via a real rented-GPU
+   Phi-3.5-mini-instruct pass, completed 2026-09-27 -- see "Phase 7: real rollout" above. Phase 8
+   (documents): 597 text units + embeddings. `relationship_state_shift`: 8 real claims. Item 6
+   (media transcription) also completed earlier. Next up, per `ROADMAP.md` items 7 and 8: **topic
+   clustering** (`PHASE9_TOPIC_CLUSTERING_IMPLEMENTATION_PLAN.md`, spec published 2026-09-26, no
+   model/hardware gate -- pure CPU math over embeddings already computed, can implement and run
+   immediately) and **the life graph** (`PHASE10_LIFE_GRAPH_IMPLEMENTATION_PLAN.md`, spec published
+   2026-09-26 and revised twice through review to v3 the same day -- entities, relationships,
+   events, decisions, and open loops via one consolidated GPU pass reusing Phase 7's now-proven
+   infrastructure, sequenced to start once Phase 7's rollout was real and complete, which it now
+   is).
 3. **Continue the operational track.** Encrypted backup/restore, integrity audits, sensitive-field
    controls, incremental scheduling, performance budgets, derived-data invalidation, and corpus
    exportability remain permanent requirements.

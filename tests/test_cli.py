@@ -268,3 +268,14 @@ def test_doctor_does_not_apply_import_guards_to_test_like_target(monkeypatch, ca
     captured = capsys.readouterr()
     report = json.loads(captured.out)
     assert report["target_classification"] == "test-like"
+
+
+def test_claims_list_template_choices_include_relationship_state_shift() -> None:
+    # Regression: adding the relationship_state_shift claim template (2026-09-25) updated
+    # know_claim_evaluate's compute() but the CLI's own --template argparse choices were left
+    # listing only the original two, so a real user request for this template's claims would
+    # fail with "invalid choice" despite the template genuinely existing in know.claim.
+    args = cli._parser().parse_args(
+        ["claims-list", "--template", "relationship_state_shift"]
+    )
+    assert args.template == "relationship_state_shift"
