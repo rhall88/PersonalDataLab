@@ -32,6 +32,7 @@ from ..partitions import parse_local_key
 from ..registry import ComputeResult, deriver
 
 _MODEL_PATH_ENV = "PDL_ANNOTATION_MODEL_PATH"
+_GPU_LAYERS_ENV = "PDL_ANNOTATION_N_GPU_LAYERS"
 _MAX_TOKENS = 16
 _N_CTX = 4096
 
@@ -96,14 +97,46 @@ def _get_model():
             )
         from llama_cpp import Llama, LlamaGrammar
 
-        _model = Llama(model_path=path, n_ctx=_N_CTX, logits_all=True, verbose=False)
+        # Purely a runtime placement knob, not a model-identity one: 0 (default, CPU-only) keeps
+        # every existing local run byte-identical in behavior; a non-zero value offloads that many
+        # transformer layers to GPU on a llama-cpp-python build compiled with GPU support (e.g. a
+        # rented CUDA pod). The quantized weights, grammar, and prompt are unchanged either way, so
+        # this is not in model_ref -- it changes where the model runs, not what it computes.
+        n_gpu_layers = int(os.environ.get(_GPU_LAYERS_ENV, "0"))
+        _model = Llama(
+            model_path=path,
+            n_ctx=_N_CTX,
+            logits_all=True,
+            verbose=False,
+            n_gpu_layers=n_gpu_layers,
+        )
         _grammar = LlamaGrammar.from_string(_GRAMMAR_SOURCE)
     return _model, _grammar
 
 
+# Real gap the first GPU rollout attempt found: a small fraction of real text units (dense/
+# non-English/structured content can tokenize far less efficiently per character than typical
+# English prose) tokenize to more than _N_CTX - _MAX_TOKENS tokens even though semantic.text_unit's
+# own char-length cap allows it -- llama.cpp raises rather than silently truncating, which would
+# otherwise crash that unit's entire partition (every other unit in the same source/month never
+# gets annotated either, since compute() builds all rows in one list comprehension). Bounding the
+# prompt here, once, keeps every partition succeeding rather than depending on Phase 6's own
+# char-based truncation happening to always be token-safe too.
+_SAFETY_MARGIN = 8
+
+
+def _bounded_prompt(model, unit_text: str) -> str:
+    overhead = len(model.tokenize(_PROMPT_TEMPLATE.format(text="").encode("utf-8")))
+    budget = _N_CTX - _MAX_TOKENS - _SAFETY_MARGIN - overhead
+    text_tokens = model.tokenize(unit_text.encode("utf-8"), add_bos=False)
+    if len(text_tokens) > budget:
+        unit_text = model.detokenize(text_tokens[:budget]).decode("utf-8", errors="ignore")
+    return _PROMPT_TEMPLATE.format(text=unit_text)
+
+
 def _annotate_one(text_unit_id: int, unit_text: str, epoch_id: int) -> dict:
     model, grammar = _get_model()
-    prompt = _PROMPT_TEMPLATE.format(text=unit_text)
+    prompt = _bounded_prompt(model, unit_text)
     output = model(
         prompt, grammar=grammar, max_tokens=_MAX_TOKENS, temperature=0.0, logprobs=1,
     )

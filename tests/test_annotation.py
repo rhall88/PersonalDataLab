@@ -182,6 +182,63 @@ def test_annotate_one_real_call_on_tiny_gguf_model(monkeypatch) -> None:
     assert 0.0 <= row["score"] <= 1.0
 
 
+def test_annotate_one_bounds_a_unit_too_long_for_the_context_window(monkeypatch) -> None:
+    # Real bug the first GPU rollout attempt hit: llama.cpp raises ValueError("Requested tokens
+    # ... exceed context window") rather than truncating, which would otherwise crash this unit's
+    # entire partition (every other unit alongside it never gets annotated either). A genuinely
+    # oversized unit must still produce a real row, not a crash.
+    model_path = _download_test_model()
+    monkeypatch.setenv(_MODEL_PATH_ENV, model_path)
+    annotation_module._model = None
+    annotation_module._grammar = None
+
+    huge_text = "word " * 20000  # ~100,000 chars -- far beyond any real n_ctx regardless of tokenizer
+
+    row = _annotate_one(1, huge_text, epoch_id=1)
+
+    assert row["text_unit_id"] == 1
+    assert row["value"] in _TOPIC_LABELS
+
+
+def test_get_model_defaults_to_cpu_only_but_honors_gpu_layers_env(
+    monkeypatch, tmp_path
+) -> None:
+    # Real finding this guards: n_gpu_layers is a runtime placement knob (added for the rented-GPU
+    # Phase 7 rollout), not a model-identity field -- it must default to 0 (CPU-only, today's
+    # local behavior) when unset, and must reach Llama()'s constructor unchanged when a rollout
+    # sets PDL_ANNOTATION_N_GPU_LAYERS for a CUDA-enabled build.
+    fake_model_path = tmp_path / "fake.gguf"
+    fake_model_path.write_bytes(b"not a real gguf, never opened by the fake below")
+    monkeypatch.setenv(_MODEL_PATH_ENV, str(fake_model_path))
+    annotation_module._model = None
+    annotation_module._grammar = None
+
+    captured = {}
+
+    class _FakeLlama:
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+
+    class _FakeGrammar:
+        @staticmethod
+        def from_string(_source):
+            return object()
+
+    import llama_cpp
+
+    monkeypatch.setattr(llama_cpp, "Llama", _FakeLlama)
+    monkeypatch.setattr(llama_cpp, "LlamaGrammar", _FakeGrammar)
+
+    annotation_module._get_model()
+    assert captured["n_gpu_layers"] == 0
+
+    annotation_module._model = None
+    annotation_module._grammar = None
+    monkeypatch.setenv("PDL_ANNOTATION_N_GPU_LAYERS", "999")
+    annotation_module._get_model()
+    assert captured["n_gpu_layers"] == 999
+
+
 def _import_mail_event(engine: Engine, *, body: str, occurred_at: datetime) -> None:
     # google mail_message needs no conversation grouping (Phase 6 decision 2: each email is
     # already its own coherent text unit) -- the simplest real path from a canonical event to a

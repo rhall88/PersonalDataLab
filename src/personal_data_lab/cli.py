@@ -454,7 +454,10 @@ def _parser() -> argparse.ArgumentParser:
     claims_list = subparsers.add_parser(
         "claims-list", help="list know.claim rows, most recent first"
     )
-    claims_list.add_argument("--template", choices=("communication_change", "episode_evidence"))
+    claims_list.add_argument(
+        "--template",
+        choices=("communication_change", "episode_evidence", "relationship_state_shift"),
+    )
     claims_list.add_argument(
         "--class", dest="claim_class",
         choices=("OBSERVED", "COMPUTED", "STATISTICAL", "SEMANTIC", "DECLARED", "HYPOTHESIS"),

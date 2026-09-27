@@ -18,3 +18,6 @@ data/backups/
 *.log
 .DS_Store
 Thumbs.db
+
+# Downloaded local model weights (large binaries, re-downloadable, never source).
+/models/
