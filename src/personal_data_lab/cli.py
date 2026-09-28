@@ -35,8 +35,25 @@ from .database import (
     list_sibling_databases,
 )
 from .derive import asof
-from .derive.derivers.claims import claim_why, list_claims
+from .derive.derivers.claims import (
+    claim_why,
+    confirm_claim_contradiction,
+    list_claim_contradictions,
+    list_claims,
+    reject_claim_contradiction,
+)
+from .derive.derivers.clustering import list_topic_clusters, show_topic_cluster
+from .derive.derivers.entity import (
+    confirm_entity_link,
+    create_entity,
+    list_link_candidates,
+    merge_entity,
+    reject_entity_link,
+    split_entity_link,
+)
 from .derive.derivers.episode import confirm_episode, declare_episode, list_episodes, reject_episode
+from .derive.derivers.event import confirm_event, list_event_candidates, reject_event
+from .derive.derivers.intent import confirm_intent, list_intent_candidates, reject_intent
 from .derive.derivers.semantic import search as semantic_search
 from .facebook_export.inventory import inspect_facebook
 from .facebook_export.inventory import render_inventory_table as render_facebook_table
@@ -456,7 +473,10 @@ def _parser() -> argparse.ArgumentParser:
     )
     claims_list.add_argument(
         "--template",
-        choices=("communication_change", "episode_evidence", "relationship_state_shift"),
+        choices=(
+            "communication_change", "episode_evidence", "relationship_state_shift",
+            "event_claim", "decision_claim", "open_loop_claim",
+        ),
     )
     claims_list.add_argument(
         "--class", dest="claim_class",
@@ -480,6 +500,98 @@ def _parser() -> argparse.ArgumentParser:
         help="also rank semantic.text_unit_document (Drive/NotebookLM/Recorder/Notes content)",
     )
     semantic_search_parser.add_argument("--database-url", help="overrides DATABASE_URL from .env")
+    topic_clusters_list = subparsers.add_parser(
+        "topic-clusters-list", help="list unsupervised topic clusters, largest first"
+    )
+    topic_clusters_list.add_argument("--min-size", type=int, default=0)
+    topic_clusters_list.add_argument("--database-url", help="overrides DATABASE_URL from .env")
+    topic_cluster_show = subparsers.add_parser(
+        "topic-cluster-show", help="show a topic cluster's label and a sample of its members"
+    )
+    topic_cluster_show.add_argument("cluster_index", type=int)
+    topic_cluster_show.add_argument("--database-url", help="overrides DATABASE_URL from .env")
+
+    # Phase 10 (PHASE10_LIFE_GRAPH_IMPLEMENTATION_PLAN.md): entity/event/intent/contradiction
+    # candidate-review CLI, all following the identity/episode review-queue precedent exactly.
+    entity_create = subparsers.add_parser("entity-create", help="create a non-person entity")
+    entity_create.add_argument("kind", choices=("organization", "place", "project", "named_concept"))
+    entity_create.add_argument("canonical_name")
+    entity_create.add_argument("--database-url", help="overrides DATABASE_URL from .env")
+    entity_candidates = subparsers.add_parser(
+        "entity-candidates", help="list proposed entity/person link candidates"
+    )
+    entity_candidates.add_argument("--status", choices=("candidate", "confirmed", "rejected"), default="candidate")
+    entity_candidates.add_argument("--database-url", help="overrides DATABASE_URL from .env")
+    entity_confirm = subparsers.add_parser(
+        "entity-confirm", help="confirm a proposed entity/person link candidate"
+    )
+    entity_confirm.add_argument("candidate_id", type=int)
+    entity_confirm.add_argument("--database-url", help="overrides DATABASE_URL from .env")
+    entity_reject = subparsers.add_parser(
+        "entity-reject", help="reject a proposed entity/person link candidate"
+    )
+    entity_reject.add_argument("candidate_id", type=int)
+    entity_reject.add_argument("--database-url", help="overrides DATABASE_URL from .env")
+    entity_merge = subparsers.add_parser(
+        "entity-merge", help="directly link a mention to a person or entity the resolver never proposed"
+    )
+    entity_merge.add_argument("mention_id", type=int)
+    entity_merge.add_argument("--person-id", type=int)
+    entity_merge.add_argument("--entity-id", type=int)
+    entity_merge.add_argument("--database-url", help="overrides DATABASE_URL from .env")
+    entity_split = subparsers.add_parser(
+        "entity-split", help="revert a mention's active link, reversibly"
+    )
+    entity_split.add_argument("mention_id", type=int)
+    entity_split.add_argument("--database-url", help="overrides DATABASE_URL from .env")
+
+    event_candidates = subparsers.add_parser(
+        "event-candidates", help="list proposed cross-source event candidates"
+    )
+    event_candidates.add_argument("--status", choices=("candidate", "confirmed", "rejected"), default="candidate")
+    event_candidates.add_argument("--database-url", help="overrides DATABASE_URL from .env")
+    event_confirm = subparsers.add_parser(
+        "event-confirm", help="confirm an event candidate, creating the canonical event"
+    )
+    event_confirm.add_argument("candidate_id", type=int)
+    event_confirm.add_argument("--database-url", help="overrides DATABASE_URL from .env")
+    event_reject = subparsers.add_parser("event-reject", help="reject an event candidate")
+    event_reject.add_argument("candidate_id", type=int)
+    event_reject.add_argument("--database-url", help="overrides DATABASE_URL from .env")
+
+    intent_candidates = subparsers.add_parser(
+        "intent-candidates", help="list proposed decision/open-loop thread candidates"
+    )
+    intent_candidates.add_argument("--kind", choices=("decision", "open_loop"))
+    intent_candidates.add_argument("--status", choices=("candidate", "confirmed", "rejected"), default="candidate")
+    intent_candidates.add_argument("--database-url", help="overrides DATABASE_URL from .env")
+    intent_confirm = subparsers.add_parser(
+        "intent-confirm", help="confirm a decision/open-loop thread candidate"
+    )
+    intent_confirm.add_argument("candidate_id", type=int)
+    intent_confirm.add_argument("--database-url", help="overrides DATABASE_URL from .env")
+    intent_reject = subparsers.add_parser("intent-reject", help="reject a decision/open-loop thread candidate")
+    intent_reject.add_argument("candidate_id", type=int)
+    intent_reject.add_argument("--database-url", help="overrides DATABASE_URL from .env")
+
+    claim_contradictions_list = subparsers.add_parser(
+        "claim-contradictions-list", help="list candidate claim contradictions"
+    )
+    claim_contradictions_list.add_argument(
+        "--status", choices=("candidate", "confirmed", "rejected"), default="candidate"
+    )
+    claim_contradictions_list.add_argument("--database-url", help="overrides DATABASE_URL from .env")
+    claim_contradiction_confirm = subparsers.add_parser(
+        "claim-contradiction-confirm", help="confirm a candidate claim contradiction"
+    )
+    claim_contradiction_confirm.add_argument("contradiction_id", type=int)
+    claim_contradiction_confirm.add_argument("--database-url", help="overrides DATABASE_URL from .env")
+    claim_contradiction_reject = subparsers.add_parser(
+        "claim-contradiction-reject", help="reject a candidate claim contradiction"
+    )
+    claim_contradiction_reject.add_argument("contradiction_id", type=int)
+    claim_contradiction_reject.add_argument("--database-url", help="overrides DATABASE_URL from .env")
+
     declare_add = subparsers.add_parser("declare-add", help="record a user-asserted declaration")
     declare_add.add_argument(
         "kind",
@@ -1494,6 +1606,135 @@ def main(argv: Sequence[str] | None = None) -> int:
             include_documents=args.include_documents,
         )
         print(json.dumps(hits, indent=2, default=str))
+        return 0
+    if args.command == "topic-clusters-list":
+        engine = _resolve_guarded_engine(args.database_url, canonical_import=False)
+        clusters = list_topic_clusters(engine, min_size=args.min_size)
+        print(json.dumps(clusters, indent=2, default=str))
+        return 0
+    if args.command == "topic-cluster-show":
+        engine = _resolve_guarded_engine(args.database_url, canonical_import=False)
+        try:
+            report = show_topic_cluster(engine, args.cluster_index)
+        except ValueError as error:
+            print(f"error: {error}", file=sys.stderr, flush=True)
+            return 1
+        print(json.dumps(report, indent=2, default=str))
+        return 0
+    if args.command == "entity-create":
+        engine = _resolve_guarded_engine(args.database_url, canonical_import=False)
+        entity = create_entity(engine, args.kind, args.canonical_name)
+        print(json.dumps(entity, indent=2, default=str))
+        return 0
+    if args.command == "entity-candidates":
+        engine = _resolve_guarded_engine(args.database_url, canonical_import=False)
+        candidates = list_link_candidates(engine, status=args.status)
+        print(json.dumps(candidates, indent=2, default=str))
+        return 0
+    if args.command == "entity-confirm":
+        engine = _resolve_guarded_engine(args.database_url, canonical_import=False)
+        try:
+            link = confirm_entity_link(engine, args.candidate_id)
+        except ValueError as error:
+            print(f"error: {error}", file=sys.stderr, flush=True)
+            return 1
+        print(json.dumps(link, indent=2, default=str))
+        return 0
+    if args.command == "entity-reject":
+        engine = _resolve_guarded_engine(args.database_url, canonical_import=False)
+        try:
+            link = reject_entity_link(engine, args.candidate_id)
+        except ValueError as error:
+            print(f"error: {error}", file=sys.stderr, flush=True)
+            return 1
+        print(json.dumps(link, indent=2, default=str))
+        return 0
+    if args.command == "entity-merge":
+        engine = _resolve_guarded_engine(args.database_url, canonical_import=False)
+        try:
+            link = merge_entity(engine, args.mention_id, person_id=args.person_id, entity_id=args.entity_id)
+        except ValueError as error:
+            print(f"error: {error}", file=sys.stderr, flush=True)
+            return 1
+        print(json.dumps(link, indent=2, default=str))
+        return 0
+    if args.command == "entity-split":
+        engine = _resolve_guarded_engine(args.database_url, canonical_import=False)
+        try:
+            link = split_entity_link(engine, args.mention_id)
+        except ValueError as error:
+            print(f"error: {error}", file=sys.stderr, flush=True)
+            return 1
+        print(json.dumps(link, indent=2, default=str))
+        return 0
+    if args.command == "event-candidates":
+        engine = _resolve_guarded_engine(args.database_url, canonical_import=False)
+        candidates = list_event_candidates(engine, status=args.status)
+        print(json.dumps(candidates, indent=2, default=str))
+        return 0
+    if args.command == "event-confirm":
+        engine = _resolve_guarded_engine(args.database_url, canonical_import=False)
+        try:
+            event = confirm_event(engine, args.candidate_id)
+        except ValueError as error:
+            print(f"error: {error}", file=sys.stderr, flush=True)
+            return 1
+        print(json.dumps(event, indent=2, default=str))
+        return 0
+    if args.command == "event-reject":
+        engine = _resolve_guarded_engine(args.database_url, canonical_import=False)
+        try:
+            event = reject_event(engine, args.candidate_id)
+        except ValueError as error:
+            print(f"error: {error}", file=sys.stderr, flush=True)
+            return 1
+        print(json.dumps(event, indent=2, default=str))
+        return 0
+    if args.command == "intent-candidates":
+        engine = _resolve_guarded_engine(args.database_url, canonical_import=False)
+        candidates = list_intent_candidates(engine, kind=args.kind, status=args.status)
+        print(json.dumps(candidates, indent=2, default=str))
+        return 0
+    if args.command == "intent-confirm":
+        engine = _resolve_guarded_engine(args.database_url, canonical_import=False)
+        try:
+            thread = confirm_intent(engine, args.candidate_id)
+        except ValueError as error:
+            print(f"error: {error}", file=sys.stderr, flush=True)
+            return 1
+        print(json.dumps(thread, indent=2, default=str))
+        return 0
+    if args.command == "intent-reject":
+        engine = _resolve_guarded_engine(args.database_url, canonical_import=False)
+        try:
+            thread = reject_intent(engine, args.candidate_id)
+        except ValueError as error:
+            print(f"error: {error}", file=sys.stderr, flush=True)
+            return 1
+        print(json.dumps(thread, indent=2, default=str))
+        return 0
+    if args.command == "claim-contradictions-list":
+        engine = _resolve_guarded_engine(args.database_url, canonical_import=False)
+        contradictions = list_claim_contradictions(engine, status=args.status)
+        print(json.dumps(contradictions, indent=2, default=str))
+        return 0
+    if args.command == "claim-contradiction-confirm":
+        engine = _resolve_guarded_engine(args.database_url, canonical_import=False)
+        try:
+            contradiction = confirm_claim_contradiction(engine, args.contradiction_id)
+        except ValueError as error:
+            print(f"error: {error}", file=sys.stderr, flush=True)
+            return 1
+        print(json.dumps(contradiction, indent=2, default=str))
+        return 0
+    if args.command == "claim-contradiction-reject":
+        engine = _resolve_guarded_engine(args.database_url, canonical_import=False)
+        try:
+            contradiction = reject_claim_contradiction(engine, args.contradiction_id)
+        except ValueError as error:
+            print(f"error: {error}", file=sys.stderr, flush=True)
+            return 1
+        print(json.dumps(contradiction, indent=2, default=str))
         return 0
     if args.command == "declare-add":
         engine = _resolve_guarded_engine(args.database_url, canonical_import=False)

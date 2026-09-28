@@ -175,12 +175,27 @@ explicit disposition rather than optimistic format assumptions.
    and `PROJECT_STATE.md`'s "Phase 6 semantic layer: rollout" for full evidence.
 6. **Optional media enrichment:** OCR, transcription, and document/image analysis only in a
    separately versioned derived layer. Core ingestion never fabricates these results.
-7. **Unsupervised topic clustering:** machine-discovered groupings over Phase 6's own embeddings —
-   the architecture's own "topics are not entities" rule and its GLOBAL-class example list both
-   name this directly. Complements item 6's Phase 7 fixed-taxonomy annotation rather than
-   duplicating it. Spec published 2026-09-26, not yet implemented; unlike Phases 7/8 it needs no
-   model download or rented hardware — CPU-only math over embeddings already computed. See
-   [`PHASE9_TOPIC_CLUSTERING_IMPLEMENTATION_PLAN.md`](PHASE9_TOPIC_CLUSTERING_IMPLEMENTATION_PLAN.md).
+7. ~~**Unsupervised topic clustering:** machine-discovered groupings over Phase 6's own
+   embeddings — the architecture's own "topics are not entities" rule and its GLOBAL-class example
+   list both name this directly. Complements item 6's Phase 7 fixed-taxonomy annotation rather than
+   duplicating it.~~ **Done 2026-09-28**: HDBSCAN parameters grounded against a real timed
+   benchmark (six combinations swept over the real 70,145-vector population), a real production bug
+   found and fixed along the way (the deriver's own clustering call was missing the `n_jobs`
+   parallelism the benchmark itself required — a real rollout attempt sat idle for 10+ minutes
+   before being caught), rolled out against the real canonical database: 397 real groups (396
+   clusters + noise), exact 1:1 row count. See
+   [`PHASE9_TOPIC_CLUSTERING_IMPLEMENTATION_PLAN.md`](PHASE9_TOPIC_CLUSTERING_IMPLEMENTATION_PLAN.md)
+   and `PROJECT_STATE.md`'s "Phase 9" rollout section.
+8. **The life graph:** entities, relationships, events, decisions, and open loops via one
+   consolidated generative pass over Phase 6's text units, reusing Phase 7's rented-GPU
+   infrastructure. Spec (v3, three review rounds) published 2026-09-26; schema, five deriver
+   modules, 15 CLI verbs, and 11 exit tests implemented and passing 2026-09-28 — see
+   `PROJECT_STATE.md`'s "Phase 10" section for the real benchmark that grounded its grammar/timing
+   (~7.4 hours for the real pass, not the 7-15 days a naive extrapolation would have suggested) and
+   four real bugs the benchmark and exit tests found before any of them could reach the real
+   rollout. **Not yet real-rolled-out** — that needs one explicitly-authorized rented-GPU pass over
+   all 70,145 text units, deliberately held as a separate step. See
+   [`PHASE10_LIFE_GRAPH_IMPLEMENTATION_PLAN.md`](PHASE10_LIFE_GRAPH_IMPLEMENTATION_PLAN.md).
 
 Deep understanding begins in this layer. Import adapters know what provider objects say; derived
 claims express what multiple observations may mean together.
@@ -190,9 +205,10 @@ coverage, as-of/contract derivation, identity's COMPUTED rules tier, the life-le
 compare layer, signals + episodes, and the claims ledger above) are all live against the real
 canonical database as of 2026-09-24 — see `PROJECT_STATE.md` for full rollout evidence on each.
 That architecture's own phase numbering does not map one-to-one onto items 3–6 above. Items 5
-(semantic retrieval), 6 (OCR/media enrichment), and item 3's `relationship_state_shift` claim
-template are all now real-rolled-out against the canonical database — see `PROJECT_STATE.md`.
-Items 7 (topic clustering) and 8 (the life graph) are specced and next; see the milestone table
+(semantic retrieval), 6 (OCR/media enrichment), 7 (topic clustering), and item 3's
+`relationship_state_shift` claim template are all now real-rolled-out against the canonical
+database — see `PROJECT_STATE.md`. Item 8 (the life graph) is implemented and tested but not yet
+real-rolled-out — it needs one explicitly-authorized rented-GPU pass; see the milestone table
 below.
 
 ### Phase 5: claims + evidence challenge — landed and rolled out 2026-09-24
@@ -274,9 +290,10 @@ chain must never depend on an embedding model, UI, or agent remaining available.
 | Completed 2026-09-26 | Item 6: media transcription (OCR/transcription) | Schema (`media.transcript`) and `media_transcribe_whisper` shipped and fully rolled out against the real canonical database — 487 real audio files (22 apple + 6 facebook + 459 google), all three undated partitions `clean`. Local CPU transcription was abandoned after 42+ hours with no completion in sight (extreme file-size long-tail); finished instead on rented GPU (RunPod H200 then RTX 4090, `faster-whisper` `BatchedInferencePipeline`, ~$9 total, ~2h20m combined) — see `PROJECT_STATE.md`'s "Media transcription" sections for the full story, including two real code bugs fixed live (Facebook locator dispatch, Apple/Facebook temp-file suffix parsing), a post-rollout Whisper-hallucination cleanup (51 rows fixed, not yet automated into the deriver), a real Apple-export-scope finding (only 22 audio files exist in the official export, third-party-app audio never included, deferred to a future "v1.1" iMazing-backup source), and an unexpected discovery of two AI-generated podcast-style audio files in the corpus |
 | Completed 2026-09-27 | Semantic annotation/topic-labeling (Phase 7) | `PHASE7_SEMANTIC_ANNOTATION_IMPLEMENTATION_PLAN.md`, migration 019 (`signal.annotation`), `signal_annotation_topic` — the codebase's first real `SEMANTIC`-class deriver, grammar-constrained (GBNF/`llama.cpp`) closed-taxonomy topic labels; real production-model rollout completed against a rented Secure Cloud GPU (Phi-3.5-mini-instruct, single-stream after two multi-process parallelism attempts both failed and were root-caused): 70,145/70,145 real annotations, exact 1:1, 933/933 partitions clean, 0 failed — see `PROJECT_STATE.md`'s "Phase 7: real rollout" section for full evidence including three real infrastructure defects found and fixed |
 | Completed 2026-09-26 | Phase 8: documents into the semantic layer | `PHASE8_DOCUMENT_SEMANTIC_LAYER_IMPLEMENTATION_PLAN.md`, migration 021 (`semantic.text_unit_document`/`semantic.embedding_bge_small_en_v15_document`), `semantic_text_unit_document`/`semantic_embedding_document_bge_small`, `semantic-search --include-documents`; found while investigating transcription redundancy that Google Recorder audio already has real transcripts sitting unused in `records`; two real bugs found and fixed before merging (a `NOT NULL` timestamp constraint that would have forced fabricating dates for the ~all-undated real population, and a `%` character breaking `psycopg`'s SQL parameter substitution); real rollout completed against canonical: 597/597 real text units + embeddings, exact 1:1 — see `PROJECT_STATE.md`'s "Phase 8" section |
-| Schema+tests shipped 2026-09-25 | Item 3: further claim-template growth (`relationship_state_shift`) | Migration 020, wraps Phase 4's already-computed `signal.interaction_state` segments the same way `episode_evidence` wraps episode detection; grounded against the real canonical database (77 states, 69 correspondents, 8 real transitions); real rollout against canonical deferred until the transcription job finishes — see `PROJECT_STATE.md`'s "Claim-template growth: relationship_state_shift" |
+| Completed 2026-09-25 | Item 3: further claim-template growth (`relationship_state_shift`) | Migration 020, wraps Phase 4's already-computed `signal.interaction_state` segments the same way `episode_evidence` wraps episode detection; grounded against the real canonical database (77 states, 69 correspondents, 8 real transitions); real rollout against canonical completed — 8 real claims — see `PROJECT_STATE.md`'s "Claim-template growth: relationship_state_shift" |
 | Completed 2026-09-25 | Operational track: encrypted backup/restore | `personal-data-lab backup`/`restore`, `pg_dump`/`pg_restore` via the project's own Postgres container, passphrase-derived streaming AES-256-CTR + HMAC-SHA256 encrypt-then-MAC (`cryptography`, chunked, not single-shot), canonical-database restore guarded behind `force=True`; real round-trip test plus wrong-passphrase/missing-passphrase coverage; a real `MemoryError` from an initial `Fernet`-based (single-shot, whole-payload-in-memory) implementation was found running a real backup against the 13GB+ canonical database and fixed by switching to streaming — see `PROJECT_STATE.md`'s "Operational track: encrypted backup/restore" |
 | Completed 2026-09-26 | Disposability verification (invariant 20) -- two real bugs found and fixed | Real backup restored into a scratch database, checksummed, fully rebuilt (`derive-rebuild` + `derive-run --global`), and re-checksummed; found and fixed a tied-timestamp ordering bug in `semantic_text_unit` (12/70,145 real units affected) and a duplicate-candidate bug in `episode_detect_candidates` (would have duplicated all 8 real confirmed episodes on the next ordinary re-run, not just a rebuild); both fixed with regression tests, neither required real-canonical cleanup — see `PROJECT_STATE.md`'s "Disposability verification (invariant 20)" |
-| Spec published 2026-09-26 | Item 7: unsupervised topic clustering | HDBSCAN over Phase 6's real embeddings, TF-IDF extractive labels, GLOBAL/STATISTICAL deriver, versioned + disposable per invariant 20 — see `PHASE9_TOPIC_CLUSTERING_IMPLEMENTATION_PLAN.md`; no model/hardware gate, runnable immediately after implementation |
+| Completed 2026-09-28 | Item 7: unsupervised topic clustering | HDBSCAN over Phase 6's real embeddings, TF-IDF extractive labels, GLOBAL/STATISTICAL deriver, versioned + disposable per invariant 20; parameters grounded against a real six-combination timed benchmark on the full 70,145-vector population (25/5 chosen at a real noise-vs-fragmentation elbow); a real production bug found and fixed (the deriver's own `_cluster()` was missing the `n_jobs` parallelism the benchmark required, causing a real rollout attempt to sit idle for 10+ minutes before being caught); real rollout completed: 397 groups (396 clusters + noise), exact 1:1 row count — see `PHASE9_TOPIC_CLUSTERING_IMPLEMENTATION_PLAN.md` and `PROJECT_STATE.md`'s "Phase 9" section |
+| Implemented 2026-09-28, real rollout pending | Item 8: the life graph | Migration 023 (`generative`/`entity`/`event`/`intent` schemas, 3 new `know.claim` templates, `know.claim_contradiction`), 5 deriver modules, 15 CLI verbs, 11 exit tests, all passing, ruff clean; a real timed benchmark against `llama.cpp`'s continuous-batching server grounded the grammar and timing (~7.4 hours for the real 70,145-unit pass, not the 7-15 days a naive extrapolation would suggest) and found 4 real bugs before any reached production code — see `PROJECT_STATE.md`'s "Phase 10" section. Real rollout (the one rented-GPU pass) deliberately deferred as a separate, explicitly-authorized step |
 | Final product track | Timeline, exploration, analytics, read-only MCP, and agents | Fast normal queries, permission boundaries, and evidence-citing answers |
 

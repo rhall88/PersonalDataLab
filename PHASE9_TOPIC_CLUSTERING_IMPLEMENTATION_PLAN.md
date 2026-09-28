@@ -74,13 +74,13 @@ dev machine with no rented hardware at all.
    GLOBAL-class example list verbatim ("topic clustering" is named there) and follows
    `know_claim_evaluate`/`episode_detect_candidates`'s existing GLOBAL precedent: one partition key
    (`"GLOBAL"`), recomputed whole-corpus on every dirty run.
-7. **Versioned and fully disposable, per invariant 20.** `semantic.topic_cluster` rows carry
-   `deriver_version_id` (not a bare run timestamp) exactly like every other derived table in this
-   project. A re-cluster (new data, a bumped `code_version` for an algorithm/parameter change, or a
-   future embedding-model swap) produces a new deriver version; per `versioning.py`'s existing
+7. **Versioned and fully disposable, per invariant 20.** `semantic.topic_cluster_assignment` rows
+   carry `deriver_version_id` (not a bare run timestamp) exactly like every other derived table in
+   this project. A re-cluster (new data, a bumped `code_version` for an algorithm/parameter change,
+   or a future embedding-model swap) produces a new deriver version; per `versioning.py`'s existing
    shadow/active/promote mechanism, it does not overwrite the active clustering until explicitly
-   promoted. `clear_partition` deletes this version's own `topic_cluster`/`topic_cluster_assignment`
-   rows only, same isolation discipline every other deriver's `clear_partition` already has test
+   promoted. `clear_partition` deletes this version's own `topic_cluster_assignment` rows only,
+   same isolation discipline every other deriver's `clear_partition` already has test
    coverage for.
 8. **No `named_concept` entity promotion in this phase.** The architecture describes a person
    *naming and anchoring* a discovered cluster into a persistent `named_concept` entity that
@@ -92,37 +92,39 @@ dev machine with no rented hardware at all.
 
 ## Schema (migration 022)
 
-```sql
-CREATE TABLE semantic.topic_cluster (
-    id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-    deriver_version_id BIGINT NOT NULL REFERENCES derive.deriver_version(id),
-    cluster_index INTEGER NOT NULL,  -- -1 is HDBSCAN's reserved "noise" label, never a real topic
-    label TEXT NOT NULL,             -- top-5 TF-IDF terms, comma-joined; 'noise' for cluster_index=-1
-    size INTEGER NOT NULL,
-    centroid vector(384),            -- mean of member vectors; NULL for the noise pseudo-cluster
-    computed_epoch_id BIGINT NOT NULL REFERENCES derive.evidence_epoch(id),
-    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    UNIQUE (deriver_version_id, cluster_index)
-);
+**Revision note, caught before implementation:** the original two-table design (a `topic_cluster`
+metadata table plus a `topic_cluster_assignment` row-per-unit table) would need one `compute()` to
+write both -- exactly the constraint Phase 5's inline-JSONB correction and Phase 10's candidate/
+confirm pattern both exist to work around (`derive/worker.py`'s `_write_rows` inserts into exactly
+one `output_relation`). Fixed the same way Phase 5 fixed it: one table, with the cluster-level
+label denormalized onto every member row rather than factored into a separate table. A cluster's
+centroid is not persisted at all -- nothing in this phase's exit tests needs it stored, and it's
+cheaply recomputable on demand (`AVG` over `semantic.embedding_bge_small_en_v15.vector` for a
+cluster's members) if a future consumer wants it, rather than carrying a redundant 384-dim vector
+on every one of ~70,145 rows.
 
+```sql
 CREATE TABLE semantic.topic_cluster_assignment (
     text_unit_id BIGINT NOT NULL REFERENCES semantic.text_unit(id) ON DELETE CASCADE,
-    cluster_id BIGINT NOT NULL REFERENCES semantic.topic_cluster(id) ON DELETE CASCADE,
+    deriver_version_id BIGINT NOT NULL REFERENCES derive.deriver_version(id),
+    cluster_index INTEGER NOT NULL,  -- -1 is HDBSCAN's reserved "noise" label, never a real topic
+    cluster_label TEXT NOT NULL,     -- top-5 TF-IDF terms, comma-joined; 'noise' for cluster_index=-1
+                                      -- (denormalized: identical for every row sharing cluster_index)
     distance_to_centroid DOUBLE PRECISION,  -- NULL for noise-labeled units (no centroid to measure)
-    PRIMARY KEY (text_unit_id, cluster_id)
+    computed_epoch_id BIGINT NOT NULL REFERENCES derive.evidence_epoch(id),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (text_unit_id, deriver_version_id)
 );
 
 CREATE INDEX topic_cluster_assignment_cluster_idx
-    ON semantic.topic_cluster_assignment (cluster_id);
+    ON semantic.topic_cluster_assignment (deriver_version_id, cluster_index);
 ```
 
-Two tables, not one, for the same reason `semantic.text_unit`/`semantic.embedding_bge_small_en_v15`
-are two tables: a cluster's own metadata (label, size, centroid) is written once per cluster, an
-assignment is written once per text unit -- collapsing them would either repeat the label on every
-row or require a join to ever answer "what clusters exist." The composite primary key on
-`topic_cluster_assignment` (rather than `text_unit_id` alone) is deliberate: a shadow version's
-rows and the active version's rows can coexist before an explicit `derive promote`, exactly
-`derive.partition_state`'s own existing multi-version precedent.
+The primary key is `(text_unit_id, deriver_version_id)`, not `text_unit_id` alone, for the same
+reason the original design's composite key was: a shadow version's rows and the active version's
+rows can coexist before an explicit `derive promote`, exactly `derive.partition_state`'s own
+existing multi-version precedent. "What clusters exist" (decision 4's CLI) is answered by a plain
+`GROUP BY cluster_index, cluster_label` query, not a second table.
 
 ## Runtime
 
@@ -138,14 +140,14 @@ rows and the active version's rows can coexist before an explicit `derive promot
     number it hasn't checked produces a sane cluster-count/noise-ratio on the real data).
   - `_label_cluster(texts_in_cluster, all_texts) -> str` -- the TF-IDF top-5 extraction (decision 4).
   - `@deriver(name="semantic_topic_cluster", partition_class="GLOBAL", final_inference="STATISTICAL",
-    output_relation="semantic.topic_cluster", inputs=("semantic_embedding_bge_small",),
+    output_relation="semantic.topic_cluster_assignment", inputs=("semantic_embedding_bge_small",),
     params={"algorithm": "hdbscan", "min_cluster_size": ..., "min_samples": ..., "metric":
     "euclidean_on_l2_normalized"}, clear_partition=...)` -- `params` (not `model_ref`, which stays
     reserved for pinned model identity per Phase 7's own precedent) carries every knob that changes
     `version_hash` when tuned.
-  - `compute()`: fetch all vectors, cluster, compute one `topic_cluster` row per label (including
-    `-1`/noise) with its centroid and TF-IDF label, one `topic_cluster_assignment` row per text
-    unit, return both as the `ComputeResult`.
+  - `compute()`: fetch all vectors, cluster, compute each cluster's TF-IDF label once, then return
+    one `topic_cluster_assignment` row per text unit (label denormalized onto every member row of
+    its cluster) as the `ComputeResult` -- a single output relation, per the schema revision above.
 - `pyproject.toml`: add `scikit-learn>=1.3,<2` (ships `sklearn.cluster.HDBSCAN` and
   `TfidfVectorizer`; no GPU/CUDA extra, matching this project's existing CPU-only ML dependencies).
 
@@ -174,12 +176,12 @@ rows and the active version's rows can coexist before an explicit `derive promot
 5. Re-running with unchanged embeddings and unchanged `params` is a no-op (fingerprint-skipped),
    matching every other deriver's existing skip-unchanged behavior.
 6. `clear_partition` for one deriver version's clustering deletes only that version's
-   `topic_cluster`/`topic_cluster_assignment` rows, never another (shadow-vs-active) version's --
-   same isolation test pattern every prior phase's `clear_partition` coverage already established.
+   `topic_cluster_assignment` rows, never another (shadow-vs-active) version's -- same isolation
+   test pattern every prior phase's `clear_partition` coverage already established.
 7. Noise-labeled (`cluster_index = -1`) units get a `topic_cluster_assignment` row with
-   `distance_to_centroid = NULL` and reference a `topic_cluster` row whose own `centroid` is also
-   `NULL` -- proving "no real cluster fits this" is represented honestly, never forced into the
-   nearest real cluster (invariant 2 applied to this phase's own output, not just its inputs).
+   `distance_to_centroid = NULL` -- proving "no real cluster fits this" is represented honestly,
+   never forced into the nearest real cluster (invariant 2 applied to this phase's own output, not
+   just its inputs).
 
 Real-database rollout (clustering the actual 70,145 real embeddings, and grounding the real
 `min_cluster_size`/`min_samples` choice against them before locking `params`) is this phase's own

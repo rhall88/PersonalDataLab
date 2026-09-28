@@ -921,6 +921,100 @@ allowlist correctly excluded every other record type, and no Facebook/OpenAI/Ant
 record matched the allowlist (expected: none of those sources' record types were in scope).
 `semantic-search --include-documents` is now live against real data.
 
+## Phase 9: unsupervised topic clustering -- rollout (2026-09-28)
+
+`PHASE9_TOPIC_CLUSTERING_IMPLEMENTATION_PLAN.md`: HDBSCAN over Phase 6's real message embeddings
+(L2-normalized vectors, Euclidean metric -- documented cosine equivalence), extractive TF-IDF
+labels (never an LLM call, so `final_inference = "STATISTICAL"`), one denormalized output table
+(`semantic.topic_cluster_assignment`) after a same-day self-caught spec revision from an originally
+planned two-table design that would have violated `derive/worker.py`'s one-output-relation-per-
+`compute()` constraint.
+
+`_MIN_CLUSTER_SIZE`/`_MIN_SAMPLES` were grounded, not guessed, per the plan's own decision 8: a
+timed benchmark swept six `(min_cluster_size, min_samples)` combinations against the real
+70,145-vector canonical population --
+
+| min_cluster_size | min_samples | clusters | noise | wall time |
+|---|---|---|---|---|
+| 15 | 5 | 621 | 49.1% | 1515s |
+| **25** | **5** | **396** | **49.1%** | 1508s |
+| 50 | 5 | 235 | 52.1% | 1521s |
+| 100 | 10 | 108 | 56.8% | 1511s |
+| 200 | 10 | 60 | 59.7% | 1497s |
+| 500 | 20 | 16 | 67.3% | 1649s |
+
+-- a real elbow at 25/5: noise holds essentially flat from 15 to 25 (49.1% -> 49.1%) while cluster
+count nearly halves (621 -> 396, less fragmentation at no coverage cost); 25 -> 50 starts trading
+noise for fewer clusters. 25/5 is the grounded choice at that elbow.
+
+Two real operational bugs found and fixed getting here, both the same class of mistake (a script
+and its production counterpart drifting apart on a parallelism setting):
+- The benchmark's own first attempt ran single-threaded (`n_jobs` unset), burning 3+ real CPU-hours
+  on a single parameter combination before being caught and killed; adding `n_jobs=-1` (this
+  machine has 12 logical cores) brought that down to the ~25 minutes/combination shown above.
+- The *production* `_cluster()` function in `clustering.py` had the identical omission -- the
+  benchmark script and the real deriver were never reconciled. The first real rollout attempt sat
+  "idle in transaction" for 10+ minutes (found via `pg_stat_activity`, confirmed via
+  `pg_terminate_backend`) before being diagnosed and fixed the same way.
+
+Real rollout against the canonical database: `derive sync` backfilled 1 dirty GLOBAL partition;
+`derive run --global` completed with `rows_written: 70145` (exact 1:1 with the real embedding
+population, matching Phase 6/7/8's own precedent), zero dirty/failed partitions afterward. Real
+distribution: 397 total groups (396 real clusters + 1 noise group of 34,421 units, matching the
+benchmark exactly), largest real clusters by size include recognizable real vocabulary (e.g. a
+1,606-message cluster keyed on `lol, just, ll, going, okay` -- casual chat register; several
+promotional/newsletter clusters keyed on retailer names). `topic-clusters-list`/`topic-cluster-show`
+are live against real data.
+
+## Phase 10: the life graph -- implemented, real rollout pending (2026-09-28)
+
+`PHASE10_LIFE_GRAPH_IMPLEMENTATION_PLAN.md` (v3, three review rounds before any code): schema
+(migration 023 -- `generative`, `entity`, `event`, `intent` schemas, plus three new `know.claim`
+templates and `know.claim_contradiction`), five deriver modules (`generative.py`'s single
+consolidated pass, `entity.py`, `event.py`, `intent.py`, `claims.py` extended), 15 new CLI verbs
+(entity/event/intent/contradiction candidate-review queues, mirroring identity/episode's own
+review-queue precedent exactly), and 11 exit tests, all passing; ruff clean. **Not yet rolled out
+against the real canonical database** -- that needs the one real rented-GPU pass over all 70,145
+text units this plan's whole design centers on, deliberately deferred to a separate, explicitly
+authorized step given its real cost and multi-hour duration.
+
+Before writing the production grammar, a real, timed benchmark (2026-09-27) proved the batching
+approach and grounded the numbers a naive estimate would have gotten wrong in the expensive
+direction: a stratified 273-unit sample (all 5 sources, three length buckets) run through
+`llama.cpp`'s real continuous-batching server (not Phase 7's single-stream approach) measured
+**0.38 sec/unit** at 32 parallel slots (vs. Phase 7's 0.93 sec/unit single-stream, despite emitting
+~10x richer output) -- extrapolating to **~7.4 hours** for all 70,145 units, not the 7-15 days a
+naive token-count extrapolation from Phase 7's baseline would have suggested. Parallelism plateaus
+past ~8 slots for a model this small, so the real rollout needs no exotic GPU.
+
+That same benchmark, and the exit tests written afterward, found four real bugs before any of them
+could reach the real rollout:
+1. `_PROMPT_TEMPLATE` was built with two sequential `str.format()` passes; the JSON schema example's
+   own literal braces broke the second (runtime) call. Fixed with a plain, non-`format` placeholder.
+2. The grammar's `string` rule allowed raw control characters (invalid per the JSON spec) and,
+   separately, needed real backslash-escaping restored (the benchmark's throwaway simplified rule
+   broke on a real message containing a literal Windows device path).
+3. Fully unbounded repetition (`ws`, string content, entity/relation arrays) is a genuine
+   pathological-generation path: a real exit test running the actual grammar against an untrained
+   test model found it can get stuck repeating an unbounded branch indefinitely and never terminate
+   within any token budget. Every array/whitespace/string-content rule is now bounded to a generous
+   ceiling (well above every real count the benchmark measured), removing the failure mode for
+   production without acting as a real information-loss ceiling.
+4. This llama.cpp build's GBNF parser silently fails to parse a rule production written across
+   multiple physical lines (contrary to the multi-line style llama.cpp's own upstream example
+   grammars use) -- every grammar rule is written on one line for that reason.
+
+Real entity/relation distributions from the benchmark sample (grounding decision 9, since neither
+count was fixed in advance): entities p50=3, p90=5-6, max=10 per unit; relations p50=2, p90=5-6,
+max=8 per unit.
+
+Deliberately not applied to the real canonical database yet: applying migration 023 there now would
+let `derive sync` backfill the new LOCAL derivers (`generative_extract_text_unit` and its three 1:1
+downstream) as dirty against all ~933 real partitions, and any ordinary `derive run` before the real
+model is configured would mark all of them `'failed'` (a `'failed'` partition is not `'dirty'` and
+is never automatically retried) -- real Phase 10 rollout work starts with applying this migration to
+canonical as its own first step, immediately before the real GPU pass, not before.
+
 ## Claim-template growth: relationship_state_shift (2026-09-25)
 
 ROADMAP.md item 3's "further claim-template growth" (the `communication_change`/`episode_evidence`
@@ -1093,19 +1187,18 @@ faithful before trusting any mismatch as a real finding rather than a methodolog
    not been re-verified for exact replay against the canonical database (see the canonical baseline
    section above). Low priority: the fix is narrow, unit-tested, and was verified directly against
    the real corpus bytes before merging.
-2. **Phases 6, 7, 8, and item 3's `relationship_state_shift` are all now real-rolled-out against
+2. **Phases 6, 7, 8, 9, and item 3's `relationship_state_shift` are all now real-rolled-out against
    the real canonical database, not just schema+runtime.** Phase 6 (messages): 70,145 text units,
    70,145 embeddings. Phase 7 (topic annotation): 70,145 real annotations via a real rented-GPU
    Phi-3.5-mini-instruct pass, completed 2026-09-27 -- see "Phase 7: real rollout" above. Phase 8
-   (documents): 597 text units + embeddings. `relationship_state_shift`: 8 real claims. Item 6
-   (media transcription) also completed earlier. Next up, per `ROADMAP.md` items 7 and 8: **topic
-   clustering** (`PHASE9_TOPIC_CLUSTERING_IMPLEMENTATION_PLAN.md`, spec published 2026-09-26, no
-   model/hardware gate -- pure CPU math over embeddings already computed, can implement and run
-   immediately) and **the life graph** (`PHASE10_LIFE_GRAPH_IMPLEMENTATION_PLAN.md`, spec published
-   2026-09-26 and revised twice through review to v3 the same day -- entities, relationships,
-   events, decisions, and open loops via one consolidated GPU pass reusing Phase 7's now-proven
-   infrastructure, sequenced to start once Phase 7's rollout was real and complete, which it now
-   is).
+   (documents): 597 text units + embeddings. Phase 9 (topic clustering): 397 real groups (396
+   clusters + noise), completed 2026-09-28 -- see "Phase 9: unsupervised topic clustering --
+   rollout" above. `relationship_state_shift`: 8 real claims. Item 6 (media transcription) also
+   completed earlier.
+   **Phase 10 (the life graph) is implemented and fully tested but not yet real-rolled-out** -- see
+   "Phase 10: the life graph -- implemented, real rollout pending" above. It needs one real
+   rented-GPU pass over all 70,145 text units (benchmarked at ~7.4 hours, ~$6-8), deliberately left
+   for a separate, explicitly authorized step rather than run automatically.
 3. **Continue the operational track.** Encrypted backup/restore, integrity audits, sensitive-field
    controls, incremental scheduling, performance budgets, derived-data invalidation, and corpus
    exportability remain permanent requirements.
