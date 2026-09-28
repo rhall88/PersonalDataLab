@@ -1,6 +1,13 @@
 # PersonalDataLab project state
 
-Updated 2026-09-24, after Phase 6 (the semantic layer -- text units, local embeddings,
+Updated 2026-09-28, after Phase 9 (topic clustering) real-rolled-out and verified against the real
+canonical database (397 topic groups, 396 real clusters plus a noise bucket, exact 1:1 row count
+against every real `semantic.text_unit`) and Phase 10 (the life graph -- entities, relations,
+events, decisions, open loops) fully implemented and tested (migration 023, five deriver modules,
+fifteen CLI verbs, eleven exit tests, all passing) -- see "Phase 9: topic clustering" and "Phase 10:
+the life graph" below. Phase 10's real extraction rollout (a remote-GPU llama.cpp server, bounded-
+grammar decoding against every real text unit) is in progress as of this writing, not yet applied
+or verified; `DATABASE_STATE.md` tracks its live status. Updated 2026-09-24, after Phase 6 (the semantic layer -- text units, local embeddings,
 `semantic-search`) landed and ran against the real canonical database: 70,145 real text units,
 70,145 real embeddings (exact 1:1, independently verified), a second real scheduler gap found and
 fixed (HALO-class root dirtying), and a real concurrency race (caused by an operational mistake,
