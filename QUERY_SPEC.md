@@ -6,7 +6,14 @@
 entity kinds — `conversations`, `events`, `records`, and `assets` — spanning all six accepted
 source families (Anthropic, OpenAI, iMessages, Apple, Google, Facebook) in one ranked result list.
 It is the first piece of the "Analytics Layer" described in
-[`COCKPIT_VISION.md`](COCKPIT_VISION.md); nothing beyond this read-only query surface is built yet.
+[`COCKPIT_VISION.md`](COCKPIT_VISION.md). At the time this spec was written, nothing beyond this
+read-only query surface existed; that is no longer true. Semantic search over embeddings (Phase 6),
+topic clustering (Phase 9, real-rolled-out), and the life graph — entities, relations, events,
+decisions, open loops (Phase 10, schema built, real extraction rollout in progress) — are separate,
+later query/understanding surfaces on top of the canonical layer this document describes. See
+[`DERIVED_MEANING_ARCHITECTURE.md`](DERIVED_MEANING_ARCHITECTURE.md) and `PROJECT_STATE.md`'s
+per-phase sections for those; this document's scope remains just the four-table keyword search
+below.
 
 ## Storage: a column, not a second source of truth
 

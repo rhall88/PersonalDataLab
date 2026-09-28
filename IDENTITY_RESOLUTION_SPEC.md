@@ -8,9 +8,13 @@ provider-observed identity value ("this string in this source") belongs to a rea
 undo that assertion later. This is entirely manual and explicit: there is no fuzzy matching, no
 automatic linking, and no heuristic guessing of who anything belongs to. It is the second piece of
 the "Build query and understanding layers" roadmap phase, after full-text search
-([`QUERY_SPEC.md`](QUERY_SPEC.md)). Claims, cross-source correlation, and embeddings remain future
-work described in [`COCKPIT_VISION.md`](COCKPIT_VISION.md); nothing here creates or infers any of
-that.
+([`QUERY_SPEC.md`](QUERY_SPEC.md)). At the time this spec was written, embeddings, cross-source
+correlation, and claims were future work described in [`COCKPIT_VISION.md`](COCKPIT_VISION.md);
+that is no longer true. Embeddings shipped with Phase 6, and cross-source entity/relation
+resolution plus claim evaluation are exactly what Phase 10's life graph does (schema built, real
+extraction rollout in progress) — see `PROJECT_STATE.md`'s per-phase sections. Those are separate,
+automatic/inferred mechanisms; nothing in *this* document's manual identity-assertion feature
+creates or infers any of that, and this spec's scope is unchanged.
 
 ## Storage: a small table, not a retrofit
 
