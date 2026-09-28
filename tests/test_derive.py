@@ -182,6 +182,9 @@ def test_sync_dirties_local_and_propagates_across_the_month_boundary(database_en
         ("signal_annotation_topic", "google:2024-02"),
         ("signal_annotation_topic", "google:2024-03"),
         ("signal_annotation_topic", "google:2024-04"),
+        # semantic_topic_cluster is GLOBAL with inputs=("semantic_embedding_bge_small",), same
+        # propagation shape as the other GLOBAL consumers above (know_claim_evaluate etc.).
+        ("semantic_topic_cluster", "GLOBAL"),
         # semantic_text_unit_document is Phase 8's own root HALO deriver (records, not events) --
         # backfilled from declare.source_contract the same way semantic_text_unit itself was, so
         # it gets the same 3-month set; semantic_embedding_document_bge_small is its LOCAL
@@ -195,6 +198,30 @@ def test_sync_dirties_local_and_propagates_across_the_month_boundary(database_en
         # media_transcribe_whisper is LOCAL (no halo), so just the one exact month, unlike
         # semantic_text_unit's HALO expansion above.
         ("media_transcribe_whisper", "google:2024-03"),
+        # Phase 10: generative_extract_text_unit is LOCAL with inputs=("semantic_text_unit",),
+        # same 1:1 projection of semantic_text_unit's own HALO-expanded dirty set as
+        # signal_annotation_topic above. entity_mention_extract/relation_candidate_extract/
+        # event_resolve_time_expressions are each LOCAL 1:1 downstream of
+        # generative_extract_text_unit, same shape again.
+        ("generative_extract_text_unit", "google:2024-02"),
+        ("generative_extract_text_unit", "google:2024-03"),
+        ("generative_extract_text_unit", "google:2024-04"),
+        ("entity_mention_extract", "google:2024-02"),
+        ("entity_mention_extract", "google:2024-03"),
+        ("entity_mention_extract", "google:2024-04"),
+        ("relation_candidate_extract", "google:2024-02"),
+        ("relation_candidate_extract", "google:2024-03"),
+        ("relation_candidate_extract", "google:2024-04"),
+        ("event_resolve_time_expressions", "google:2024-02"),
+        ("event_resolve_time_expressions", "google:2024-03"),
+        ("event_resolve_time_expressions", "google:2024-04"),
+        # entity_resolve_mentions/event_resolve_candidates/intent_resolve_candidates/
+        # claim_contradiction_detect are all GLOBAL, same propagation shape as
+        # semantic_topic_cluster/know_claim_evaluate above.
+        ("entity_resolve_mentions", "GLOBAL"),
+        ("event_resolve_candidates", "GLOBAL"),
+        ("intent_resolve_candidates", "GLOBAL"),
+        ("claim_contradiction_detect", "GLOBAL"),
     }
 
 
@@ -462,6 +489,22 @@ def test_run_computes_daily_and_7d_rows(database_engine: Engine) -> None:
         # media_transcribe_whisper is LOCAL (no halo), so just the one exact month, unlike
         # semantic_text_unit's HALO expansion above.
         ("media_transcribe_whisper", "google:2024-03"),
+        # Phase 10's four LOCAL derivers (generative_extract_text_unit and its three 1:1
+        # downstream) also run in a plain derive_run, same reasoning as signal_annotation_topic
+        # above: zero real text units in this partition means each short-circuits before ever
+        # touching a model, so no PDL_ANNOTATION_MODEL_PATH is needed for this test to pass.
+        ("generative_extract_text_unit", "google:2024-02"),
+        ("generative_extract_text_unit", "google:2024-03"),
+        ("generative_extract_text_unit", "google:2024-04"),
+        ("entity_mention_extract", "google:2024-02"),
+        ("entity_mention_extract", "google:2024-03"),
+        ("entity_mention_extract", "google:2024-04"),
+        ("relation_candidate_extract", "google:2024-02"),
+        ("relation_candidate_extract", "google:2024-03"),
+        ("relation_candidate_extract", "google:2024-04"),
+        ("event_resolve_time_expressions", "google:2024-02"),
+        ("event_resolve_time_expressions", "google:2024-03"),
+        ("event_resolve_time_expressions", "google:2024-04"),
     }
 
     with database_engine.connect() as connection:
