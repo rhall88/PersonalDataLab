@@ -432,3 +432,26 @@ roughly in the order they'd need to exist to make step 4 onward safe:
   with code/docs updated together, not a silent rename.
 - Row-level (not just aggregate-count) uniqueness diffing between the near-
   duplicate Apple and Google databases has not been performed.
+
+## Update 2026-09-28: Phase 9 (topic clustering) real-rolled-out; Phase 10 (life graph) extraction in progress
+
+Two derive-layer phases landed on top of the canonical `personaldata` database recorded above.
+See [`PROJECT_STATE.md`](PROJECT_STATE.md) for full evidence on each; this section only tracks
+what changed in the database itself.
+
+- **Phase 9 (topic clustering)** — real-rolled-out and verified (PR #77, merged 2026-09-28):
+  397 topic groups, 396 real clusters plus a noise bucket, exact 1:1 row count against every
+  real `semantic.text_unit` in canonical. Nothing pending here.
+- **Phase 10 (life graph)** — schema and deriver code fully implemented and tested (PR #77,
+  same merge): migration 023 applied to canonical (`schema_version: 23`). The *real* extraction
+  pass is running as of this writing, not yet complete: a remote GPU (RunPod, llama.cpp server,
+  bounded-grammar decoding against every real `semantic.text_unit`) is fetching structured
+  extractions for all ~70,145 real text units. As of the last check, roughly 32,500/58,633
+  remaining units were fetched, a small (~0.15%) and expected error rate from Cloudflare
+  proxy timeouts on the longest individual generations, ETA a few more hours.
+  **The `generative.extraction`, `entity.mention`, `entity.relation_candidate`, `event.*`, and
+  `intent.*` tables are still empty or partial in canonical right now** — the fetch results
+  have not yet been applied via `derive.run`, and the `--global` resolver derivers
+  (entity/event/intent resolution, claim evaluation, contradiction detection) have not yet run
+  to settle the graph. Do not build against real life-graph row counts, entity counts, or
+  relation-type distributions until this section is updated again with final numbers.
