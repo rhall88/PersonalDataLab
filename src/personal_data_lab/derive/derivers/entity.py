@@ -85,6 +85,7 @@ def entity_mention_extract(connection: Connection, partition_key: str, epoch_id:
             FROM generative.extraction g
             JOIN semantic.text_unit t ON t.id = g.text_unit_id
             WHERE t.source = :source AND t.started_at >= :start AND t.started_at < :end
+            AND g.extraction_status = 'complete'
             ORDER BY g.text_unit_id
             """
         ),
@@ -156,6 +157,7 @@ def relation_candidate_extract(
             FROM generative.extraction g
             JOIN semantic.text_unit t ON t.id = g.text_unit_id
             WHERE t.source = :source AND t.started_at >= :start AND t.started_at < :end
+            AND g.extraction_status = 'complete'
             ORDER BY g.text_unit_id
             """
         ),

@@ -748,6 +748,53 @@ def test_ensure_deriver_version_then_promote(database_engine: Engine) -> None:
         assert statuses[v2_id] == "active"
 
 
+def test_promote_seeds_new_version_with_retired_versions_partitions_dirty(
+    database_engine: Engine,
+) -> None:
+    name = f"test_promote_seed_deriver_{uuid.uuid4().hex[:8]}"
+    registry = DeriverRegistry()
+    v1 = Deriver(
+        name=name, compute=_noop_compute, clear_partition=_noop_clear,
+        partition_class="LOCAL", final_inference="COMPUTED", description="",
+        output_relation=f"measure.{name}", code_version="1",
+    )
+    registry.register(v1)
+    v2 = Deriver(
+        name=name, compute=_noop_compute, clear_partition=_noop_clear,
+        partition_class="LOCAL", final_inference="COMPUTED", description="",
+        output_relation=f"measure.{name}", code_version="2",
+    )
+
+    with database_engine.begin() as connection:
+        registry.sync(connection)
+        v1_id = ensure_deriver_version(connection, v1)
+        v2_id = ensure_deriver_version(connection, v2)
+        for key, state in (("google:2024-01", "clean"), ("google:2024-02", "dirty")):
+            connection.execute(
+                text(
+                    "INSERT INTO derive.partition_state (deriver_version_id, partition_key, state) "
+                    "VALUES (:vid, :key, :state)"
+                ),
+                {"vid": v1_id, "key": key, "state": state},
+            )
+
+        promote(connection, name, version_hash(v2).hex())
+
+        def states(vid: int) -> dict[str, str]:
+            return dict(
+                connection.execute(
+                    text(
+                        "SELECT partition_key, state FROM derive.partition_state "
+                        "WHERE deriver_version_id = :vid"
+                    ),
+                    {"vid": vid},
+                ).all()
+            )
+
+        assert states(v2_id) == {"google:2024-01": "dirty", "google:2024-02": "dirty"}
+        assert states(v1_id) == {"google:2024-01": "clean", "google:2024-02": "dirty"}
+
+
 def test_promoting_a_retired_version_is_rejected(database_engine: Engine) -> None:
     name = f"test_repromote_deriver_{uuid.uuid4().hex[:8]}"
     registry = DeriverRegistry()

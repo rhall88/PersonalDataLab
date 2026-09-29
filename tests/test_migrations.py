@@ -9,6 +9,7 @@ from sqlalchemy.engine import make_url
 
 from personal_data_lab.fingerprints import event_fingerprint
 from personal_data_lab.migrations import (
+    LATEST_SCHEMA_VERSION,
     _backfill_fingerprints,
     _backfill_legacy_observations,
     _ensure_migration_table,
@@ -143,6 +144,7 @@ def pr2_engine() -> Iterator[Engine]:
             connection.exec_driver_sql(_read_migration(21))
             connection.exec_driver_sql(_read_migration(22))
             connection.exec_driver_sql(_read_migration(23))
+            connection.exec_driver_sql(_read_migration(24))
         admin.dispose()
 
 
@@ -195,7 +197,7 @@ def test_pr2_database_migrates_and_backfills_provenance(pr2_engine: Engine) -> N
             {"source_file_id": source_file_id, "record_id": event_id},
         )
 
-    assert migrate_database(pr2_engine) == (3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23)
+    assert migrate_database(pr2_engine) == tuple(range(3, LATEST_SCHEMA_VERSION + 1))
     assert migrate_database(pr2_engine) == ()
 
     with pr2_engine.connect() as connection:
@@ -227,7 +229,7 @@ def test_pr2_database_migrates_and_backfills_provenance(pr2_engine: Engine) -> N
                 """
             )
         ).one()
-    assert list(versions) == [2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23]
+    assert list(versions) == list(range(2, LATEST_SCHEMA_VERSION + 1))
     assert tuple(event) == ("message", "user", 32, "canonical-v1")
     assert tuple(observations) == (1, 1)
     assert tuple(event_versions) == ("full", "hello")
@@ -338,7 +340,7 @@ def test_v5_preserves_unreconstructable_observation_as_fingerprint_only(
             {"fingerprint": new_fingerprint},
         )
 
-    assert migrate_database(pr2_engine) == (5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23)
+    assert migrate_database(pr2_engine) == tuple(range(5, LATEST_SCHEMA_VERSION + 1))
 
     with pr2_engine.connect() as connection:
         versions = connection.execute(
@@ -413,7 +415,7 @@ def test_current_schema_version_reads_max_applied_version(
 
     migrate_database(fresh_database_engine)
 
-    assert current_schema_version(fresh_database_engine) == 23
+    assert current_schema_version(fresh_database_engine) == LATEST_SCHEMA_VERSION
 
 
 def test_migration_010_creates_derive_schemas_and_seeds_local_only_policy(
