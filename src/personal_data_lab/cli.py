@@ -407,6 +407,14 @@ def _parser() -> argparse.ArgumentParser:
         help="leave this matched identity unlinked (repeatable)",
     )
     contacts_confirm.add_argument("--database-url", help="overrides DATABASE_URL from .env")
+    serve = subparsers.add_parser("serve", help="run the local PersonalDataLab app (API + web UI)")
+    serve.add_argument("--host", default="127.0.0.1")
+    serve.add_argument("--port", type=int, default=8787)
+    serve.add_argument(
+        "--allow-network", action="store_true",
+        help="required to bind anything other than loopback; exposes your data to that network",
+    )
+    serve.add_argument("--database-url", help="overrides DATABASE_URL from .env")
     alias_add = subparsers.add_parser("identity-alias-add", help="add another name a person goes by")
     alias_add.add_argument("person_id", type=int)
     alias_add.add_argument("alias")
@@ -1481,6 +1489,27 @@ def main(argv: Sequence[str] | None = None) -> int:
             print(f"error: {error}", file=sys.stderr, flush=True)
             return 1
         print(json.dumps(dataclasses.asdict(result), indent=2, ensure_ascii=False))
+        return 0
+    if args.command == "serve":
+        if args.host not in ("127.0.0.1", "localhost", "::1") and not args.allow_network:
+            print(
+                f"error: refusing to bind {args.host}; this serves your private data. "
+                "Pass --allow-network to do it anyway.",
+                file=sys.stderr, flush=True,
+            )
+            return 2
+        if args.allow_network:
+            print(f"warning: serving on {args.host}; anyone on that network can reach it",
+                  file=sys.stderr, flush=True)
+        import uvicorn
+
+        from .app.security import allowed_hosts_for
+        from .app.server import create_app
+
+        engine = _resolve_guarded_engine(args.database_url, canonical_import=False)
+        app = create_app(engine, allowed_hosts=allowed_hosts_for(args.host, args.port))
+        print(f"PersonalDataLab: http://127.0.0.1:{args.port}/", flush=True)
+        uvicorn.run(app, host=args.host, port=args.port, access_log=False, log_level="warning")
         return 0
     if args.command == "identity-alias-add":
         engine = _resolve_guarded_engine(args.database_url, canonical_import=False)

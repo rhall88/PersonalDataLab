@@ -21,3 +21,5 @@ Thumbs.db
 
 # Downloaded local model weights (large binaries, re-downloadable, never source).
 /models/
+web/node_modules/
+web/dist/

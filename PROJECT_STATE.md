@@ -1,6 +1,9 @@
 # PersonalDataLab project state
 
-Updated 2026-09-29 (later), after the identity bootstrap's first pass: contact cards now bridge
+Updated 2026-09-29 (evening), after UI v1 shipped: `personal-data-lab serve` runs a plain,
+functional local web app (FastAPI + SolidJS) over the whole backend -- Ask (guided planner, optional
+OpenAI-compatible agent), relationships, topics, claims, search, people/identity review,
+saved investigations, and an evidence drawer down to the original thread. See "UI v1" below. Updated 2026-09-29 (later), after the identity bootstrap's first pass: contact cards now bridge
 apps (PR #82: `identity-contacts`, `identity-contacts-confirm`, `identity.alias`, alias-aware
 `entity_resolve_mentions` v2). Ry confirmed the 20 highest-activity contacts: 22 people, 51 active
 identity links, 36 aliases; 97.6 percent of the last three years' measured messages now belong to 18
@@ -1120,6 +1123,48 @@ to 98.5 percent of complete units (61 percent `other`), `opened` to 54 percent (
 (logistics 33,187, advice 10,239, affection 7,046; salience mostly medium). Treat event, decision,
 and open-loop fields as noisy candidates for review, not facts; any UI must present them with their
 `SEMANTIC` epistemic class and never as confirmed events.
+
+## UI v1: functional local app (2026-09-29)
+
+Built to Ry's "Useful UI v1" spec, scoped to be usable and trustworthy rather than visually
+ambitious. `personal-data-lab serve` (loopback only; `--allow-network` required otherwise) serves
+the API under `/api/v1` and the built SolidJS app from `web/dist`.
+
+- **Product API** (`src/personal_data_lab/app/`): `readmodels.py` (status, coverage, extraction
+  health, relationships, timelines, 1:1 thread messages, canonical objects, text units, topics,
+  people, identity review queue), `evidence.py` (opaque evidence handles naming an allow-listed
+  resolver plus validated params -- never SQL), `agent.py` (13 typed read-only tools, guided
+  planner, answer composer, validation, run manager streaming SSE), `investigations.py` (revisions
+  store the full answer plus an evidence snapshot keyed by evidence handle; refresh re-runs the
+  plan and diffs objects, evidence, derivation versions, and answer shape), `security.py`.
+- **Security**: Host allowlist (blocks DNS rebinding), HttpOnly SameSite=Strict session cookie on
+  every API call, `X-PDL-Request` header required on writes, self-only CSP, no CORS, access log off.
+- **Agent**: Guided mode needs no model. Agent mode (`PDL_AGENT_BASE_URL`/`PDL_AGENT_MODEL`/
+  `PDL_AGENT_API_KEY`) sees tool results with message text stripped unless the question opts in;
+  findings must cite a tool call that produced evidence; causal and invented-domain language is
+  rejected; a failed check falls back to the guided answer. Not exercised against a real model yet
+  (no model configured).
+- **Relationships answer**: complete months only (the current partial month would read as a
+  false decline), last 6 vs prior 6 months, merges people only through confirmed identity links,
+  shows contact-card name hints for unresolved identities and flags a possible same-name identity on
+  another app, attaches state-shift claims only when the shift happened inside the window.
+- **Identity**: per-person bulk mention confirmation (`confirm_person_mentions`) with source
+  exclusion and samples, plus a background "re-run name matching and resolvers" action.
+- **Real-data acceptance (canonical)**: the three-year question answered with 8 evidence-backed
+  findings (38,547 messages, 94 correspondents, 97.5 percent with identified people); relationship
+  -> messages -> event -> whole thread drill-down; claims why; topics; full-text and semantic
+  search; people; save -> reopen -> refresh reported "unchanged"; a causal question got the
+  unsupported answer. Timings: status 3 ms warm, relationships ~0.35 s, people ~0.45 s, evidence
+  pages ~0.75 s, full-text ~0.1-1 s.
+- **Fixes found along the way**: `_facebook_owner_identity` picked any linked Facebook identity
+  (#84 -- once correspondents were linked it could have treated Sarah as the account owner);
+  full-text search computed `ts_headline` for every match before limiting (now only for returned
+  rows: ~3.7 s -> ~1 s); `/people` counted events per link with a correlated subquery (5.1 s ->
+  0.45 s); relationship evidence counted reactions and other non-message events.
+- **Known issues**: about 110 Facebook events carry mojibake text (a separate task was flagged);
+  the largest topic clusters are Google marketing email and HTML fragments (Topics has a source
+  filter); agent-mode findings that cite a list tool get the first row's evidence rather than the
+  specific row.
 
 ## Claim-template growth: relationship_state_shift (2026-09-25)
 

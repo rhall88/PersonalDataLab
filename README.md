@@ -43,9 +43,9 @@ This repository contains the completed foundation and its source importers:
 - reconciliation tests
 - Windows/PowerShell setup instructions
 
-MCP, embeddings, later source importers, derived entities/claims, and a user-facing analytics UI
-are deliberately deferred; a versioned derivation runtime (coverage, as-of reconstruction, identity
-auto-linking, metrics, signals, and episodes — using DuckDB for ranked comparisons) is not.
+It also has a versioned derivation runtime (coverage, identity linking, metrics, signals,
+episodes, claims, embeddings, topic clusters, and the life graph) and a local, functional web app
+over all of it (see "Use the app" below). MCP and the cinematic cockpit UI are still deferred.
 
 The audited implementation, source-by-source acceptance boundaries, merged PR state, schema,
 verification evidence, and ordered next work are summarized in
@@ -53,6 +53,31 @@ verification evidence, and ordered next work are summarized in
 project-state summary and [`ROADMAP.md`](ROADMAP.md) for current sequencing.
 [`COCKPIT_VISION.md`](COCKPIT_VISION.md) records the long-term product vision for a future
 adaptive visual interface built on top of this backend; it is not yet implemented.
+
+## Use the app
+
+A local research app over your own database: ask questions, explore relationships, topics,
+claims, search, and people, and open any finding down to the original message.
+
+```powershell
+npm --prefix web install      # once
+npm --prefix web run build    # after pulling frontend changes
+personal-data-lab serve       # then open http://127.0.0.1:8787/
+```
+
+- **Guided evidence mode** works with no AI model: supported questions ("How have my
+  relationships changed over the past 3 years?", topics, claims, coverage) are answered by fixed
+  tools, and anything else becomes a search.
+- **Agent mode** (optional): set `PDL_AGENT_BASE_URL`, `PDL_AGENT_MODEL`, and optionally
+  `PDL_AGENT_API_KEY` to any OpenAI-compatible chat endpoint (a local llama.cpp server or a hosted
+  model). The model only calls the same read-only tools and never sees SQL. By default it sees
+  numbers, claims, and labels, not message text; a per-question checkbox lets it read text. Every
+  finding it returns must cite a tool result with evidence, causal claims are rejected, and a failed
+  check falls back to the guided answer.
+- It binds to loopback only (`--allow-network` is required for anything else), checks the Host
+  header, requires a same-site session cookie, and sends no telemetry.
+- Frontend development: run `personal-data-lab serve` and `npm --prefix web run dev`, then open
+  http://localhost:5173/ (Vite proxies `/api` to the server).
 
 ## 1. Prerequisites
 
