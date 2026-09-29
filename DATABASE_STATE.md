@@ -467,3 +467,13 @@ empty by design until the identity bootstrap. The active `generative_extract_tex
 33 (`code_version` 2); versions 24 and 32 are retired and never produced surviving rows. See
 `PROJECT_STATE.md`'s "Phase 10: real rollout" for the evidence and the calibration caveat on
 event/decision/open-loop labels.
+
+**Update 2026-09-29 (later): identity bootstrap + UI v1.** Canonical is at schema 26.
+Migration 025 adds `identity.alias` (per-person display aliases used by alias-aware mention
+resolution). Migration 026 adds the `app` schema: `app.investigation` and
+`app.investigation_revision` (saved UI answers with plan, full insight, evidence snapshot,
+deriver versions). Current counts: 22 `people`, 52 `identity_links`, 36 `identity.alias`,
+16,813 `entity.link_candidate` rows all still `candidate` (awaiting the owner's confirmation,
+now possible in bulk from the app's People view), and therefore 0 `entity.person_link` and 0
+`entity.resolved_mention`, so the event/intent cluster resolvers still have nothing to cluster.
+`app.investigation` is empty (test investigations made during UI verification were deleted).
