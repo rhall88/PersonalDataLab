@@ -49,10 +49,19 @@ class ThreadMessage:
 
 
 def _facebook_owner_identity(connection: Connection) -> str | None:
+    # Once correspondents are linked to people too, "any facebook link" is no longer the owner:
+    # the owner is the linked identity present in the most conversations (every 1:1 thread).
     row = connection.execute(
         text(
-            "SELECT identity_value FROM identity_links "
-            "WHERE source = 'facebook' AND lifecycle_state = 'active' LIMIT 1"
+            """
+            SELECT il.identity_value
+            FROM identity_links il
+            JOIN events e ON e.source = 'facebook' AND e.actor_identity = il.identity_value
+            WHERE il.source = 'facebook' AND il.lifecycle_state = 'active'
+            GROUP BY il.identity_value
+            ORDER BY count(DISTINCT e.conversation_id) DESC, il.identity_value
+            LIMIT 1
+            """
         )
     ).first()
     return row.identity_value if row else None
