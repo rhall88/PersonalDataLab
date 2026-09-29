@@ -1,11 +1,11 @@
 """Claims and executes dirty derivation partitions.
 
-Known Phase 0 limitation: if a deriver's compute() raises after clear_partition() has already
-deleted a partition's prior rows but before all replacement rows are written, the partition
-ends up empty (or partial) while correctly marked 'failed' in derive.partition_state. Nothing
-in Phase 0 queries measure.* without checking partition_state, so this is a real but currently
-harmless gap -- a fast-follow (e.g. a savepoint per partition) once a query layer reads these
-tables directly.
+Each partition's work runs inside a savepoint. If compute(), clear_partition() or the row write
+fails -- including a database error such as a CHECK violation, which aborts the enclosing
+transaction -- the savepoint rolls back that partition's partial writes, the failure is recorded,
+and the run moves on to the next partition. Before the savepoint, a database error left the
+transaction aborted, so recording the failure itself raised and stopped the entire run (found in
+the real Phase 10 apply).
 """
 
 from __future__ import annotations
@@ -104,66 +104,69 @@ def _process(connection, deriver, deriver_version_id: int, partition_key: str) -
     started_at = datetime.now(UTC)
     epoch_id = connection.execute(text("SELECT MAX(id) FROM derive.evidence_epoch")).scalar_one()
     try:
-        previous_fingerprint = connection.execute(
-            text(
-                "SELECT input_fingerprint FROM derive.partition_state "
-                "WHERE deriver_version_id = :vid AND partition_key = :key"
-            ),
-            {"vid": deriver_version_id, "key": partition_key},
-        ).scalar_one()
+        with connection.begin_nested():
+            previous_fingerprint = connection.execute(
+                text(
+                    "SELECT input_fingerprint FROM derive.partition_state "
+                    "WHERE deriver_version_id = :vid AND partition_key = :key"
+                ),
+                {"vid": deriver_version_id, "key": partition_key},
+            ).scalar_one()
 
-        result = deriver.compute(connection, partition_key, epoch_id)
+            result = deriver.compute(connection, partition_key, epoch_id)
 
-        if previous_fingerprint is not None and bytes(previous_fingerprint) == result.input_fingerprint:
-            status, rows_written = "skipped_unchanged", None
-        else:
-            deriver.clear_partition(connection, partition_key)
-            rows_written = _write_rows(connection, deriver.output_relation, result.rows)
-            status = "succeeded"
+            if (
+                previous_fingerprint is not None
+                and bytes(previous_fingerprint) == result.input_fingerprint
+            ):
+                status, rows_written = "skipped_unchanged", None
+            else:
+                deriver.clear_partition(connection, partition_key)
+                rows_written = _write_rows(connection, deriver.output_relation, result.rows)
+                status = "succeeded"
 
-        connection.execute(
-            text(
-                """
-                UPDATE derive.partition_state
-                SET state = 'clean', input_fingerprint = :fp, computed_at = CURRENT_TIMESTAMP,
-                    computed_epoch_id = :epoch, attempts = attempts + 1, last_error = NULL
-                WHERE deriver_version_id = :vid AND partition_key = :key
-                """
-            ),
-            {
-                "fp": result.input_fingerprint,
-                "epoch": epoch_id,
-                "vid": deriver_version_id,
-                "key": partition_key,
-            },
-        )
-        connection.execute(
-            text(
-                """
-                INSERT INTO derive.derivation_run
-                    (deriver_version_id, partition_key, epoch_id, input_fingerprint, status,
-                     rows_written, started_at, finished_at)
-                VALUES (:vid, :key, :epoch, :fp, :status, :rows_written, :started_at,
-                        CURRENT_TIMESTAMP)
-                """
-            ),
-            {
-                "vid": deriver_version_id,
-                "key": partition_key,
-                "epoch": epoch_id,
-                "fp": result.input_fingerprint,
-                "status": status,
-                "rows_written": rows_written,
-                "started_at": started_at,
-            },
-        )
+            connection.execute(
+                text(
+                    """
+                    UPDATE derive.partition_state
+                    SET state = 'clean', input_fingerprint = :fp, computed_at = CURRENT_TIMESTAMP,
+                        computed_epoch_id = :epoch, attempts = attempts + 1, last_error = NULL
+                    WHERE deriver_version_id = :vid AND partition_key = :key
+                    """
+                ),
+                {
+                    "fp": result.input_fingerprint,
+                    "epoch": epoch_id,
+                    "vid": deriver_version_id,
+                    "key": partition_key,
+                },
+            )
+            connection.execute(
+                text(
+                    """
+                    INSERT INTO derive.derivation_run
+                        (deriver_version_id, partition_key, epoch_id, input_fingerprint, status,
+                         rows_written, started_at, finished_at)
+                    VALUES (:vid, :key, :epoch, :fp, :status, :rows_written, :started_at,
+                            CURRENT_TIMESTAMP)
+                    """
+                ),
+                {
+                    "vid": deriver_version_id,
+                    "key": partition_key,
+                    "epoch": epoch_id,
+                    "fp": result.input_fingerprint,
+                    "status": status,
+                    "rows_written": rows_written,
+                    "started_at": started_at,
+                },
+            )
         return WorkerOutcome(deriver.name, partition_key, status, rows_written)
 
     except Exception as error:  # noqa: BLE001 -- deliberately broad: any deriver failure must
-        # be recorded as 'failed', never propagate and abort the whole run. Caught here (still
-        # inside the caller's transaction) rather than after it, so the failure record below
-        # commits along with whatever partial writes clear_partition/compute already made --
-        # see the module docstring note on partial-write visibility.
+        # be recorded as 'failed', never propagate and abort the whole run. The savepoint above
+        # has already rolled back this partition's partial writes, so the outer transaction is
+        # healthy again and the failure record below can commit.
         connection.execute(
             text(
                 """

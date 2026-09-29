@@ -22,6 +22,7 @@ from personal_data_lab.derive.policy import (
     sensitivity_union,
 )
 from personal_data_lab.derive.registry import (
+    ComputeResult,
     Deriver,
     DeriverRegistrationError,
     DeriverRegistry,
@@ -793,6 +794,69 @@ def test_promote_seeds_new_version_with_retired_versions_partitions_dirty(
 
         assert states(v2_id) == {"google:2024-01": "dirty", "google:2024-02": "dirty"}
         assert states(v1_id) == {"google:2024-01": "clean", "google:2024-02": "dirty"}
+
+
+def test_worker_records_database_error_and_continues_with_partial_writes_rolled_back(
+    database_engine: Engine,
+) -> None:
+    name = f"test_savepoint_deriver_{uuid.uuid4().hex[:8]}"
+    table = f"measure.{name}"
+    bad_key, good_key = "google:2024-01", "google:2024-02"
+
+    def compute(connection, partition_key, epoch_id):
+        values = [1, -1] if partition_key == bad_key else [5]
+        return ComputeResult(
+            input_fingerprint=partition_key.encode(),
+            rows=[{"partition_key": partition_key, "v": v} for v in values],
+        )
+
+    def clear(connection, partition_key):
+        connection.execute(text(f"DELETE FROM {table} WHERE partition_key = :k"), {"k": partition_key})
+
+    registry = DeriverRegistry()
+    registry.register(
+        Deriver(
+            name=name, compute=compute, clear_partition=clear, partition_class="LOCAL",
+            final_inference="COMPUTED", description="", output_relation=table,
+        )
+    )
+    with database_engine.begin() as connection:
+        connection.execute(
+            text(f"CREATE TABLE {table} (partition_key TEXT NOT NULL, v INTEGER NOT NULL CHECK (v > 0))")
+        )
+    try:
+        with database_engine.begin() as connection:
+            registry.sync(connection)
+            vid = ensure_deriver_version(connection, registry.get(name))
+            for key, offset in ((bad_key, 0), (good_key, 1)):
+                connection.execute(
+                    text(
+                        "INSERT INTO derive.partition_state "
+                        "(deriver_version_id, partition_key, state, dirty_since) "
+                        "VALUES (:vid, :key, 'dirty', now() + make_interval(secs => :offset))"
+                    ),
+                    {"vid": vid, "key": key, "offset": offset},
+                )
+
+        outcomes = derive_run(database_engine, registry=registry)
+
+        assert {o.partition_key: o.status for o in outcomes} == {bad_key: "failed", good_key: "succeeded"}
+        with database_engine.connect() as connection:
+            rows = connection.execute(text(f"SELECT partition_key, v FROM {table}")).all()
+            state = dict(
+                connection.execute(
+                    text(
+                        "SELECT partition_key, state FROM derive.partition_state "
+                        "WHERE deriver_version_id = :vid"
+                    ),
+                    {"vid": vid},
+                ).all()
+            )
+        assert rows == [(good_key, 5)]  # the bad partition's v=1 row was rolled back too
+        assert state == {bad_key: "failed", good_key: "clean"}
+    finally:
+        with database_engine.begin() as connection:
+            connection.execute(text(f"DROP TABLE IF EXISTS {table}"))
 
 
 def test_promoting_a_retired_version_is_rejected(database_engine: Engine) -> None:

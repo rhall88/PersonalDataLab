@@ -291,13 +291,20 @@ def _build_row(
     event = envelope["event"]
     decision = envelope["decision"]
     open_loop = envelope["open_loop"]
+    interaction_primary = _none_if_literal_none(envelope["interaction_primary"])
+    interaction_secondary = _none_if_literal_none(envelope["interaction_secondary"])
+    # The grammar can't forbid repeating the primary label as the secondary (100 of 69,959 real
+    # extractions did); a repeat adds no information, so it maps to "no distinct secondary"
+    # rather than violating extraction_check and failing the whole partition.
+    if interaction_secondary == interaction_primary:
+        interaction_secondary = None
     return {
         "text_unit_id": text_unit_id,
         # decision 6/10's schema has no 'none' literal for these two -- the model's "none" means
         # "no label", represented as SQL NULL, not the string "none" (unlike decision/open_loop
         # state below, whose CHECK constraints explicitly include 'none' as a real value).
-        "interaction_primary": _none_if_literal_none(envelope["interaction_primary"]),
-        "interaction_secondary": _none_if_literal_none(envelope["interaction_secondary"]),
+        "interaction_primary": interaction_primary,
+        "interaction_secondary": interaction_secondary,
         "salience": envelope["salience"],
         "entity_mentions": json.dumps(envelope["entities"]),
         "relation_candidates": json.dumps(envelope["relations"]),
@@ -355,6 +362,8 @@ def _clear_extraction(connection: Connection, partition_key: str) -> None:
     ),
     output_relation="generative.extraction",
     inputs=("semantic_text_unit",),
+    # 2: _build_row maps a secondary label that repeats the primary to NULL.
+    code_version="2",
     model_ref=_compute_model_ref(),
     clear_partition=_clear_extraction,
 )
