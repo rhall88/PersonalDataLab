@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import json
 import os
 import sys
@@ -70,6 +71,7 @@ from .identity import (
     split_identity,
 )
 from .identity_candidates import cross_source_name_candidates
+from .identity_contacts import add_alias, confirm_contact_proposal, contact_proposals
 from .identity_rules import run_rules_tier
 from .imessages.inventory import inspect_imessages
 from .imessages.inventory import render_inventory_table as render_imessages_table
@@ -387,6 +389,28 @@ def _parser() -> argparse.ArgumentParser:
     )
     not_same_as.add_argument("--note")
     not_same_as.add_argument("--database-url", help="overrides DATABASE_URL from .env")
+    contacts = subparsers.add_parser(
+        "identity-contacts",
+        help="propose person links from contact cards (phone/email/name), ranked by activity",
+    )
+    contacts.add_argument("--min-events", type=int, default=1)
+    contacts.add_argument("--limit", type=int)
+    contacts.add_argument("--database-url", help="overrides DATABASE_URL from .env")
+    contacts_confirm = subparsers.add_parser(
+        "identity-contacts-confirm",
+        help="link a contact proposal's identities to one person and record its names as aliases",
+    )
+    contacts_confirm.add_argument("key", help="proposal key from identity-contacts, e.g. contact:123")
+    contacts_confirm.add_argument("--person-id", type=int, help="link to this existing person")
+    contacts_confirm.add_argument(
+        "--exclude", action="append", default=[], metavar="SOURCE:IDENTITY_VALUE",
+        help="leave this matched identity unlinked (repeatable)",
+    )
+    contacts_confirm.add_argument("--database-url", help="overrides DATABASE_URL from .env")
+    alias_add = subparsers.add_parser("identity-alias-add", help="add another name a person goes by")
+    alias_add.add_argument("person_id", type=int)
+    alias_add.add_argument("alias")
+    alias_add.add_argument("--database-url", help="overrides DATABASE_URL from .env")
     rules_run = subparsers.add_parser(
         "identity-rules-run",
         help="auto-link identities that share a normalized email or phone across sources",
@@ -1438,6 +1462,34 @@ def main(argv: Sequence[str] | None = None) -> int:
             print(f"error: {error}", file=sys.stderr, flush=True)
             return 1
         print(json.dumps(declaration.model_dump(mode="json"), indent=2))
+        return 0
+    if args.command == "identity-contacts":
+        engine = _resolve_guarded_engine(args.database_url, canonical_import=False)
+        proposals = contact_proposals(engine, min_events=args.min_events)
+        if args.limit is not None:
+            proposals = proposals[: args.limit]
+        print(json.dumps([dataclasses.asdict(p) for p in proposals], indent=2, ensure_ascii=False))
+        return 0
+    if args.command == "identity-contacts-confirm":
+        engine = _resolve_guarded_engine(args.database_url, canonical_import=False)
+        try:
+            exclude = frozenset(tuple(item.split(":", 1)) for item in args.exclude)
+            result = confirm_contact_proposal(
+                engine, args.key, person_id=args.person_id, exclude=exclude
+            )
+        except ValueError as error:
+            print(f"error: {error}", file=sys.stderr, flush=True)
+            return 1
+        print(json.dumps(dataclasses.asdict(result), indent=2, ensure_ascii=False))
+        return 0
+    if args.command == "identity-alias-add":
+        engine = _resolve_guarded_engine(args.database_url, canonical_import=False)
+        try:
+            added = add_alias(engine, args.person_id, args.alias)
+        except ValueError as error:
+            print(f"error: {error}", file=sys.stderr, flush=True)
+            return 1
+        print(json.dumps({"person_id": args.person_id, "alias": args.alias, "added": added}))
         return 0
     if args.command == "identity-rules-run":
         engine = _resolve_guarded_engine(args.database_url, canonical_import=False)

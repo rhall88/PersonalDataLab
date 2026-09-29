@@ -29,6 +29,7 @@ from sqlalchemy import text
 from sqlalchemy.engine import Connection, Engine
 
 from ...fingerprints import fingerprint_value
+from ...identity_normalize import normalize_name
 from ..partitions import parse_local_key
 from ..registry import ComputeResult, deriver
 
@@ -215,7 +216,7 @@ def relation_candidate_extract(
 
 
 def _normalize(surface_text: str) -> str:
-    return surface_text.strip().casefold()
+    return normalize_name(surface_text)
 
 
 def _clear_link_candidates(connection: Connection, partition_key: str) -> None:
@@ -235,6 +236,8 @@ def _clear_link_candidates(connection: Connection, partition_key: str) -> None:
     ),
     output_relation="entity.link_candidate",
     inputs=("entity_mention_extract",),
+    # 2: also matches confirmed identity.alias names; a name shared by two people proposes nothing.
+    code_version="2",
     clear_partition=_clear_link_candidates,
 )
 def entity_resolve_mentions(connection: Connection, partition_key: str, epoch_id: int) -> ComputeResult:
@@ -253,9 +256,16 @@ def entity_resolve_mentions(connection: Connection, partition_key: str, epoch_id
         text("SELECT id, surface_text, kind FROM entity.mention ORDER BY id")
     ).all()
 
-    people_by_norm: dict[str, int] = {}
-    for person_id, display_name in connection.execute(text("SELECT id, display_name FROM people")):
-        people_by_norm.setdefault(_normalize(display_name), person_id)
+    people_by_name: dict[str, set[int]] = {}
+    for person_id, name in connection.execute(
+        text(
+            "SELECT id, display_name FROM people "
+            "UNION ALL SELECT person_id, alias FROM identity.alias WHERE lifecycle_state = 'active'"
+        )
+    ):
+        people_by_name.setdefault(_normalize(name), set()).add(person_id)
+    # A name two people share ("Sarah") identifies neither, so it proposes nothing.
+    people_by_norm = {name: next(iter(ids)) for name, ids in people_by_name.items() if len(ids) == 1}
 
     entities_by_norm: dict[tuple[str, str], int] = {}
     for entity_id, kind, canonical_name in connection.execute(
@@ -278,7 +288,7 @@ def entity_resolve_mentions(connection: Connection, partition_key: str, epoch_id
                     "candidate_person_id": person_id,
                     "candidate_entity_id": None,
                     "resolution_tier": "exact_match",
-                    "evidence": json.dumps({"surface_text": surface_text, "matched": "people.display_name"}),
+                    "evidence": json.dumps({"surface_text": surface_text, "matched": "people.display_name or identity.alias"}),
                     "status": "candidate",
                     "computed_epoch_id": epoch_id,
                 }

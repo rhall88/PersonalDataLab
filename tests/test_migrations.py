@@ -145,6 +145,7 @@ def pr2_engine() -> Iterator[Engine]:
             connection.exec_driver_sql(_read_migration(22))
             connection.exec_driver_sql(_read_migration(23))
             connection.exec_driver_sql(_read_migration(24))
+            connection.exec_driver_sql(_read_migration(25))
         admin.dispose()
 
 

@@ -862,3 +862,42 @@ def test_pairs_sharing_a_key_matches_brute_force_exactly_once() -> None:
     assert len(pairs) == len(set(pairs))  # each pair once, even when sharing several keys
     assert set(pairs) == expected
     assert all(a < b for a, b in pairs)
+
+
+def test_entity_resolve_mentions_uses_aliases_and_skips_names_two_people_share(
+    database_engine: Engine,
+) -> None:
+    from personal_data_lab.identity_contacts import add_alias
+
+    epoch_id = _seed_one_real_epoch(database_engine)
+    sarah_h = create_person(database_engine, "Sarah Hallgarth")
+    sarah_j = create_person(database_engine, "Sarah Jones")
+    add_alias(database_engine, sarah_h.id, "Sarah")
+    add_alias(database_engine, sarah_h.id, "Sare")
+    add_alias(database_engine, sarah_j.id, "Sarah")
+    with database_engine.begin() as connection:
+        tid = _insert_text_unit(connection, "google", "unit", datetime(2024, 3, 1, tzinfo=UTC), epoch_id)
+        _insert_extraction(
+            connection, tid, epoch_id,
+            entity_mentions=json.dumps(
+                [
+                    {"mention": "Sarah", "kind": "person"},
+                    {"mention": "Sare", "kind": "person"},
+                    {"mention": "sarah  jones", "kind": "person"},
+                ]
+            ),
+        )
+        _mark_local_extraction_derivers_dirty(connection, "google", datetime(2024, 3, 1, tzinfo=UTC))
+
+    derive_sync(database_engine)
+    derive_run(database_engine, include_global=False)
+    derive_run(database_engine, include_global=True)
+
+    with database_engine.connect() as connection:
+        candidates = connection.execute(
+            text(
+                "SELECT m.surface_text, c.candidate_person_id FROM entity.link_candidate c "
+                "JOIN entity.mention m ON m.id = c.mention_id ORDER BY m.surface_text"
+            )
+        ).all()
+    assert {tuple(row) for row in candidates} == {("Sare", sarah_h.id), ("sarah  jones", sarah_j.id)}
