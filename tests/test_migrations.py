@@ -106,7 +106,7 @@ def pr2_engine() -> Iterator[Engine]:
     # and `episode` the same way; migration 015 adds `know`.
     derived_schemas = (
         "derive, declare, policy, measure, identity, signal, episode, know, semantic, media, "
-        "generative, entity, event, intent"
+        "generative, entity, event, intent, app"
     )
     with admin.begin() as connection:
         connection.execute(text(f"DROP SCHEMA IF EXISTS {schema} CASCADE"))
@@ -146,6 +146,7 @@ def pr2_engine() -> Iterator[Engine]:
             connection.exec_driver_sql(_read_migration(23))
             connection.exec_driver_sql(_read_migration(24))
             connection.exec_driver_sql(_read_migration(25))
+            connection.exec_driver_sql(_read_migration(26))
         admin.dispose()
 
 

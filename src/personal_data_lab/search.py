@@ -48,7 +48,7 @@ _LEG_SQL: dict[Kind, str] = {
                c.source_record_namespace AS namespace,
                c.source_conversation_id AS identifier,
                c.title AS title,
-               ts_headline('english', coalesce(c.title, ''), q.tsq) AS snippet,
+               coalesce(c.title, '') AS snippet_source,
                c.started_at AS occurred_at,
                c.lifecycle_state, c.canonical_run_id,
                ts_rank_cd(c.search_vector, q.tsq, 32) AS rank
@@ -62,7 +62,7 @@ _LEG_SQL: dict[Kind, str] = {
                e.source_record_namespace AS namespace,
                e.source_record_id AS identifier,
                e.event_type AS title,
-               ts_headline('english', coalesce(e.text, ''), q.tsq) AS snippet,
+               coalesce(e.text, '') AS snippet_source,
                e.occurred_at,
                e.lifecycle_state, e.canonical_run_id,
                ts_rank_cd(e.search_vector, q.tsq, 32) AS rank
@@ -76,7 +76,7 @@ _LEG_SQL: dict[Kind, str] = {
                r.source_record_namespace AS namespace,
                r.source_record_id AS identifier,
                r.title AS title,
-               ts_headline('english', coalesce(r.text, coalesce(r.title, '')), q.tsq) AS snippet,
+               coalesce(r.text, coalesce(r.title, '')) AS snippet_source,
                r.occurred_at,
                r.lifecycle_state, r.canonical_run_id,
                ts_rank_cd(r.search_vector, q.tsq, 32) AS rank
@@ -90,7 +90,7 @@ _LEG_SQL: dict[Kind, str] = {
                a.asset_namespace AS namespace,
                a.source_asset_id AS identifier,
                a.filename AS title,
-               ts_headline('english', filename_search_text(a.filename), q.tsq) AS snippet,
+               filename_search_text(a.filename) AS snippet_source,
                coalesce(a.captured_at, a.created_at) AS occurred_at,
                a.lifecycle_state, a.canonical_run_id,
                ts_rank_cd(a.search_vector, q.tsq, 32) AS rank
@@ -124,10 +124,16 @@ def search_canonical(
     legs = " UNION ALL ".join(_LEG_SQL[kind] for kind in kinds)
     statement = text(
         f"""
-        WITH q AS (SELECT websearch_to_tsquery('english', :query) AS tsq)
-        SELECT * FROM ({legs}) combined
-        ORDER BY rank DESC, occurred_at DESC NULLS LAST
-        LIMIT :limit
+        WITH q AS (SELECT websearch_to_tsquery('english', :query) AS tsq),
+        top AS (
+            SELECT * FROM ({legs}) combined
+            ORDER BY rank DESC, occurred_at DESC NULLS LAST
+            LIMIT :limit
+        )
+        -- Highlighting is expensive, so only the rows actually returned get a snippet.
+        SELECT top.*, ts_headline('english', top.snippet_source, q.tsq) AS snippet
+        FROM top, q
+        ORDER BY top.rank DESC, top.occurred_at DESC NULLS LAST
         """
     )
     params = {

@@ -397,6 +397,57 @@ def confirm_entity_link(engine: Engine, candidate_id: int) -> dict:
         return dict(written)
 
 
+def confirm_person_mentions(
+    engine: Engine,
+    person_id: int,
+    *,
+    surface_texts: list[str] | None = None,
+    exclude_sources: list[str] | None = None,
+) -> dict:
+    """Confirm a person's pending mention candidates in bulk -- the person-level version of
+    confirm_entity_link ("'Sarah' in my messages means Sarah Hallgarth"). Optionally limited to
+    some name forms and/or excluding some sources. A mention that already has an active person
+    link is left alone."""
+    with engine.begin() as connection:
+        rows = connection.execute(
+            text(
+                """
+                SELECT lc.id, lc.mention_id, lc.evidence
+                FROM entity.link_candidate lc
+                JOIN entity.mention m ON m.id = lc.mention_id
+                JOIN semantic.text_unit t ON t.id = m.text_unit_id
+                WHERE lc.status = 'candidate' AND lc.candidate_person_id = :pid
+                  AND (CAST(:surfaces AS text[]) IS NULL OR m.surface_text = ANY(CAST(:surfaces AS text[])))
+                  AND (CAST(:excluded AS text[]) IS NULL OR t.source <> ALL(CAST(:excluded AS text[])))
+                  AND NOT EXISTS (SELECT 1 FROM entity.person_link pl
+                                  WHERE pl.mention_id = lc.mention_id AND pl.lifecycle_state = 'active')
+                FOR UPDATE OF lc
+                """
+            ),
+            {"pid": person_id, "surfaces": surface_texts or None, "excluded": exclude_sources or None},
+        ).all()
+        if rows:
+            connection.execute(
+                text(
+                    "INSERT INTO entity.person_link (mention_id, person_id, evidence) "
+                    "VALUES (:mention_id, :pid, CAST(:evidence AS jsonb))"
+                ),
+                [
+                    {
+                        "mention_id": r.mention_id,
+                        "pid": person_id,
+                        "evidence": json.dumps({**(r.evidence or {}), "confirmed": "person_bulk"}),
+                    }
+                    for r in rows
+                ],
+            )
+            connection.execute(
+                text("UPDATE entity.link_candidate SET status = 'confirmed' WHERE id = ANY(:ids)"),
+                {"ids": [r.id for r in rows]},
+            )
+    return {"person_id": person_id, "confirmed": len(rows)}
+
+
 def reject_entity_link(engine: Engine, candidate_id: int) -> dict:
     with engine.begin() as connection:
         _resolve_pending_candidate(connection, candidate_id)

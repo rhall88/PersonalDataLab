@@ -233,8 +233,16 @@ including a real, un-fixed weakness the rollout found in the `coverage` dimensio
 ## 4. Build user and agent experiences
 
 See [`COCKPIT_VISION.md`](COCKPIT_VISION.md) for the full end-state product vision (an adaptive,
-question-driven visual cockpit) this section works toward. Nothing in that document is implemented
-yet; it's north-star context for how this layer should eventually feel, not a current spec.
+question-driven visual cockpit) this section works toward. It is north-star context, not a current
+spec.
+
+**UI v1 shipped 2026-09-29** (`personal-data-lab serve`): a deliberately plain, functional local
+app — Ask with a guided planner and an optional OpenAI-compatible agent, relationships over time,
+topics, claims with refetched evidence, full-text and semantic search, people and identity review
+(including bulk mention confirmation), saved investigations with refresh-and-diff, and an evidence
+drawer that opens every finding down to the original message and thread. It covers the evidence-
+citing question answering and the people/topic/conversation views below at a basic level; the
+visual cockpit, timeline canvas, geography, and MCP remain future work.
 
 - unified personal timeline;
 - people, place, project, topic, conversation, and document views;
@@ -299,5 +307,6 @@ chain must never depend on an embedding model, UI, or agent remaining available.
 | Completed 2026-09-28 | Item 7: unsupervised topic clustering | HDBSCAN over Phase 6's real embeddings, TF-IDF extractive labels, GLOBAL/STATISTICAL deriver, versioned + disposable per invariant 20; parameters grounded against a real six-combination timed benchmark on the full 70,145-vector population (25/5 chosen at a real noise-vs-fragmentation elbow); a real production bug found and fixed (the deriver's own `_cluster()` was missing the `n_jobs` parallelism the benchmark required, causing a real rollout attempt to sit idle for 10+ minutes before being caught); real rollout completed: 397 groups (396 clusters + noise), exact 1:1 row count — see `PHASE9_TOPIC_CLUSTERING_IMPLEMENTATION_PLAN.md` and `PROJECT_STATE.md`'s "Phase 9" section |
 | Completed 2026-09-29 | Item 8: the life graph | Migrations 023-024, 5 deriver modules, 15 CLI verbs, exit tests all passing. Real rollout on a rented RTX PRO 6000 Blackwell (llama.cpp server, 24 slots, `--no-cache-prompt`): 70,145/70,145 extractions (69,959 complete, 186 explicitly truncated), 358,031 entity mentions, 254,727 relation candidates, 32,495 time resolutions, every partition clean; ~20h fetch (generation-bound, not the benchmarked 7.4h, after a prompt-cache-thrashing fix), $61.37 total GPU spend; six real defects fixed during the rollout (truncated envelopes blocking 41 percent of partitions, `model_ref` gaps, `promote()` not seeding partitions, a masked grammar hole, a DB error stopping the whole worker run, O(n²) resolvers) — see `PROJECT_STATE.md`'s "Phase 10: real rollout". Person layer empty until the identity bootstrap |
 | Next (backend) | Identity bootstrap | Ranked provider-identity review queue (165 identities with 100+ events), alias support in `entity_resolve_mentions`, then re-run the global resolvers; the review surface itself is UI work |
-| Final product track | Timeline, exploration, analytics, read-only MCP, and agents | Fast normal queries, permission boundaries, and evidence-citing answers |
+| Completed 2026-09-29 | UI v1 (functional local app) | FastAPI product API + SolidJS app served by `personal-data-lab serve`; typed read-only tool registry, guided planner plus optional OpenAI-compatible agent with evidence validation and a message-text privacy switch, opaque evidence handles, saved investigations with drift diffs, loopback-only with Host/session/CSRF guards; real-data acceptance run — see `PROJECT_STATE.md`'s "UI v1" section |
+| Final product track | Timeline canvas, geography, cockpit, read-only MCP, and agents | Fast normal queries, permission boundaries, and evidence-citing answers |
 
