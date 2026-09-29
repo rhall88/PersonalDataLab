@@ -477,3 +477,12 @@ deriver versions). Current counts: 22 `people`, 52 `identity_links`, 36 `identit
 now possible in bulk from the app's People view), and therefore 0 `entity.person_link` and 0
 `entity.resolved_mention`, so the event/intent cluster resolvers still have nothing to cluster.
 `app.investigation` is empty (test investigations made during UI verification were deleted).
+
+**Update 2026-09-29 (later still): owner confirmed person mentions.** 15,607 of the 16,813
+exact-match candidates were bulk-confirmed into `entity.person_link` (so `entity.resolved_mention`
+now has 15,607 rows). The 1,206 held back are the bare kinship words "mom"/"dad": text units
+are conversation chunks with no per-message speaker, so "mom" written by someone else usually
+means *their* mother, and those stay `candidate` for per-thread review. After rebuilding the
+downstream resolvers (global run, 397 s, 4/4 partitions succeeded): 1,106 `entity.relation_edge`,
+22 `event.cluster_candidate`, 2 `intent.cluster_candidate`; `know.claim` (1,189) and
+`know.claim_contradiction` (1) unchanged.
