@@ -1,6 +1,12 @@
 # PersonalDataLab project state
 
-Updated 2026-09-29, after Phase 10 (the life graph) real-rolled-out against the real canonical
+Updated 2026-09-29 (later), after the identity bootstrap's first pass: contact cards now bridge
+apps (PR #82: `identity-contacts`, `identity-contacts-confirm`, `identity.alias`, alias-aware
+`entity_resolve_mentions` v2). Ry confirmed the 20 highest-activity contacts: 22 people, 51 active
+identity links, 36 aliases; 97.6 percent of the last three years' measured messages now belong to 18
+named people (from 94 raw correspondents). The name matcher now proposes 16,813 mention-to-person
+links across 20 people -- still candidates: event/intent threading needs confirmed person links,
+and there is no person-level bulk confirmation yet. Updated 2026-09-29, after Phase 10 (the life graph) real-rolled-out against the real canonical
 database: 70,145/70,145 text units extracted (69,959 complete, 186 explicitly `truncated` at the
 token cap), 358,031 entity mentions, 254,727 relation candidates, 32,495 time resolutions, every
 active derive partition clean. The person layer is empty by design until people are set up
@@ -1297,11 +1303,12 @@ faithful before trusting any mismatch as a real finding rather than a methodolog
    completed earlier.
    **Phase 10 (the life graph) is real-rolled-out as of 2026-09-29** -- see "Phase 10: real
    rollout" above.
-2a. **Identity bootstrap (next, backend).** Only 3 people exist, so the life graph's person layer is
-   empty. Build a ranked review queue of provider identities (3,510 distinct source+actor
-   identities; 165 with 100+ events; exclude Ryan's own accounts and group chats), add alias support
-   to `entity_resolve_mentions`, then set up people with Ry and re-run the global resolvers (no GPU).
-   The review surface itself is UI work and stays with Ry.
+2a. **Identity bootstrap -- first pass done 2026-09-29.** Contact-card bridge and aliases shipped
+   (#82); the top 20 contacts are confirmed (22 people). Remaining: the other 89 lower-volume
+   contact proposals (`identity-contacts`), Facebook-era people with no contact card (name review via
+   `identity-candidates --cross-source`), and a person-level way to confirm mention-to-person
+   candidates in bulk (16,813 pending) so event/intent threading has resolved entities to work
+   with.
 3. **Continue the operational track.** Encrypted backup/restore, integrity audits, sensitive-field
    controls, incremental scheduling, performance budgets, derived-data invalidation, and corpus
    exportability remain permanent requirements.
