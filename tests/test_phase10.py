@@ -833,3 +833,11 @@ def test_extract_one_marks_real_cap_hit_as_truncated(monkeypatch) -> None:
     row = _extract_one(1, "Short.", epoch_id=1)
     assert row["extraction_status"] == "truncated"
     assert row["salience"] is None
+
+
+def test_build_row_maps_secondary_repeating_primary_to_null() -> None:
+    envelope = json.loads(_VALID_ENVELOPE)
+    envelope["interaction_secondary"] = envelope["interaction_primary"]
+    row = generative_module._build_row(1, json.dumps(envelope), epoch_id=1)
+    assert row["interaction_primary"] == "planning"
+    assert row["interaction_secondary"] is None
