@@ -536,3 +536,29 @@ def test_interaction_dynamics_1on1_matches_hand_count_and_group_excluded(databas
     # oo-1 -> oo-2 is a same-exchange sender switch 1 hour apart -- the only latency sample.
     assert row["median_response_latency_seconds"] == pytest.approx(3600.0)
     assert group_rows == 0
+
+
+def test_facebook_owner_is_the_linked_identity_in_the_most_conversations(database_engine: Engine) -> None:
+    from personal_data_lab.derive.derivers.interaction import _facebook_owner_identity
+
+    base = datetime(2024, 1, 1, 12, 0, tzinfo=UTC)
+    specs = []
+    for conv in range(3):
+        for actor in ("Ry Owner", f"Friend {conv}"):
+            specs.append(
+                {
+                    "occurred_at": base + timedelta(hours=conv),
+                    "event_type": "message",
+                    "source_record_id": f"owner-{conv}-{actor}",
+                    "conversation_id": f"owner-conv-{conv}",
+                    "actor_identity": actor,
+                }
+            )
+    _import_events(database_engine, "facebook", "owner-test.json", specs)
+    # A correspondent linked to a person *before* the owner -- the old unordered LIMIT 1 could
+    # return either one.
+    _link_facebook_owner(database_engine, "Friend 0")
+    _link_facebook_owner(database_engine, "Ry Owner")
+
+    with database_engine.connect() as connection:
+        assert _facebook_owner_identity(connection) == "Ry Owner"
