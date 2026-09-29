@@ -65,6 +65,23 @@ def normalize_phone(value: str) -> str:
     return ("+" if has_plus else "") + digits
 
 
+def normalize_name(value: str) -> str:
+    """Casefolded, whitespace-collapsed name, for exact (never fuzzy) name comparison."""
+    return " ".join(value.split()).casefold()
+
+
+def phone_key(value: str) -> str | None:
+    """A comparison key for phone numbers written different ways ("(317) 555-1234" on a contact
+    card vs "+13175551234" in iMessage): a leading North American country code is dropped, so both
+    become the same 10 digits. Other numbers keep all their digits. None if too short to be a
+    phone number.
+    """
+    digits = re.sub(r"\D", "", value)
+    if len(digits) == 11 and digits.startswith("1"):
+        digits = digits[1:]
+    return digits if len(digits) >= 7 else None
+
+
 def classify(value: str) -> IdentifierShape:
     """Classify one actor_identity string by its own shape, not by which source produced it --
     the same source can mix shapes (see module docstring).

@@ -103,9 +103,13 @@ to split); success prints the resulting `IdentityLink` as JSON and exits 0.
 
 ## Known limitations
 
-- Apple's contact vCard `EMAIL`/`TEL` fields are not extracted into `actor_identity` by any current
-  adapter, so Apple contact evidence is invisible to `identity-candidates`/`identity-merge` in this
-  version — a future enhancement could parse `records.metadata->'properties'` for Apple contacts.
+- Contact cards are not identities themselves, but as of 2026-09-29 they are the cross-app bridge:
+  `identity-contacts` reads Apple and Google vCards (`record_type = 'contact'`), merges duplicate
+  cards that share a phone or email, and proposes linking every provider identity a contact matches
+  (exact phone, exact email, or exact casefolded name; a name matching two contacts is dropped),
+  ranked by message volume. `identity-contacts-confirm` links through `merge_identity` and records
+  the contact's names in `identity.alias` (migration 025), which `entity_resolve_mentions` also
+  matches. Nothing links without a human confirming.
 - Facebook's `actor_identity` is a free-text display name with no stable numeric ID; two distinct
   real people can share a display name with no way for this tool to tell them apart. Every merge is
   a human assertion, not a guarantee of correctness.
