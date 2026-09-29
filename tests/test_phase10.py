@@ -8,6 +8,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 from collections.abc import Iterator
 from datetime import UTC, date, datetime
 
@@ -273,18 +274,32 @@ def test_grammar_always_produces_valid_json_matching_envelope(monkeypatch) -> No
         # phase's own 2026-09-27 benchmark, terminated cleanly; every failure there was exactly
         # _MAX_TOKENS truncation, never an unterminated structure). A few retries is a reasonable
         # test-only accommodation for that, not a hidden production workaround.
+        #
+        # One KNOWN grammar hole is tolerated, and only that one: `int ::= [0-9] [0-9]?` admits a
+        # leading zero ("02"), which JSON forbids. Found 2026-09-28 once this test stopped
+        # swallowing every JSONDecodeError; the real production model emitted it 0 times in
+        # 65,490 real rollout outputs. It is deliberately NOT fixed in _GRAMMAR_SOURCE yet:
+        # grammar_hash is part of model_ref, so changing it would misattribute that rollout's
+        # results to a grammar that never produced them. Fix it with the next extraction version.
+        model, grammar = generative_module._get_model()
         row = None
-        last_error = None
         for attempt in range(5):
+            # temperature=0.0 is greedy/deterministic, so retrying the exact same prompt would
+            # just reproduce the exact same output -- a small, varying perturbation actually
+            # changes the greedy decode path per attempt.
+            prompt = generative_module._bounded_prompt(model, unit_text + " " * attempt)
+            choice = model(
+                prompt, grammar=grammar, max_tokens=generative_module._MAX_TOKENS, temperature=0.0
+            )["choices"][0]
+            if choice["finish_reason"] == "length":
+                continue
             try:
-                # temperature=0.0 in _extract_one is greedy/deterministic, so retrying the exact
-                # same prompt would just reproduce the exact same (possibly unterminated) output --
-                # a small, varying perturbation actually changes the greedy decode path per attempt.
-                row = _extract_one(i, unit_text + " " * attempt, epoch_id=1)
+                row = generative_module._build_row(i, choice["text"], epoch_id=1)
                 break
-            except json.JSONDecodeError as error:
-                last_error = error
-        assert row is not None, f"random test model never completed valid JSON in 5 attempts: {last_error}"
+            except json.JSONDecodeError:
+                # Any defect other than the known leading-zero hole fails the test right here.
+                json.loads(re.sub(r"(:\s*-?)0+([0-9])", r"\1\2", choice["text"]))
+        assert row is not None, "random test model never completed valid JSON in 5 attempts"
         assert row["salience"] in ("low", "medium", "high")
         entities = json.loads(row["entity_mentions"])
         relations = json.loads(row["relation_candidates"])
@@ -708,3 +723,113 @@ def test_clear_partition_isolation_across_source_month(database_engine: Engine) 
     # them; this asserts *their* own partition isolation, exercised the same way.
     assert march_mentions == 1  # untouched by generative's own clear_partition above
     assert april_mentions == 1
+
+
+# --- rollout fix (migration 024): a cap-truncated envelope is an explicit row, not a failure. ---
+
+
+_VALID_ENVELOPE = json.dumps(
+    {
+        "interaction_primary": "planning",
+        "interaction_secondary": "none",
+        "salience": "medium",
+        "entities": [{"mention": "Alice", "kind": "person"}],
+        "relations": [],
+        "event": {
+            "type": "none", "summary": "", "actor_slot": -1, "object_slot": -1,
+            "location_slot": -1, "time_expression": "",
+        },
+        "decision": {"state": "none", "summary": ""},
+        "open_loop": {"state": "none", "summary": ""},
+    }
+)
+_TRUNCATED_ENVELOPE = _VALID_ENVELOPE[: len(_VALID_ENVELOPE) // 2]
+
+
+def test_build_row_truncated_envelope_is_explicit_row_with_matching_columns() -> None:
+    complete = generative_module._build_row(1, _VALID_ENVELOPE, epoch_id=1)
+    truncated = generative_module._build_row(2, _TRUNCATED_ENVELOPE, epoch_id=1, hit_token_limit=True)
+
+    assert complete["extraction_status"] == "complete"
+    assert truncated["extraction_status"] == "truncated"
+    # worker._write_rows requires every row in one compute() call to share the same column order.
+    assert list(truncated) == list(complete)
+    model_fields = set(complete) - {"text_unit_id", "extraction_status", "computed_epoch_id"}
+    assert all(truncated[f] is None for f in model_fields)
+
+    with pytest.raises(json.JSONDecodeError):
+        generative_module._build_row(3, _TRUNCATED_ENVELOPE, epoch_id=1, hit_token_limit=False)
+
+
+def test_truncated_unit_does_not_fail_its_partition_and_is_skipped_downstream(
+    database_engine: Engine, monkeypatch
+) -> None:
+    epoch_id = _seed_one_real_epoch(database_engine)
+    march = datetime(2024, 3, 1, tzinfo=UTC)
+    with database_engine.begin() as connection:
+        tid_ok = _insert_text_unit(connection, "google", "complete unit", march, epoch_id)
+        tid_cut = _insert_text_unit(connection, "google", "truncated unit", march, epoch_id)
+        mark_dirty(connection, "generative_extract_text_unit", [month_key("google", march.date())])
+        _mark_local_extraction_derivers_dirty(connection, "google", march)
+
+    def fake_extract_one(text_unit_id: int, unit_text: str, epoch_id: int) -> dict:
+        if text_unit_id == tid_cut:
+            return generative_module._build_row(
+                text_unit_id, _TRUNCATED_ENVELOPE, epoch_id, hit_token_limit=True
+            )
+        return generative_module._build_row(text_unit_id, _VALID_ENVELOPE, epoch_id)
+
+    monkeypatch.setattr(generative_module, "_extract_one", fake_extract_one)
+    derive_sync(database_engine)
+    outcomes = derive_run(database_engine, include_global=False)
+
+    march_key = month_key("google", march.date())
+    generative = [
+        o for o in outcomes
+        if o.deriver_name == "generative_extract_text_unit" and o.partition_key == march_key
+    ]
+    assert generative and all(o.status == "succeeded" for o in generative), generative
+    mention_outcomes = [
+        o for o in outcomes
+        if o.deriver_name == "entity_mention_extract" and o.partition_key == march_key
+    ]
+    assert mention_outcomes and all(o.status == "succeeded" for o in mention_outcomes), mention_outcomes
+
+    with database_engine.connect() as connection:
+        statuses = dict(
+            connection.execute(
+                text(
+                    "SELECT text_unit_id, extraction_status FROM generative.extraction "
+                    "WHERE text_unit_id IN (:a, :b)"
+                ),
+                {"a": tid_ok, "b": tid_cut},
+            ).all()
+        )
+        mention_units = connection.execute(
+            text("SELECT DISTINCT text_unit_id FROM entity.mention WHERE text_unit_id IN (:a, :b)"),
+            {"a": tid_ok, "b": tid_cut},
+        ).scalars().all()
+    assert statuses == {tid_ok: "complete", tid_cut: "truncated"}
+    assert mention_units == [tid_ok]
+
+
+def test_truncated_row_cannot_carry_fabricated_defaults(database_engine: Engine) -> None:
+    epoch_id = _seed_one_real_epoch(database_engine)
+    with database_engine.begin() as connection:
+        tid = _insert_text_unit(connection, "google", "unit", datetime(2024, 3, 1, tzinfo=UTC), epoch_id)
+    # salience/decision_state/open_loop_state/'[]' left at their "nothing found" values.
+    with (
+        pytest.raises(Exception, match="extraction_status_fields_check"),
+        database_engine.begin() as connection,
+    ):
+        _insert_extraction(connection, tid, epoch_id, extraction_status="truncated")
+
+
+def test_extract_one_marks_real_cap_hit_as_truncated(monkeypatch) -> None:
+    """Real llama.cpp call: a tiny cap forces finish_reason == 'length', which _extract_one must
+    turn into a 'truncated' row rather than a JSONDecodeError."""
+    monkeypatch.setenv(_MODEL_PATH_ENV, _download_test_model())
+    monkeypatch.setattr(generative_module, "_MAX_TOKENS", 5)
+    row = _extract_one(1, "Short.", epoch_id=1)
+    assert row["extraction_status"] == "truncated"
+    assert row["salience"] is None

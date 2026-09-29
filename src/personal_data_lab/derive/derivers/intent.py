@@ -81,7 +81,7 @@ def _find_thread_candidates(connection: Connection, kind: str) -> list[dict]:
             FROM generative.extraction g
             JOIN semantic.text_unit t ON t.id = g.text_unit_id
             LEFT JOIN semantic.embedding_bge_small_en_v15 e ON e.text_unit_id = g.text_unit_id
-            WHERE g.{state_column} != 'none'
+            WHERE g.extraction_status = 'complete' AND g.{state_column} != 'none'
             ORDER BY g.text_unit_id
             """
         )

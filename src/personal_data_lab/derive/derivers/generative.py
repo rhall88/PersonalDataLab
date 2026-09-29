@@ -206,6 +206,10 @@ def _compute_model_ref() -> dict:
         "weights_sha256": weights_hash,
         "prompt_hash": hashlib.sha256(_PROMPT_TEMPLATE.encode()).hexdigest(),
         "grammar_hash": hashlib.sha256(_GRAMMAR_SOURCE.encode()).hexdigest(),
+        # Both change real output: _MAX_TOKENS decides which units truncate, and together they set
+        # _bounded_prompt's input budget.
+        "max_tokens": _MAX_TOKENS,
+        "n_ctx": _N_CTX,
     }
 
 
@@ -249,11 +253,40 @@ def _none_if_literal_none(value):
     return None if value == "none" else value
 
 
-def _extract_one(text_unit_id: int, unit_text: str, epoch_id: int) -> dict:
-    model, grammar = _get_model()
-    prompt = _bounded_prompt(model, unit_text)
-    output = model(prompt, grammar=grammar, max_tokens=_MAX_TOKENS, temperature=0.0)
-    envelope = json.loads(output["choices"][0]["text"])
+_ROW_FIELDS: tuple[str, ...] = (
+    "interaction_primary", "interaction_secondary", "salience", "entity_mentions",
+    "relation_candidates", "event_type", "event_summary", "event_actor_slot", "event_object_slot",
+    "event_location_slot", "event_time_expression", "decision_state", "decision_summary",
+    "open_loop_state", "open_loop_summary",
+)
+
+
+def _build_row(
+    text_unit_id: int, envelope_text: str, epoch_id: int, hit_token_limit: bool = False
+) -> dict:
+    """The pure envelope-JSON-text -> generative.extraction-row mapping, split out from
+    _extract_one so the real rollout's orchestration script (which calls a remote llama.cpp
+    server over HTTP for real throughput, not this module's own single-sequence _get_model())
+    can reuse this exact logic rather than risk a second, independently-drifting copy -- the same
+    class of mistake that already produced two real bugs today (clustering.py's n_jobs, and this
+    module's own grammar/prompt fixes) when a benchmark script and its production counterpart
+    were never reconciled.
+
+    An envelope cut off by the token cap becomes an explicit 'truncated' row (migration 024)
+    rather than an exception, which would fail the unit's whole source-month partition. Invalid
+    JSON *without* hitting the cap still raises: the grammar should make that impossible.
+    """
+    try:
+        envelope = json.loads(envelope_text)
+    except json.JSONDecodeError:
+        if not hit_token_limit:
+            raise
+        return {
+            "text_unit_id": text_unit_id,
+            **dict.fromkeys(_ROW_FIELDS),
+            "extraction_status": "truncated",
+            "computed_epoch_id": epoch_id,
+        }
 
     event = envelope["event"]
     decision = envelope["decision"]
@@ -278,8 +311,19 @@ def _extract_one(text_unit_id: int, unit_text: str, epoch_id: int) -> dict:
         "decision_summary": decision["summary"] or None,
         "open_loop_state": open_loop["state"],
         "open_loop_summary": open_loop["summary"] or None,
+        "extraction_status": "complete",
         "computed_epoch_id": epoch_id,
     }
+
+
+def _extract_one(text_unit_id: int, unit_text: str, epoch_id: int) -> dict:
+    model, grammar = _get_model()
+    prompt = _bounded_prompt(model, unit_text)
+    output = model(prompt, grammar=grammar, max_tokens=_MAX_TOKENS, temperature=0.0)
+    choice = output["choices"][0]
+    return _build_row(
+        text_unit_id, choice["text"], epoch_id, hit_token_limit=choice["finish_reason"] == "length"
+    )
 
 
 def _clear_extraction(connection: Connection, partition_key: str) -> None:

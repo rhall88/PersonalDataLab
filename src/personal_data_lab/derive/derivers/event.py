@@ -147,6 +147,7 @@ def event_resolve_time_expressions(
             FROM generative.extraction g
             JOIN semantic.text_unit t ON t.id = g.text_unit_id
             WHERE t.source = :source AND t.started_at >= :start AND t.started_at < :end
+            AND g.extraction_status = 'complete'
             AND g.event_time_expression IS NOT NULL AND g.event_time_expression != ''
             ORDER BY g.text_unit_id
             """
@@ -255,7 +256,7 @@ def find_event_candidates(connection: Connection) -> list[dict]:
             JOIN semantic.text_unit t ON t.id = g.text_unit_id
             LEFT JOIN event.time_resolution tr ON tr.text_unit_id = g.text_unit_id
             LEFT JOIN semantic.embedding_bge_small_en_v15 e ON e.text_unit_id = g.text_unit_id
-            WHERE g.event_type IS NOT NULL
+            WHERE g.extraction_status = 'complete' AND g.event_type IS NOT NULL
             ORDER BY g.text_unit_id
             """
         )

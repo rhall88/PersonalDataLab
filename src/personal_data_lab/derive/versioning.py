@@ -95,6 +95,12 @@ def promote(connection: Connection, deriver_name: str, version_hash_hex: str) ->
     """Flip the named version to active, retiring whichever version was active before, in one
     transaction. The retired version's rows stay queryable (nothing is deleted) so a past
     answer computed under it can still be replayed.
+
+    The newly active version inherits the retired version's partition space, all marked dirty.
+    The worker only claims partitions of the active version, so without this a promoted version
+    would have nothing to compute until something happened to re-dirty each partition. Downstream
+    derivers are not re-dirtied here: the worker doesn't propagate after writing, so they need a
+    `derive-rebuild` once this version's partitions have actually run.
     """
     target = connection.execute(
         text(
@@ -111,6 +117,12 @@ def promote(connection: Connection, deriver_name: str, version_hash_hex: str) ->
         raise VersioningError(
             f"version {version_hash_hex} of {deriver_name!r} is retired and cannot be re-promoted"
         )
+    previous = connection.execute(
+        text(
+            "SELECT id FROM derive.deriver_version WHERE deriver_name = :name AND status = 'active'"
+        ),
+        {"name": deriver_name},
+    ).first()
     connection.execute(
         text(
             "UPDATE derive.deriver_version SET status = 'retired' "
@@ -122,3 +134,16 @@ def promote(connection: Connection, deriver_name: str, version_hash_hex: str) ->
         text("UPDATE derive.deriver_version SET status = 'active' WHERE id = :id"),
         {"id": target.id},
     )
+    if previous is not None:
+        connection.execute(
+            text(
+                """
+                INSERT INTO derive.partition_state (deriver_version_id, partition_key, state, dirty_since)
+                SELECT :new_id, partition_key, 'dirty', CURRENT_TIMESTAMP
+                FROM derive.partition_state WHERE deriver_version_id = :old_id
+                ON CONFLICT (deriver_version_id, partition_key) DO UPDATE SET state = 'dirty'
+                WHERE derive.partition_state.state <> 'running'
+                """
+            ),
+            {"new_id": target.id, "old_id": previous.id},
+        )
