@@ -841,3 +841,24 @@ def test_build_row_maps_secondary_repeating_primary_to_null() -> None:
     row = generative_module._build_row(1, json.dumps(envelope), epoch_id=1)
     assert row["interaction_primary"] == "planning"
     assert row["interaction_secondary"] is None
+
+
+def test_pairs_sharing_a_key_matches_brute_force_exactly_once() -> None:
+    import itertools
+    import random
+
+    from personal_data_lab.derive.derivers.event import _pairs_sharing_a_key
+
+    rng = random.Random(20260929)
+    keys = [("person", i) for i in range(6)] + [("entity", i) for i in range(6)]
+    keys_by_unit = {uid: set(rng.sample(keys, rng.randint(0, 4))) for uid in rng.sample(range(1000), 80)}
+
+    pairs = list(_pairs_sharing_a_key(keys_by_unit))
+    expected = {
+        (a, b)
+        for a, b in itertools.combinations(sorted(keys_by_unit), 2)
+        if keys_by_unit[a] & keys_by_unit[b]
+    }
+    assert len(pairs) == len(set(pairs))  # each pair once, even when sharing several keys
+    assert set(pairs) == expected
+    assert all(a < b for a, b in pairs)

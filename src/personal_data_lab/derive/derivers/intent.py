@@ -17,7 +17,7 @@ from sqlalchemy.engine import Connection, Engine
 
 from ...fingerprints import fingerprint_value
 from ..registry import ComputeResult, deriver
-from .event import _cosine_similarity, _parse_vector, _UnionFind
+from .event import _cosine_similarity, _pairs_sharing_a_key, _parse_vector, _UnionFind
 
 # Same placeholder-pending-real-grounding caveat as event.py's own threshold: no real rollout data
 # exists yet to tune this against.
@@ -43,19 +43,19 @@ def _is_plausible_sequence(kind: str, states: list[str]) -> bool:
     return True
 
 
-def _resolved_entities_for_text_unit(connection: Connection, text_unit_id: int) -> set:
-    rows = connection.execute(
+def _resolved_entities_by_text_unit(connection: Connection) -> dict[int, set]:
+    entities: dict[int, set] = {}
+    for text_unit_id, kind, entity_id in connection.execute(
         text(
             """
-            SELECT rm.resolved_kind, rm.resolved_id
+            SELECT m.text_unit_id, rm.resolved_kind, rm.resolved_id
             FROM entity.mention m
             JOIN entity.resolved_mention rm ON rm.mention_id = m.id
-            WHERE m.text_unit_id = :text_unit_id
             """
-        ),
-        {"text_unit_id": text_unit_id},
-    ).all()
-    return {(kind, entity_id) for kind, entity_id in rows}
+        )
+    ):
+        entities.setdefault(text_unit_id, set()).add((kind, entity_id))
+    return entities
 
 
 def _find_thread_candidates(connection: Connection, kind: str) -> list[dict]:
@@ -90,23 +90,20 @@ def _find_thread_candidates(connection: Connection, kind: str) -> list[dict]:
         return []
 
     by_id = {u["text_unit_id"]: u for u in units}
-    entities_by_unit = {uid: _resolved_entities_for_text_unit(connection, uid) for uid in by_id}
+    resolved = _resolved_entities_by_text_unit(connection)
+    entities_by_unit = {uid: resolved.get(uid, set()) for uid in by_id}
     vectors = {
         uid: _parse_vector(u["vector"]) for uid, u in by_id.items() if u["vector"] is not None
     }
 
     uf = _UnionFind(by_id.keys())
     ids = list(by_id.keys())
-    for i in range(len(ids)):
-        for j in range(i + 1, len(ids)):
-            u1, u2 = ids[i], ids[j]
-            if not (entities_by_unit[u1] & entities_by_unit[u2]):
-                continue
-            if u1 not in vectors or u2 not in vectors:
-                continue
-            if _cosine_similarity(vectors[u1], vectors[u2]) < _EMBEDDING_SIMILARITY_THRESHOLD:
-                continue
-            uf.union(u1, u2)
+    for u1, u2 in _pairs_sharing_a_key(entities_by_unit):
+        if u1 not in vectors or u2 not in vectors:
+            continue
+        if _cosine_similarity(vectors[u1], vectors[u2]) < _EMBEDDING_SIMILARITY_THRESHOLD:
+            continue
+        uf.union(u1, u2)
 
     components: dict[int, list[int]] = {}
     for uid in ids:
