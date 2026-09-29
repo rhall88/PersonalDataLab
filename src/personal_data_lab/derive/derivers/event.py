@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import json
 import re
+from collections.abc import Iterator
 from datetime import date, timedelta
 
 import numpy as np
@@ -203,6 +204,25 @@ class _UnionFind:
             self._parent[ra] = rb
 
 
+def _pairs_sharing_a_key(keys_by_unit: dict[int, set]) -> Iterator[tuple[int, int]]:
+    """Every unordered pair of units sharing at least one key, each exactly once, lower id first.
+
+    Replaces an all-pairs scan (2.4 billion pairs for the real corpus' event candidates) with
+    per-key buckets. A pair sharing several keys is yielded only from its smallest shared key's
+    bucket, which dedupes without holding a set of every pair already seen.
+    """
+    buckets: dict = {}
+    for uid in sorted(keys_by_unit):
+        for key in keys_by_unit[uid]:
+            buckets.setdefault(key, []).append(uid)
+    for key, members in buckets.items():
+        for i in range(len(members)):
+            keys_i = keys_by_unit[members[i]]
+            for j in range(i + 1, len(members)):
+                if min(keys_i & keys_by_unit[members[j]]) == key:
+                    yield members[i], members[j]
+
+
 def _resolved_entities_for_unit(mention_by_slot, resolved_by_mention, slots) -> set:
     result = set()
     for slot in slots:
@@ -278,31 +298,29 @@ def find_event_candidates(connection: Connection) -> list[dict]:
     }
 
     by_id = {u["text_unit_id"]: u for u in units}
+    # A pair clusters only if it shares an event type AND a resolved entity, so the candidate
+    # pairs are exactly those sharing an (event_type, entity) key.
+    keys_by_unit = {
+        uid: {
+            (u["event_type"], entity)
+            for entity in _resolved_entities_for_unit(
+                mention_by_slot.get(uid, {}), resolved_by_mention,
+                (u["event_actor_slot"], u["event_object_slot"], u["event_location_slot"]),
+            )
+        }
+        for uid, u in by_id.items()
+    }
+    vectors = {uid: _parse_vector(u["vector"]) for uid, u in by_id.items() if u["vector"] is not None}
     uf = _UnionFind(by_id.keys())
     ids = list(by_id.keys())
-    for i in range(len(ids)):
-        for j in range(i + 1, len(ids)):
-            u1, u2 = by_id[ids[i]], by_id[ids[j]]
-            if u1["event_type"] != u2["event_type"]:
-                continue
-            if not _ranges_overlap(u1["resolved_range"], u2["resolved_range"]):
-                continue
-            entities1 = _resolved_entities_for_unit(
-                mention_by_slot.get(u1["text_unit_id"], {}), resolved_by_mention,
-                (u1["event_actor_slot"], u1["event_object_slot"], u1["event_location_slot"]),
-            )
-            entities2 = _resolved_entities_for_unit(
-                mention_by_slot.get(u2["text_unit_id"], {}), resolved_by_mention,
-                (u2["event_actor_slot"], u2["event_object_slot"], u2["event_location_slot"]),
-            )
-            if not (entities1 & entities2):
-                continue
-            if u1["vector"] is None or u2["vector"] is None:
-                continue
-            similarity = _cosine_similarity(_parse_vector(u1["vector"]), _parse_vector(u2["vector"]))
-            if similarity < _EMBEDDING_SIMILARITY_THRESHOLD:
-                continue
-            uf.union(ids[i], ids[j])
+    for a, b in _pairs_sharing_a_key(keys_by_unit):
+        if not _ranges_overlap(by_id[a]["resolved_range"], by_id[b]["resolved_range"]):
+            continue
+        if a not in vectors or b not in vectors:
+            continue
+        if _cosine_similarity(vectors[a], vectors[b]) < _EMBEDDING_SIMILARITY_THRESHOLD:
+            continue
+        uf.union(a, b)
 
     components: dict[int, list[int]] = {}
     for text_unit_id in ids:
