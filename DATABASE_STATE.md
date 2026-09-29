@@ -455,3 +455,15 @@ what changed in the database itself.
   (entity/event/intent resolution, claim evaluation, contradiction detection) have not yet run
   to settle the graph. Do not build against real life-graph row counts, entity counts, or
   relation-type distributions until this section is updated again with final numbers.
+
+**Update 2026-09-29: Phase 10 real rollout complete.** Canonical is at schema 24 (migration 024
+adds `generative.extraction.extraction_status`). Every active derive partition is clean.
+`generative.extraction` holds 70,145 rows, one per text unit: 69,959 `complete` and 186 `truncated`
+(model fields NULL, never defaults). Downstream: 358,031 `entity.mention`, 254,727
+`entity.relation_candidate`, 32,495 `event.time_resolution`, 6,171 unconfirmed
+`entity.link_candidate`, 1,189 `know.claim`, 1 `know.claim_contradiction`. `entity.resolved_mention`
+is empty (only 3 `people` rows), so `event.cluster_candidate` and `intent.cluster_candidate` are
+empty by design until the identity bootstrap. The active `generative_extract_text_unit` version is
+33 (`code_version` 2); versions 24 and 32 are retired and never produced surviving rows. See
+`PROJECT_STATE.md`'s "Phase 10: real rollout" for the evidence and the calibration caveat on
+event/decision/open-loop labels.

@@ -1,6 +1,12 @@
 # PersonalDataLab project state
 
-Updated 2026-09-28, after Phase 9 (topic clustering) real-rolled-out and verified against the real
+Updated 2026-09-29, after Phase 10 (the life graph) real-rolled-out against the real canonical
+database: 70,145/70,145 text units extracted (69,959 complete, 186 explicitly `truncated` at the
+token cap), 358,031 entity mentions, 254,727 relation candidates, 32,495 time resolutions, every
+active derive partition clean. The person layer is empty by design until people are set up
+(0 resolved mentions, 6,171 exact-match link candidates awaiting review), so the event/intent
+resolvers correctly produced 0 candidates. The rollout also surfaced and fixed six real defects
+(PRs #78-#80) -- see "Phase 10: real rollout" below. Updated 2026-09-28, after Phase 9 (topic clustering) real-rolled-out and verified against the real
 canonical database (397 topic groups, 396 real clusters plus a noise bucket, exact 1:1 row count
 against every real `semantic.text_unit`) and Phase 10 (the life graph -- entities, relations,
 events, decisions, open loops) fully implemented and tested (migration 023, five deriver modules,
@@ -973,7 +979,7 @@ benchmark exactly), largest real clusters by size include recognizable real voca
 promotional/newsletter clusters keyed on retailer names). `topic-clusters-list`/`topic-cluster-show`
 are live against real data.
 
-## Phase 10: the life graph -- implemented, real rollout pending (2026-09-28)
+## Phase 10: the life graph -- implemented 2026-09-28, real rollout completed 2026-09-29
 
 `PHASE10_LIFE_GRAPH_IMPLEMENTATION_PLAN.md` (v3, three review rounds before any code): schema
 (migration 023 -- `generative`, `entity`, `event`, `intent` schemas, plus three new `know.claim`
@@ -1021,6 +1027,93 @@ downstream) as dirty against all ~933 real partitions, and any ordinary `derive 
 model is configured would mark all of them `'failed'` (a `'failed'` partition is not `'dirty'` and
 is never automatically retried) -- real Phase 10 rollout work starts with applying this migration to
 canonical as its own first step, immediately before the real GPU pass, not before.
+
+## Phase 10: real rollout against the real canonical database (2026-09-27 to 2026-09-29)
+
+**Result.** Every active derive partition is clean. Real counts in canonical:
+
+| Table | Rows |
+|---|---|
+| `generative.extraction` | 70,145 (69,959 `complete`, 186 `truncated`) -- exactly one per text unit |
+| `entity.mention` | 358,031 (organization 104,971, person 86,557, project 80,821, place 53,802, named_concept 31,880) |
+| `entity.relation_candidate` | 254,727 |
+| `entity.link_candidate` | 6,171 (all exact-match to a `people` row; none confirmed yet) |
+| `event.time_resolution` | 32,495 |
+| `event.cluster_candidate`, `intent.cluster_candidate` | 0 -- see "person layer" below |
+| `know.claim` | 1,189 (1,172 communication_change, 9 episode_evidence, 8 relationship_state_shift) |
+| `know.claim_contradiction` | 1 |
+
+**How the fetch ran.** The one rented-GPU pass ran against `llama.cpp`'s server
+(`ghcr.io/ggml-org/llama.cpp:server-cuda`, Phi-3.5-mini-instruct Q4_K_M, grammar-constrained,
+temperature 0) on an RTX PRO 6000 Blackwell (96GB) with `-np 24 -c 196608 --no-cache-prompt`,
+driven by a scratchpad orchestration script (same pattern as Phase 7's `remote_annotate.py`) that
+builds each bounded prompt locally with the real `_bounded_prompt`, fetches over HTTP, and appends
+JSONL; `apply` then runs the real `derive.run()` with only `_extract_one` swapped for a lookup that
+calls the real `_build_row`, so partition state, versioning, and fingerprints are the framework's
+own. Main pass: 58,633 units in 19.9h (~1.2 s/unit), after ~11.5k units from preflights; 139
+units failed with Cloudflare HTTP 524 (the proxy's ~100s timeout) and 3 with HTTP 404 during a pod
+switch, and all succeeded in a 0.85h retry at concurrency 4 once the server was idle.
+
+**Why it took ~20h, not the benchmarked ~7.4h.** Two real causes, found live:
+- *Prompt-cache thrashing.* An isolated single request took 8.0s for 50 tokens; server logs showed
+  constant "making room for prompt cache entry" evictions -- the default RAM prompt cache
+  (`--cache-ram`, 8GB) churning 1-2.6GB entries for a workload with zero prefix reuse.
+  `--no-cache-prompt` (confirmed against the llama.cpp server docs) brought it to 0.60s.
+- *Generation-bound throughput.* Even then, prompt eval ran at ~10-13k tok/s while generation ran at
+  only ~13-18 tok/s per slot, and the real envelopes (p50 272 tokens, p95 750, cap 1536) are far
+  longer than the benchmark's 512-768-token caps. This was measured, not assumed: 16 vs 24 slots on
+  the Blackwell and an H100 SXM were all tried, and 24-slot Blackwell was best (~1.2 s/unit vs
+  ~1.7-2.0 at 16 slots). Context was sized at `np x 8192` so no real long unit is truncated on input
+  (`-np 32 -c 262144` needed ~98GB and OOMed on the 96GB card).
+- Cost: the rollout pod $43.81, Sep 28 debugging pods ~$8.60, Sep 27 benchmark $8.95 -- $61.37
+  total Phase 10 GPU spend.
+
+**Six real defects found and fixed during the rollout** (each with regression tests, full suite
+green):
+1. *Truncated envelopes blocked 41 percent of the corpus* (#78). 186 units hit the 1536-token cap;
+   `_build_row` raised, failing the unit's whole source-month partition -- 189 bad units at the time
+   would have blocked 51 of 410 partitions (28,704 units). Migration 024 adds
+   `generative.extraction.extraction_status`; a cap-hit unit is an explicit `truncated` row with
+   every model field NULL (a CHECK forbids the `'none'`/`'[]'` defaults, which would read as
+   "nothing found"), and downstream readers take only `complete` rows.
+2. *`model_ref` omitted `_MAX_TOKENS`/`_N_CTX`*, which change real output (#78).
+3. *`promote()` left the new active version with no partitions* (#78), so a promoted model version
+   had nothing to compute; it now inherits the retired version's partitions as dirty.
+4. *The grammar test swallowed every `JSONDecodeError`* (#78), hiding a real grammar hole:
+   `int ::= [0-9] [0-9]?` admits leading zeros (`02`), invalid JSON. The real model emitted it 0
+   times in 69,959 outputs; fixing it now would change `grammar_hash` and misattribute this rollout's
+   results, so the fix is deferred to the next extraction version (the test now tolerates exactly
+   that hole and nothing else).
+5. *Duplicate secondary label + one DB error stopped the whole run* (#79). 100 extractions repeated
+   the primary interaction label as the secondary, violating `extraction_check`; the resulting DB
+   error aborted the transaction, so recording the partition as failed also raised and the entire
+   `apply` stopped after 242 of 933 partitions. `_build_row` now maps a repeat to NULL
+   (`code_version` 2), and the worker runs each partition in a savepoint -- which also closes the
+   worker's old partial-write-visibility gap.
+6. *All-pairs resolvers* (#80). `event_resolve_candidates`/`intent_resolve_candidates` scanned every
+   pair (~2.4 billion and ~1.6 billion at real scale) to find pairs sharing a resolved entity; the
+   real run was stopped after ~30 minutes. They now compare only within per-entity buckets -- same
+   candidates, 26 seconds.
+
+Also observed: the worker claims partitions by `dirty_since`, not dependency order, and does not
+propagate after writing. The three LOCAL downstream derivers ran first against an empty table, and
+`know_claim_evaluate` ran before its inputs; each was fixed with `derive-rebuild` + re-run. Still an
+open scheduler limitation (documented in `worker.py`), not a data problem.
+
+**The person layer is empty by design.** `entity_resolve_mentions` only proposes exact matches
+against `people.display_name`, and only 3 people exist, so there are 0 resolved mentions and the
+event/intent resolvers (which require a shared resolved entity) correctly produce 0 candidates. The
+next step is the identity bootstrap: set up people plus aliases (the resolver needs alias support so
+"Sarah", "Sarah Hallgarth", and "Sarah Stonewall Jackson" meet), then `derive-rebuild
+entity_resolve_mentions` and re-run `--global`. No GPU is needed -- the extractions are already in
+canonical.
+
+**Calibration finding: event/decision/open-loop labels are noisy.** The model assigns an event type
+to 98.5 percent of complete units (61 percent `other`), `opened` to 54 percent (open loops), and
+`considering` to 41 percent (decisions). Interaction labels and entity mentions look more plausible
+(logistics 33,187, advice 10,239, affection 7,046; salience mostly medium). Treat event, decision,
+and open-loop fields as noisy candidates for review, not facts; any UI must present them with their
+`SEMANTIC` epistemic class and never as confirmed events.
 
 ## Claim-template growth: relationship_state_shift (2026-09-25)
 
@@ -1202,10 +1295,13 @@ faithful before trusting any mismatch as a real finding rather than a methodolog
    clusters + noise), completed 2026-09-28 -- see "Phase 9: unsupervised topic clustering --
    rollout" above. `relationship_state_shift`: 8 real claims. Item 6 (media transcription) also
    completed earlier.
-   **Phase 10 (the life graph) is implemented and fully tested but not yet real-rolled-out** -- see
-   "Phase 10: the life graph -- implemented, real rollout pending" above. It needs one real
-   rented-GPU pass over all 70,145 text units (benchmarked at ~7.4 hours, ~$6-8), deliberately left
-   for a separate, explicitly authorized step rather than run automatically.
+   **Phase 10 (the life graph) is real-rolled-out as of 2026-09-29** -- see "Phase 10: real
+   rollout" above.
+2a. **Identity bootstrap (next, backend).** Only 3 people exist, so the life graph's person layer is
+   empty. Build a ranked review queue of provider identities (3,510 distinct source+actor
+   identities; 165 with 100+ events; exclude Ryan's own accounts and group chats), add alias support
+   to `entity_resolve_mentions`, then set up people with Ry and re-run the global resolvers (no GPU).
+   The review surface itself is UI work and stays with Ry.
 3. **Continue the operational track.** Encrypted backup/restore, integrity audits, sensitive-field
    controls, incremental scheduling, performance budgets, derived-data invalidation, and corpus
    exportability remain permanent requirements.
