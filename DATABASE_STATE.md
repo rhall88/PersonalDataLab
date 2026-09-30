@@ -526,3 +526,11 @@ transcript text), and 458 record-to-audio relationships, all resolving. Migratio
 exact_duplicate, 37 same_audio, 67 contained_in; detector `contain-v2`). Superseded assets stay in
 `assets` as provenance; Whisper skips them. The v1 voicemail records were deleted and re-imported
 under parser v4 after a same-snapshot conflict (see `PROJECT_STATE.md`).
+
+**Update 2026-09-30 (later): schema 28, iPhone transcripts.** `media.transcript` has 219 `ios_backup`
+rows (214 succeeded, 101 with text; 5 unreadable), model `faster-whisper-large-v3-turbo-batched`.
+Migration 028 adds `policy.source_policy` for `ios_backup` (`intimate`, `local_only`).
+`semantic.text_unit_document` gained 376 `ios_backup` units (265 voicemails, 111 Voice Memos),
+embedded. Still dirty: the LLM-backed extraction and annotation partitions for those units, and the
+GLOBAL rollups. Whisper transcripts in `media.transcript` are not yet part of the semantic layer for
+any source (see `PROJECT_STATE.md`).
