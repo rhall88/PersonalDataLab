@@ -506,3 +506,13 @@ during the 2026-09-19..22 test runs, were removed after reading each one's datab
 (names only `personaldata_*_test` and `pdl_doctor_fresh_test`). The old `repo_postgres_data` and
 `pdl_pr13_postgres_data` were retired to verified dumps; see the do-not-delete list above.
 `docker_data.vhdx` must be compacted (`Optimize-VHD`, admin) to return freed space to C:.
+
+**Correction 2026-09-29: a fourth Postgres instance existed in WSL Ubuntu.** The 2026-09-19
+inventory missed a native PostgreSQL 18 + pgvector cluster inside the `Ubuntu` WSL distro
+(`/var/lib/postgresql/18/main`, port 5432, set up 2026-09-18 and not auto-started since Docker
+took the port). It held `personaldata_apple_v3_acceptance_test`, `personaldata_apple_v3_corpus_test`
+(3.8 GB), `personaldata_openai_acceptance_test` and `personaldata_openai_corpus_test` (267 MB,
+matching PR #17's reported size). So the OpenAI acceptance import *was* retained locally,
+contrary to "Did OpenAI ever get imported?" above. All four were dumped and verified into
+`DataLabBackups\2026-09-29-retired-volumes\` (MANIFEST rows tagged `wsl-ubuntu`, plus
+`globals_wsl_ubuntu.sql`); the owner may then remove the distro with `wsl --unregister Ubuntu`.
