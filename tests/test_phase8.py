@@ -143,7 +143,9 @@ def test_allowlisted_namespace_produces_a_unit_disallowed_does_not(database_engi
     assert rows[0].truncated is False
 
 
-def test_long_document_is_truncated_not_dropped(database_engine: Engine) -> None:
+def test_long_document_is_chunked_not_truncated(database_engine: Engine) -> None:
+    """v2 (migration 029): a long document becomes ordered chunks covering all of it, instead of
+    one unit cut off at 8,000 characters."""
     long_text = "x" * 9_000
     _import_record(
         database_engine, source="google",
@@ -156,11 +158,13 @@ def test_long_document_is_truncated_not_dropped(database_engine: Engine) -> None
     derive_run(database_engine)
 
     with database_engine.connect() as connection:
-        row = connection.execute(
-            text("SELECT length(text), truncated FROM semantic.text_unit_document")
-        ).one()
-    assert row.length == 8_000
-    assert row.truncated is True
+        rows = connection.execute(
+            text("SELECT chunk_index, length(text) AS n, truncated FROM semantic.text_unit_document "
+                 "ORDER BY chunk_index")
+        ).all()
+    assert [r.chunk_index for r in rows] == [0, 1]
+    assert sum(r.n for r in rows) == 9_000
+    assert not any(r.truncated for r in rows)
 
 
 def test_undated_record_still_lands_in_a_partition_and_is_processed(database_engine: Engine) -> None:

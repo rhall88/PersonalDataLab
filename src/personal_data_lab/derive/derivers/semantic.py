@@ -101,6 +101,75 @@ def _clear_text_unit(connection: Connection, partition_key: str) -> None:
     )
 
 
+_CHUNK_CHARS = 6_000
+# Recordings enter this message layer only for the device-backup source: its Voice Memos and
+# voicemail (the phone's own transcripts, stored as record text) and its Whisper transcripts. Scoped
+# to one source on purpose -- no other source's partitions change, so the 70,145 existing units
+# (and everything extracted from them) are untouched and no code_version bump is needed.
+_AUDIO_UNIT_SOURCES = frozenset({"ios_backup"})
+
+
+def chunk_text(body: str, limit: int = _CHUNK_CHARS) -> list[str]:
+    """Split long text into pieces of at most `limit` characters, breaking at the last sentence
+    end (or failing that, whitespace) inside each window, so a three-hour recording becomes
+    several whole-sentence units instead of one cut off at the size cap."""
+    body = body.strip()
+    chunks: list[str] = []
+    while len(body) > limit:
+        window = body[:limit]
+        cut = max(window.rfind(mark) for mark in (". ", "? ", "! ", "\n"))
+        if cut < limit // 2:
+            cut = window.rfind(" ")
+        if cut < limit // 2:
+            cut = limit - 1
+        chunks.append(body[: cut + 1].strip())
+        body = body[cut + 1 :].strip()
+    if body:
+        chunks.append(body)
+    return chunks
+
+
+def _audio_units(connection: Connection, source: str, start, end) -> tuple[bytes, list[dict]]:
+    window_start, window_end = start - timedelta(days=1), end + timedelta(days=1)
+    rows = connection.execute(
+        text(
+            """
+            SELECT rec.id AS record_id, NULL::bigint AS asset_id, rec.occurred_at AS at, rec.text,
+                   (rec.metadata->>'duration_seconds')::float AS seconds
+            FROM records rec
+            WHERE rec.source = :source AND rec.record_type IN ('voice_memo', 'voicemail')
+              AND rec.lifecycle_state = 'active' AND rec.text IS NOT NULL AND rec.text <> ''
+              AND rec.occurred_at >= :window_start AND rec.occurred_at < :window_end
+            UNION ALL
+            SELECT NULL, a.id, COALESCE(a.captured_at, a.created_at), t.text, t.duration_seconds
+            FROM media.transcript t JOIN assets a ON a.id = t.asset_id
+            WHERE a.source = :source AND a.lifecycle_state = 'active'
+              AND t.status = 'succeeded' AND t.text <> ''
+              AND NOT EXISTS (SELECT 1 FROM media.audio_supersession s WHERE s.asset_id = a.id)
+              AND COALESCE(a.captured_at, a.created_at) >= :window_start
+              AND COALESCE(a.captured_at, a.created_at) < :window_end
+            ORDER BY at, record_id NULLS LAST, asset_id
+            """
+        ),
+        {"source": source, "window_start": window_start, "window_end": window_end},
+    ).all()
+    fingerprint = fingerprint_value(
+        [[r.record_id, r.asset_id, r.at.isoformat(), r.text] for r in rows]
+    )
+    units = []
+    for r in rows:
+        if not (start <= r.at.astimezone(UTC).date() < end):
+            continue
+        ended = r.at + timedelta(seconds=r.seconds) if r.seconds else r.at
+        for index, chunk in enumerate(chunk_text(r.text)):
+            units.append({
+                "source": source, "conversation_id": None, "event_ids": [], "started_at": r.at,
+                "ended_at": ended, "text": chunk, "truncated": False, "record_id": r.record_id,
+                "asset_id": r.asset_id, "chunk_index": index,
+            })
+    return fingerprint, units
+
+
 def _build_units(source: str, events: list) -> list[dict]:
     if source in _PER_MESSAGE_SOURCES:
         return [_make_unit(source, e.conversation_id, [e]) for e in events]
@@ -173,6 +242,11 @@ def semantic_text_unit(connection: Connection, partition_key: str, epoch_id: int
     source, start, end = parse_local_key(partition_key)
     if start is None:
         return ComputeResult(input_fingerprint=fingerprint_value(["undated"]), rows=[])
+    if source in _AUDIO_UNIT_SOURCES:
+        fingerprint, units = _audio_units(connection, source, start, end)
+        return ComputeResult(
+            input_fingerprint=fingerprint, rows=[{**u, "computed_epoch_id": epoch_id} for u in units]
+        )
     event_types = _SOURCE_EVENT_TYPES.get(source)
     if not event_types:
         return ComputeResult(input_fingerprint=fingerprint_value(["no-event-types"]), rows=[])
@@ -291,7 +365,7 @@ def search(
             text(
                 f"""
                 SELECT 'message' AS kind, tu.id, tu.source, tu.conversation_id, tu.event_ids,
-                       tu.started_at, tu.ended_at, tu.text, tu.truncated,
+                       tu.record_id, tu.asset_id, tu.chunk_index, tu.started_at, tu.ended_at, tu.text, tu.truncated,
                        (e.vector <=> CAST(:vector AS vector)) AS distance
                 FROM semantic.embedding_bge_small_en_v15 e
                 JOIN semantic.text_unit tu ON tu.id = e.text_unit_id
@@ -309,7 +383,8 @@ def search(
             doc_rows = connection.execute(
                 text(
                     f"""
-                    SELECT 'document' AS kind, tu.id, tu.source, tu.record_id, tu.started_at,
+                    SELECT 'document' AS kind, tu.id, tu.source, tu.record_id, tu.asset_id,
+                           tu.chunk_index, tu.started_at,
                            tu.ended_at, tu.text, tu.truncated,
                            (e.vector <=> CAST(:vector AS vector)) AS distance
                     FROM semantic.embedding_bge_small_en_v15_document e

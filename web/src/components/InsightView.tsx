@@ -87,7 +87,9 @@ function View(props: { view: any }) {
                         : h.kind === "conversation"
                           ? openEvidenceFresh({ type: "conversation", id: h.id })
                           : h.kind === "document_text_unit"
-                            ? h.record_id && openEvidenceFresh({ type: "canonical", kind: "record", id: h.record_id })
+                            ? h.record_id
+                              ? openEvidenceFresh({ type: "canonical", kind: "record", id: h.record_id })
+                              : h.asset_id && openEvidenceFresh({ type: "canonical", kind: "asset", id: h.asset_id })
                             : openEvidenceFresh({ type: "canonical", kind: h.kind, id: h.id })
                     }
                   >

@@ -534,3 +534,9 @@ Migration 028 adds `policy.source_policy` for `ios_backup` (`intimate`, `local_o
 embedded. Still dirty: the LLM-backed extraction and annotation partitions for those units, and the
 GLOBAL rollups. Whisper transcripts in `media.transcript` are not yet part of the semantic layer for
 any source (see `PROJECT_STATE.md`).
+
+**Update 2026-09-30 (evening): schema 29, audio in the semantic layer.** Migration 029 adds
+`record_id`/`asset_id`/`chunk_index` to `semantic.text_unit` and `semantic.text_unit_document`
+(document `record_id` now nullable, one-origin CHECK, per-origin chunk uniqueness). Canonical:
+70,752 text units (607 new `ios_backup`, all extracted and topic-labeled), 3,810 document units
+(v2 chunking plus Whisper transcripts), 2,983 new entity mentions, every active partition clean.

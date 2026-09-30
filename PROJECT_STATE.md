@@ -130,6 +130,39 @@ search, or extraction for any source -- 564 non-empty transcripts (including Sep
 of Google Recorder) are stored but not searchable. LLM-backed steps for the new documents
 (`generative_extract_text_unit`, `signal_annotation_topic`) are dirty and not yet run.
 
+**Audio in the semantic layer, closed the same day (migration 029).** Text units can now come from
+a recording: `semantic.text_unit` and `semantic.text_unit_document` gained `record_id` /
+`asset_id` / `chunk_index` provenance. Two paths, chosen so no already-extracted unit re-runs:
+
+* *Device audio -> message layer.* `semantic_text_unit` builds `ios_backup` units from Voice Memo
+  and voicemail records (the phone's transcripts) and from Whisper transcripts of kept recordings,
+  chunked at sentence boundaries (6,000 chars), dated by recording time. Scoped to that one source,
+  so the other 70,145 units and their extractions are untouched (no code_version bump; reasoning
+  in the code). Result: 607 units (480 from records, 127 from Whisper), 1.24M characters. The
+  Voice Memo / voicemail namespaces left the document allowlist so nothing is stored twice.
+* *Every other source's transcripts -> document layer.* `semantic_text_unit_document` v2 (promoted)
+  adds Whisper transcripts as asset-backed units and chunks long documents instead of cutting
+  them at 8,000 characters: 3,810 document units (was 597), including 605 Google Recorder chunks.
+  Most of these transcripts have no recording date, so they are searchable but not extracted
+  (extraction is month-partitioned). All document embeddings were rebuilt (CPU, 12 minutes).
+
+**GPU extraction + topics for the 607 units (about $0.38).** Same `llama.cpp` server image as the
+Phase 10 rollout, on a Secure A100 ($1.59/hr), `-np 16 -c 131072 --no-cache-prompt`, API-key
+locked; the model file was confirmed byte-identical to the active version's pinned weights
+(`bartowski/Phi-3.5-mini-instruct-GGUF`, sha256 `e4165e3a...`) so results stay attributed to the
+existing model_ref. Prompts were built locally with the real `_bounded_prompt` functions; 1,214
+requests (607 extraction + 607 topic) in 12 minutes, 0 failures, 0 hitting the token cap; pod about
+15 minutes. Applied through `worker._process` with `_extract_one`/`_annotate_one` swapped for
+lookups (the real `_build_row` and score formula), then the downstream chain: 2,983 new entity
+mentions, relations, time expressions, topic clusters rebuilt, global resolvers re-run (117 new
+person-link candidates await confirmation). Topic scores use the server's raw log-probabilities,
+the same scale as the existing 70,145 labels (median 0.007). Total GPU for 2026-09-30: about
+$0.88 of Ry's $15.27 balance.
+
+Two inactive shadow versions registered by syncs run without `PDL_ANNOTATION_MODEL_PATH` set
+(`signal_annotation_topic` id 22, `generative_extract_text_unit` id 35, model_ref "unconfigured")
+are harmless records, not used.
+
 **Environment note.** Smart App Control was enforcing on this machine and intermittently blocked
 unsigned DLLs in the project venv (psycopg, SciPy, scikit-learn) until each passed its reputation
 check; Ry turned it off on 2026-09-30.
