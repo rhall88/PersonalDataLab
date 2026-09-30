@@ -202,7 +202,7 @@ def _t_semantic(engine: Engine, a: SemanticIn) -> dict:
     hits = [
         {"kind": "text_unit" if r["kind"] == "message" else "document_text_unit", "id": r["id"],
          "source": r["source"], "occurred_at": r.get("started_at"), "text": (r["text"] or "")[:400],
-         "record_id": r.get("record_id"), "distance": round(float(r["distance"]), 4)}
+         "record_id": r.get("record_id"), "asset_id": r.get("asset_id"), "distance": round(float(r["distance"]), 4)}
         for r in rows
     ]
     return {

@@ -26,7 +26,7 @@ from sqlalchemy.engine import Connection
 from ...fingerprints import fingerprint_value
 from ..partitions import parse_local_key
 from ..registry import ComputeResult, deriver
-from .semantic import _vector_literal, embed_texts
+from .semantic import _AUDIO_UNIT_SOURCES, _vector_literal, chunk_text, embed_texts
 
 _MAX_CHARS = 8_000
 
@@ -47,25 +47,43 @@ _NAMESPACE_ALLOWLIST: frozenset[str] = frozenset(
         "google_takeout/gemini/conversation/html",
         "google_takeout/gemini_workspace/conversation/txt",
         "apple_privacy/notes/note/record",
-        # iPhone backup (2026-09-30): the phone's own transcripts, stored as record text -- Voice
-        # Memos' on-device transcript and Apple's voicemail transcript. Source-specific
-        # namespaces, so adding them changes no other source's partitions (no code_version bump).
-        "ios_backup/voice_memos/recording",
-        "ios_backup/voicemail/message",
     }
 )
+# (The iPhone backup's Voice Memos and voicemail records were briefly listed here; since v2 they
+# are text units in the message layer instead -- semantic.py's _AUDIO_UNIT_SOURCES -- so they get
+# extraction and topics, and are not stored twice.)
 
 
-def _make_document_unit(source: str, record_id: int, at, body: str) -> dict:
-    truncated = len(body) > _MAX_CHARS
-    return {
-        "source": source,
-        "record_id": record_id,
-        "started_at": at,
-        "ended_at": at,
-        "text": body[:_MAX_CHARS] if truncated else body,
-        "truncated": truncated,
-    }
+def _document_units(source: str, at, body: str, *, record_id=None, asset_id=None) -> list[dict]:
+    """One unit per chunk (v2): a long document or transcript is split at sentence boundaries
+    instead of being cut off at _MAX_CHARS, so all of it is searchable."""
+    return [
+        {"source": source, "record_id": record_id, "asset_id": asset_id, "chunk_index": index,
+         "started_at": at, "ended_at": at, "text": chunk, "truncated": False}
+        for index, chunk in enumerate(chunk_text(body, _MAX_CHARS))
+    ]
+
+
+# Whisper transcripts of kept recordings (media.transcript), for every source whose audio does
+# not already go to the message layer. Most have no capture date (the Google Takeout recordings),
+# so they live in the source's undated partition.
+_TRANSCRIPTS_SQL = """
+    SELECT a.id, t.text, COALESCE(a.captured_at, a.created_at) AS at
+    FROM media.transcript t JOIN assets a ON a.id = t.asset_id
+    WHERE a.source = :source AND a.lifecycle_state = 'active'
+      AND t.status = 'succeeded' AND t.text <> ''
+      AND NOT EXISTS (SELECT 1 FROM media.audio_supersession s WHERE s.asset_id = a.id)
+      AND {window}
+    ORDER BY a.id
+"""
+
+
+def _transcripts(connection: Connection, source: str, window: str, params: dict) -> list:
+    if source in _AUDIO_UNIT_SOURCES:
+        return []
+    return connection.execute(
+        text(_TRANSCRIPTS_SQL.format(window=window)), {"source": source, **params}
+    ).all()
 
 
 def _clear_text_unit_document(connection: Connection, partition_key: str) -> None:
@@ -101,6 +119,9 @@ def _clear_text_unit_document(connection: Connection, partition_key: str) -> Non
     ),
     output_relation="semantic.text_unit_document",
     clear_partition=_clear_text_unit_document,
+    # 2: long documents become several chunked units instead of one cut off at _MAX_CHARS, and
+    # Whisper transcripts (media.transcript) join as asset-backed units (migration 029).
+    code_version="2",
 )
 def semantic_text_unit_document(
     connection: Connection, partition_key: str, epoch_id: int
@@ -124,10 +145,20 @@ def semantic_text_unit_document(
             ),
             {"source": source, "namespaces": list(_NAMESPACE_ALLOWLIST)},
         ).all()
-        fingerprint = fingerprint_value([[r.id, r.text] for r in records])
+        transcripts = _transcripts(
+            connection, source, "COALESCE(a.captured_at, a.created_at) IS NULL", {}
+        )
+        fingerprint = fingerprint_value(
+            [["r", r.id, r.text] for r in records] + [["a", t.id, t.text] for t in transcripts]
+        )
         rows = [
-            {**_make_document_unit(source, r.id, None, r.text), "computed_epoch_id": epoch_id}
+            {**unit, "computed_epoch_id": epoch_id}
             for r in records
+            for unit in _document_units(source, None, r.text, record_id=r.id)
+        ] + [
+            {**unit, "computed_epoch_id": epoch_id}
+            for t in transcripts
+            for unit in _document_units(source, None, t.text, asset_id=t.id)
         ]
         return ComputeResult(input_fingerprint=fingerprint, rows=rows)
 
@@ -153,15 +184,25 @@ def semantic_text_unit_document(
             "window_start": window_start, "window_end": window_end,
         },
     ).all()
-    fingerprint = fingerprint_value([[r.id, r.text] for r in records])
+    transcripts = _transcripts(
+        connection, source,
+        "COALESCE(a.captured_at, a.created_at) >= :window_start "
+        "AND COALESCE(a.captured_at, a.created_at) < :window_end",
+        {"window_start": window_start, "window_end": window_end},
+    )
+    fingerprint = fingerprint_value(
+        [["r", r.id, r.text] for r in records] + [["a", t.id, t.text] for t in transcripts]
+    )
 
     rows = []
     for record in records:
-        if not (start <= record.at.date() < end):
-            continue
-        rows.append(
-            {**_make_document_unit(source, record.id, record.at, record.text), "computed_epoch_id": epoch_id}
-        )
+        if start <= record.at.date() < end:
+            rows += [{**u, "computed_epoch_id": epoch_id}
+                     for u in _document_units(source, record.at, record.text, record_id=record.id)]
+    for t in transcripts:
+        if start <= t.at.date() < end:
+            rows += [{**u, "computed_epoch_id": epoch_id}
+                     for u in _document_units(source, t.at, t.text, asset_id=t.id)]
     return ComputeResult(input_fingerprint=fingerprint, rows=rows)
 
 

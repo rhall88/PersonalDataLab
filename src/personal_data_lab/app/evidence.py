@@ -108,7 +108,7 @@ def _semantic(engine, p, cursor, limit, include_text):
         {
             "kind": "text_unit" if r["kind"] == "message" else "document_text_unit",
             "id": r["id"], "source": r["source"], "occurred_at": r.get("started_at"),
-            "record_id": r.get("record_id"), "text": (r["text"] or "")[:600] if include_text else None,
+            "record_id": r.get("record_id"), "asset_id": r.get("asset_id"), "text": (r["text"] or "")[:600] if include_text else None,
             "distance": float(r["distance"]),
         }
         for r in rows
