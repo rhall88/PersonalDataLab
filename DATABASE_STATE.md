@@ -308,6 +308,17 @@ scratch databases on `pdl-pr13-db`.
 
 ## Do-not-delete list (current) **[DECISION / current policy, not yet automated]**
 
+> **Update 2026-09-29:** items 2 and 4 are retired. Every database in `repo_postgres_data`
+> (4) and `pdl_pr13_postgres_data` (11) was dumped with `pg_dump -Fc`, each dump re-read with
+> `pg_restore --list` from its copy on disk (141-249 TOC entries, zero errors), and recorded
+> with byte size and SHA-256 in `C:\Users\Ryan\Desktop\DataLabBackups\2026-09-29-retired-volumes\MANIFEST.tsv`
+> (plus each instance's `globals_*.sql`). 2.3 GB of dumps replace 17.2 GB of volumes. Five dumps
+> are byte-identical in size to the 2026-09-19 dumps, confirming those databases were untouched
+> since. The volumes, the stopped `pdl-pr13-db` container and the empty
+> `personaldatalab_postgres_data` were then removed. Item 5 (the two anonymous `pdl_test`
+> volumes, 136 MB) is still kept. Item 1 (`DataLabData\`) and item 3 are unchanged: raw exports
+> are never deleted.
+
 1. Everything under `DataLabData\` — raw exports, irreplaceable.
 2. `repo_postgres_data` and `pdl_pr13_postgres_data` — until the canonical DB
    is rebuilt and validated against them.
@@ -486,3 +497,12 @@ means *their* mother, and those stay `candidate` for per-thread review. After re
 downstream resolvers (global run, 397 s, 4/4 partitions succeeded): 1,106 `entity.relation_edge`,
 22 `event.cluster_candidate`, 2 `intent.cluster_candidate`; `know.claim` (1,189) and
 `know.claim_contradiction` (1) unchanged.
+
+**Update 2026-09-29 (disk cleanup): Docker now holds only the canonical instance.**
+`personal-data-db` runs on `pdl_canonical_postgres_data` (canonical `personaldata` 13 GB,
+`personaldata_test` about 100 MB). The only other volumes are the two anonymous `pdl_test` volumes
+(do-not-delete item 5). 23 further anonymous volumes, left behind by throwaway Postgres containers
+during the 2026-09-19..22 test runs, were removed after reading each one's database catalog
+(names only `personaldata_*_test` and `pdl_doctor_fresh_test`). The old `repo_postgres_data` and
+`pdl_pr13_postgres_data` were retired to verified dumps; see the do-not-delete list above.
+`docker_data.vhdx` must be compacted (`Optimize-VHD`, admin) to return freed space to C:.
