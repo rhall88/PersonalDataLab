@@ -516,3 +516,13 @@ matching PR #17's reported size). So the OpenAI acceptance import *was* retained
 contrary to "Did OpenAI ever get imported?" above. All four were dumped and verified into
 `DataLabBackups\2026-09-29-retired-volumes\` (MANIFEST rows tagged `wsl-ubuntu`, plus
 `globals_wsl_ubuntu.sql`); the owner may then remove the distro with `wsl --unregister Ubuntu`.
+
+**Update 2026-09-30: seventh source `ios_backup`, schema 27.** The raw backup is retained (hard
+links) at `DataLabData\iMazing\iPhone 13 Pro backup 2026-09-30\`; it belongs on the do-not-delete
+list with the other raw exports. Canonical now holds 695 `ios_backup` audio assets, 152
+`voice_memo` records (111 with on-device transcript text), 306 `voicemail` records (265 with Apple
+transcript text), and 458 record-to-audio relationships, all resolving. Migration 027 adds
+`media.audio_fingerprint` (1,178 ok, 11 unreadable) and `media.audio_supersession` (158 rows: 54
+exact_duplicate, 37 same_audio, 67 contained_in; detector `contain-v2`). Superseded assets stay in
+`assets` as provenance; Whisper skips them. The v1 voicemail records were deleted and re-imported
+under parser v4 after a same-snapshot conflict (see `PROJECT_STATE.md`).
