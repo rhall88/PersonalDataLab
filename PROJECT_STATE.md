@@ -104,7 +104,31 @@ originals and 4 more are the same audio re-encoded; the iPhone copies win.
 
 **Whisper.** `media_transcribe_whisper` now skips superseded assets and audio whose linked record
 already carries a provider transcript (no `code_version` bump: only provably redundant inputs are
-removed). Remaining: 214 iPhone recordings, 42.2 hours (22.0 hours voiced). Not yet run.
+removed). Remaining: 214 iPhone recordings, 42.2 hours (22.0 hours voiced).
+
+**Whisper run, 2026-09-30 (done, about $0.50 of GPU).** Ry's budget was the $15.27 RunPod balance
+(autopay off). The 214 files were first re-encoded locally to 16 kHz mono Opus (17.4 GB to 541 MB,
+since Whisper resamples to 16 kHz anyway), then transcribed on one Secure Cloud A100 ($1.59/hr, no
+4090s in Secure stock) with `faster-whisper` `large-v3-turbo` and `BatchedInferencePipeline`
+behind a token-guarded upload/results endpoint; about 190x real time, roughly 18 minutes of pod
+time; pod terminated immediately after download. Quality check before the full batch: Whisper on a
+Voice Memo that already had an on-device transcript matched it closely. Two setup defects fixed
+live: `nvidia.*.lib` are namespace packages (`__file__` is None; use `__path__`), and current
+faster-whisper passes PyAV's removed `metadata_errors` argument (pinned `av<14`). Results went in
+through the real derivation path (`derive.sync()` then `worker._process` on the 85 ios_backup
+partitions with `_transcribe_one` swapped for a lookup), with the September hallucination cleaner
+applied (13 transcripts trimmed). Outcome: 214 succeeded (101 with speech; the empty ones are
+ringtones, app sound effects, songs, blank voicemails and near-silent memos -- plus two long MOTIV
+recordings that are probably music), 5 unreadable.
+
+**Downstream, same day.** Migration 028 adds `ios_backup`'s source policy (`intimate`,
+`local_only`); without it the activity derivers refused the source. The document text-unit layer
+now includes `ios_backup/voice_memos/recording` and `ios_backup/voicemail/message` (376 new
+document units, embedded; semantic search finds a Voice Memo by paraphrase). **Open gap, found
+here and pre-existing:** Whisper output in `media.transcript` is not wired into the semantic layer,
+search, or extraction for any source -- 564 non-empty transcripts (including September's 72 hours
+of Google Recorder) are stored but not searchable. LLM-backed steps for the new documents
+(`generative_extract_text_unit`, `signal_annotation_topic`) are dirty and not yet run.
 
 **Environment note.** Smart App Control was enforcing on this machine and intermittently blocked
 unsigned DLLs in the project venv (psycopg, SciPy, scikit-learn) until each passed its reputation

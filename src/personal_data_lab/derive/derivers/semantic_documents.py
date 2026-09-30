@@ -47,6 +47,11 @@ _NAMESPACE_ALLOWLIST: frozenset[str] = frozenset(
         "google_takeout/gemini/conversation/html",
         "google_takeout/gemini_workspace/conversation/txt",
         "apple_privacy/notes/note/record",
+        # iPhone backup (2026-09-30): the phone's own transcripts, stored as record text -- Voice
+        # Memos' on-device transcript and Apple's voicemail transcript. Source-specific
+        # namespaces, so adding them changes no other source's partitions (no code_version bump).
+        "ios_backup/voice_memos/recording",
+        "ios_backup/voicemail/message",
     }
 )
 

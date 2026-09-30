@@ -148,6 +148,7 @@ def pr2_engine() -> Iterator[Engine]:
             connection.exec_driver_sql(_read_migration(25))
             connection.exec_driver_sql(_read_migration(26))
             connection.exec_driver_sql(_read_migration(27))
+            connection.exec_driver_sql(_read_migration(28))
         admin.dispose()
 
 
@@ -451,6 +452,7 @@ def test_migration_010_creates_derive_schemas_and_seeds_local_only_policy(
             "apple": "local_only",
             "google": "local_only",
             "facebook": "local_only",
+            "ios_backup": "local_only",  # migration 028
         }
 
         sensitivity = dict(
@@ -460,6 +462,7 @@ def test_migration_010_creates_derive_schemas_and_seeds_local_only_policy(
         )
         assert sensitivity["imessages"] == ["intimate"]
         assert sensitivity["facebook"] == ["intimate"]
+        assert sensitivity["ios_backup"] == ["intimate"]
         assert sensitivity["openai"] == ["private"]
 
         # Postgres orders ENUM values by declaration, so GREATEST() over egress_level computes
