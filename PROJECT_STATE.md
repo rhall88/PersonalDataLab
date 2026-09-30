@@ -1,6 +1,13 @@
 # PersonalDataLab project state
 
-Updated 2026-09-29 (evening), after UI v1 shipped: `personal-data-lab serve` runs a plain,
+Updated 2026-09-30, after the iPhone backup became a seventh source (`ios_backup`, see
+`IOS_BACKUP_INGESTION_SPEC.md`) and audio de-duplication landed: 836 audio files from an iMazing
+backup of Ry's iPhone (Voice Memos, voicemail, MOTIV, Audio Editor, Files, Notes, Messenger),
+152 Voice Memos (111 with the phone's own transcript) and 306 voicemails (265 with Apple's
+transcript). Owner's rule, applied across every source: keep only the most complete copy of each
+recording. 158 of 1,178 audio assets are now superseded (exact, same-audio, or trimmed copies);
+214 iPhone recordings (42 hours, 22 of speech) still need Whisper. See "iPhone backup source and
+audio de-duplication" below. Updated 2026-09-29 (evening), after UI v1 shipped: `personal-data-lab serve` runs a plain,
 functional local web app (FastAPI + SolidJS) over the whole backend -- Ask (guided planner, optional
 OpenAI-compatible agent), relationships, topics, claims, search, people/identity review,
 saved investigations, and an evidence drawer down to the original thread. See "UI v1" below. Updated 2026-09-29 (later), after the identity bootstrap's first pass: contact cards now bridge
@@ -59,6 +66,49 @@ This file is the current implementation summary. Specifications define contracts
 record format support, and PR reports preserve milestone evidence from the time each PR landed.
 When a historical report's “next frontier” differs from this file or [`ROADMAP.md`](ROADMAP.md),
 this file and the roadmap are authoritative for current sequencing.
+
+## iPhone backup source and audio de-duplication (2026-09-30)
+
+**Acquisition.** Ry made an unencrypted iMazing backup of the iPhone 13 Pro (iOS 26.6.1,
+2026-09-30, 32,229 files, 43.3 GB). It is retained as NTFS hard links at
+`DataLabData\iMazing\iPhone 13 Pro backup 2026-09-30\` (zero extra disk, and immune to iMazing
+rewriting its own folder on the next backup). The earlier 2026-09-24 iMazing attempt was an
+abandoned 2 MB stub.
+
+**Import** (`import-ios-backup-all`, parser `ios-backup-audio-v4`): 836 audio files classified
+by owning app; 141 byte-identical copies short-circuit at import, leaving 695 asset rows. Voice
+Memos' on-device transcripts turned out to live inside each `.m4a` (a `tsrp` atom of JSON), and
+voicemail transcripts in NSKeyedArchiver sidecars; both are stored as record text. Every
+record-to-audio link resolves. Two real findings along the way:
+
+* **Re-delivered voicemails.** Voicemails 629-634 are 623-628 again (same date, caller, length,
+  identical audio, new carrier IDs), so the adapter keeps one record per message (306 of 312 rows).
+* **Same-snapshot parser corrections conflict by design.** v1 records already carried the backup
+  date as authority, so v2/v3 (changed metadata, same backup) were classified `conflicted` rather
+  than guessed. The v1 voicemail records and links (source `ios_backup` only, nothing derived from
+  them yet) were deleted and re-imported under v4; the conflicted runs remain in `import_runs`.
+
+**De-duplication** (`audio-dedup`, `media_dedup.py`, migration 027): acoustic fingerprints for
+1,178 of 1,189 active audio assets (11 unreadable: 2 iMessage attachments never exported, 4 Gmail
+attachments whose Takeout locator fails, 5 corrupt or empty iPhone files), matched by
+containment, fingerprinting on 10 worker processes (decode is the cost; about 25 minutes). Result
+(detector `contain-v2`): 158 superseded -- 54 exact duplicates, 37 same audio, 67 contained in a
+longer recording -- and 1,020 keepers. Spot checks: every non-exact match has coverage 0.99-1.00
+and a block bit error rate of at most 0.23 (unrelated audio sits near 0.5); the highest-error
+matches are Audio Editor effect exports (`reduce_noise_`, `voice_gain_`, `stereo_`) of one
+original, and roughly 40 UUID-named Audio Editor fragments are cuts of two 35-minute recordings.
+`contain-v1` missed one real same-audio pair (a 35-minute recording and its processed twin at bit
+error rate 0.20) because its candidate vote bar scaled with length; v2 caps the bar at 10 votes.
+No voicemail audio was superseded. 14 Apple-export Voice Memos are byte-identical to the iPhone
+originals and 4 more are the same audio re-encoded; the iPhone copies win.
+
+**Whisper.** `media_transcribe_whisper` now skips superseded assets and audio whose linked record
+already carries a provider transcript (no `code_version` bump: only provably redundant inputs are
+removed). Remaining: 214 iPhone recordings, 42.2 hours (22.0 hours voiced). Not yet run.
+
+**Environment note.** Smart App Control was enforcing on this machine and intermittently blocked
+unsigned DLLs in the project venv (psycopg, SciPy, scikit-learn) until each passed its reputation
+check; Ry turned it off on 2026-09-30.
 
 ## Canonical database baseline (2026-09-20)
 

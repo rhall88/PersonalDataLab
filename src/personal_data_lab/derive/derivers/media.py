@@ -173,6 +173,22 @@ def _transcribe_one(asset, epoch_id: int) -> dict:
             os.unlink(tmp_path)
 
 
+# Assets never worth a Whisper pass: a copy another asset makes redundant (media_dedup.py keeps
+# the most complete copy of each recording), and audio whose provider already transcribed it
+# (iPhone Voice Memos' on-device transcript, Apple's voicemail transcript -- stored as the linked
+# record's text). No code_version bump: this only removes inputs that are provably redundant, so
+# every existing partition's output stays correct until it is next recomputed.
+_SKIP_REDUNDANT = (
+    "AND NOT EXISTS (SELECT 1 FROM media.audio_supersession s WHERE s.asset_id = assets.id) "
+    "AND NOT EXISTS (SELECT 1 FROM relationships r JOIN records rec ON rec.source = r.subject_source "
+    "  AND rec.source_record_namespace = r.subject_namespace AND rec.source_record_id = r.subject_source_id "
+    "  WHERE r.object_kind = 'asset' AND r.object_source = assets.source "
+    "  AND r.object_namespace = assets.asset_namespace AND r.object_source_id = assets.source_asset_id "
+    "  AND r.subject_kind = 'record' AND rec.text IS NOT NULL AND rec.metadata ? 'transcript_source' "
+    "  AND rec.metadata->>'transcript_source' IS NOT NULL) "
+)
+
+
 @deriver(
     name="media_transcribe_whisper",
     partition_class="LOCAL",
@@ -190,7 +206,7 @@ def media_transcribe_whisper(connection: Connection, partition_key: str, epoch_i
         rows = connection.execute(
             text(
                 "SELECT id, source, original_path, filename FROM assets "
-                "WHERE source = :source AND mime_type LIKE 'audio/%' "
+                "WHERE source = :source AND mime_type LIKE 'audio/%' " + _SKIP_REDUNDANT +
                 "AND lifecycle_state = 'active' AND COALESCE(captured_at, created_at) IS NULL "
                 "ORDER BY id"
             ),
@@ -200,7 +216,7 @@ def media_transcribe_whisper(connection: Connection, partition_key: str, epoch_i
         rows = connection.execute(
             text(
                 "SELECT id, source, original_path, filename FROM assets "
-                "WHERE source = :source AND mime_type LIKE 'audio/%' "
+                "WHERE source = :source AND mime_type LIKE 'audio/%' " + _SKIP_REDUNDANT +
                 "AND lifecycle_state = 'active' "
                 "AND COALESCE(captured_at, created_at) >= :start "
                 "AND COALESCE(captured_at, created_at) < :end "

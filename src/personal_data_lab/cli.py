@@ -76,6 +76,10 @@ from .identity_rules import run_rules_tier
 from .imessages.inventory import inspect_imessages
 from .imessages.inventory import render_inventory_table as render_imessages_table
 from .imessages.orchestrator import import_imessages_all
+from .ios_backup.inventory import inspect_ios_backup
+from .ios_backup.inventory import render_inventory_table as render_ios_backup_table
+from .ios_backup.orchestrator import import_ios_backup_all
+from .media_dedup import fingerprint_assets, rebuild_supersessions
 from .migrations import LATEST_SCHEMA_VERSION, current_schema_version, migrate_database
 from .openai_export.inventory import inspect_openai
 from .openai_export.orchestrator import import_openai_all
@@ -212,6 +216,24 @@ def _parser() -> argparse.ArgumentParser:
     )
     facebook_all.add_argument("source", help="Facebook export ZIP or directory of ZIPs")
     facebook_all.add_argument("--database-url", help="overrides DATABASE_URL from .env")
+    audio_dedup = subparsers.add_parser(
+        "audio-dedup",
+        help="fingerprint audio assets and mark every redundant copy (keeps the most complete one)",
+    )
+    audio_dedup.add_argument("--source", action="append", help="only fingerprint this source (repeatable)")
+    audio_dedup.add_argument("--match-only", action="store_true", help="skip fingerprinting; re-match only")
+    audio_dedup.add_argument("--database-url", help="overrides DATABASE_URL from .env")
+    inspect_ios_parser = subparsers.add_parser(
+        "inspect-ios-backup",
+        help="inventory the audio in an unencrypted iOS device backup (iMazing/Finder format)",
+    )
+    inspect_ios_parser.add_argument("source", help="backup folder containing Manifest.db")
+    ios_all = subparsers.add_parser(
+        "import-ios-backup-all",
+        help="import every audio file, Voice Memo and voicemail from an iOS device backup",
+    )
+    ios_all.add_argument("source", help="backup folder containing Manifest.db")
+    ios_all.add_argument("--database-url", help="overrides DATABASE_URL from .env")
     inspect_imessages_parser = subparsers.add_parser(
         "inspect-imessages",
         help="inventory independently acquired iMazing Messages CSV exports",
@@ -1293,6 +1315,35 @@ def main(argv: Sequence[str] | None = None) -> int:
         else:
             print(json.dumps(inventory.public_dict(include_paths=args.include_paths), indent=2))
         return 5 if inventory.unknown_members_count else 0
+    if args.command == "audio-dedup":
+        engine = _resolve_guarded_engine(args.database_url, canonical_import=False)
+        if not args.match_only:
+
+            def fp_progress(index: int, total: int, label: str) -> None:
+                if index == total or index % 25 == 0:
+                    print(f"[audio-dedup] fingerprinted {index}/{total} last={label}", flush=True)
+
+            print(json.dumps(fingerprint_assets(engine, sources=args.source, on_progress=fp_progress)))
+        print(json.dumps(rebuild_supersessions(engine), indent=2))
+        return 0
+    if args.command == "inspect-ios-backup":
+        print(render_ios_backup_table(inspect_ios_backup(args.source)))
+        return 0
+    if args.command == "import-ios-backup-all":
+        engine = _resolve_guarded_engine(args.database_url, canonical_import=True)
+        last = {"pct": -1}
+
+        def progress(product: str, index: int, total: int) -> None:
+            pct = index * 100 // total
+            if pct != last["pct"] and pct % 5 == 0:
+                last["pct"] = pct
+                print(f"[ios-backup] {index}/{total} audio files ({pct}%) last={product}", flush=True)
+
+        summary = import_ios_backup_all(engine, args.source, on_progress=progress)
+        for path in summary.failed_paths:
+            print(f"[ios-backup] failed {path}", file=sys.stderr)
+        print(json.dumps(summary.model_dump(), indent=2))
+        return summary.exit_code
     if args.command == "import-facebook-all":
         engine = _resolve_guarded_engine(args.database_url, canonical_import=True)
         summary = import_facebook_all(
