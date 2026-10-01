@@ -78,7 +78,7 @@ from .imessages.inventory import render_inventory_table as render_imessages_tabl
 from .imessages.orchestrator import import_imessages_all
 from .ios_backup.inventory import inspect_ios_backup
 from .ios_backup.inventory import render_inventory_table as render_ios_backup_table
-from .ios_backup.orchestrator import import_ios_backup_all
+from .ios_backup.orchestrator import import_ios_backup_all, import_ios_messages
 from .media_dedup import fingerprint_assets, rebuild_supersessions
 from .migrations import LATEST_SCHEMA_VERSION, current_schema_version, migrate_database
 from .openai_export.inventory import inspect_openai
@@ -234,6 +234,16 @@ def _parser() -> argparse.ArgumentParser:
     )
     ios_all.add_argument("source", help="backup folder containing Manifest.db")
     ios_all.add_argument("--database-url", help="overrides DATABASE_URL from .env")
+    ios_messages = subparsers.add_parser(
+        "import-ios-messages",
+        help="import the Messages the iMazing CSV source lacks from an iOS backup's own sms.db",
+    )
+    ios_messages.add_argument("source", help="backup folder containing Manifest.db")
+    ios_messages.add_argument(
+        "--snapshot", action="append", default=[],
+        help="an older copy of the same Messages database (sms.db/chat.db); repeatable",
+    )
+    ios_messages.add_argument("--database-url", help="overrides DATABASE_URL from .env")
     inspect_imessages_parser = subparsers.add_parser(
         "inspect-imessages",
         help="inventory independently acquired iMazing Messages CSV exports",
@@ -1344,6 +1354,17 @@ def main(argv: Sequence[str] | None = None) -> int:
             print(f"[ios-backup] failed {path}", file=sys.stderr)
         print(json.dumps(summary.model_dump(), indent=2))
         return summary.exit_code
+    if args.command == "import-ios-messages":
+        engine = _resolve_guarded_engine(args.database_url, canonical_import=True)
+
+        def chunk_done(category: str, index: int, _total: int) -> None:
+            print(f"[ios-messages] imported chunk {index} {category}", flush=True)
+
+        summary = import_ios_messages(
+            engine, args.source, snapshots=tuple(args.snapshot), on_progress=chunk_done
+        )
+        print(json.dumps(summary.model_dump(), indent=2))
+        return 0
     if args.command == "import-facebook-all":
         engine = _resolve_guarded_engine(args.database_url, canonical_import=True)
         summary = import_facebook_all(

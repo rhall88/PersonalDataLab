@@ -48,11 +48,14 @@ _EMBEDDING_DIMENSIONS = 384
 _SOURCE_EVENT_TYPES: dict[str, tuple[str, ...]] = {
     "facebook": ("message",),
     "imessages": ("message.incoming", "message.outgoing"),
+    # The device's own Messages database, holding only what the CSV source lacks (see
+    # ios_backup/messages.py). Its own source, so no existing imessages partition changes.
+    "ios_messages": ("message.incoming", "message.outgoing"),
     "openai": ("conversation_message",),
     "anthropic": ("conversation_message",),
     "google": ("mail_message",),
 }
-_SESSION_GROUPED_SOURCES = frozenset({"facebook", "imessages"})
+_SESSION_GROUPED_SOURCES = frozenset({"facebook", "imessages", "ios_messages"})
 _WHOLE_CONVERSATION_SOURCES = frozenset({"openai", "anthropic"})
 _PER_MESSAGE_SOURCES = frozenset({"google"})
 

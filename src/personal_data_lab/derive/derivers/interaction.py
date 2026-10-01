@@ -1,5 +1,6 @@
 """Phase 4's interaction dynamics + interaction states (PHASE4_IMPLEMENTATION_PLAN.md decisions
-9-10), scoped to facebook + imessages 1:1 threads only -- google has no conversation_id at all
+9-10), scoped to facebook + imessages 1:1 threads only (imessages including the device Messages
+source, ios_messages) -- google has no conversation_id at all
 (confirmed: 0 of 164,063 rows) and its actor_identity values are dominated by automated senders,
 not correspondents; anthropic/openai are a chat with an assistant, not a person. A thread only
 qualifies when it resolves to exactly one non-owner correspondent -- this project has no
@@ -116,14 +117,21 @@ def _imessages_threads(connection: Connection) -> dict[tuple[str, str], list[Thr
     # message.outgoing always carries the literal actor_identity "unknown" (imessages' importer
     # never resolves the account owner's own identity), never a real value -- so only
     # message.incoming rows can identify who a thread's correspondent is.
+    #
+    # The device's own Messages database (`ios_messages`) holds the iMessages the CSV export
+    # lacks, under the same handles and the same owner sentinel, so its threads count as
+    # iMessages too: both sources feed one ("imessages", correspondent) series. Its copies of
+    # messages the CSV already has (photo captions the CSV dropped, metadata `csv_twin`) are
+    # skipped, since the CSV copy is already counted.
     rows = connection.execute(
         text(
             """
             SELECT conversation_id, occurred_at, event_type, actor_identity
             FROM events
-            WHERE source = 'imessages' AND lifecycle_state = 'active'
+            WHERE source IN ('imessages', 'ios_messages') AND lifecycle_state = 'active'
               AND event_type IN ('message.incoming', 'message.outgoing')
               AND conversation_id IS NOT NULL AND occurred_at IS NOT NULL
+              AND NOT (metadata ? 'csv_twin')
             ORDER BY conversation_id, occurred_at
             """
         )
@@ -245,6 +253,9 @@ def _clear_all(table: str):
     output_relation="measure.interaction_dynamics",
     inputs=("measure_coverage",),
     clear_partition=_clear_all("measure.interaction_dynamics"),
+    # v2: iMessage threads also read the device Messages source (ios_messages), see
+    # _imessages_threads.
+    code_version="2",
 )
 def measure_interaction_dynamics(connection: Connection, partition_key: str, epoch_id: int) -> ComputeResult:
     all_threads = _all_correspondent_threads(connection)
@@ -274,6 +285,8 @@ def measure_interaction_dynamics(connection: Connection, partition_key: str, epo
     output_relation="signal.interaction_state",
     inputs=("measure_coverage",),
     clear_partition=_clear_all("signal.interaction_state"),
+    # v2: same input change as measure_interaction_dynamics v2.
+    code_version="2",
 )
 def signal_interaction_state(connection: Connection, partition_key: str, epoch_id: int) -> ComputeResult:
     all_threads = _all_correspondent_threads(connection)

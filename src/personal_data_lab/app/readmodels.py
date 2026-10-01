@@ -19,6 +19,10 @@ from ..identity_contacts import contact_proposals
 from ..identity_normalize import ROLE_LABELS, normalize_name
 
 RELATIONSHIP_SOURCES = ("facebook", "imessages")
+# The device's own Messages database (ios_messages) fills gaps in the iMessage CSV source under the
+# same handles; the interaction metrics already fold it into "imessages", so relationship views
+# treat its identity links and messages as iMessage ones.
+MESSAGE_SOURCE_ALIASES = {"ios_messages": "imessages"}
 
 
 class NotFound(ValueError):
@@ -89,17 +93,17 @@ def key_identities(engine: Engine, key: str) -> tuple[str, list[tuple[str, str]]
             ).scalar_one_or_none()
             if person is None:
                 raise NotFound(f"no person {ref}")
-            idents = [
-                (s, v)
-                for s, v in connection.execute(
-                    text(
-                        "SELECT source, identity_value FROM identity_links WHERE person_id = :id "
-                        "AND lifecycle_state = 'active' ORDER BY source, identity_value"
-                    ),
-                    {"id": ref},
-                )
-                if s in RELATIONSHIP_SOURCES
-            ]
+            idents: list[tuple[str, str]] = []
+            for s, v in connection.execute(
+                text(
+                    "SELECT source, identity_value FROM identity_links WHERE person_id = :id "
+                    "AND lifecycle_state = 'active' ORDER BY source, identity_value"
+                ),
+                {"id": ref},
+            ):
+                s = MESSAGE_SOURCE_ALIASES.get(s, s)
+                if s in RELATIONSHIP_SOURCES and (s, v) not in idents:
+                    idents.append((s, v))
             return person, idents, ref
     source, value = ref
     return value, [(source, value)], None
@@ -325,8 +329,13 @@ def relationships(
                 SELECT d.source, d.correspondent, d.bucket_start, d.messages_in, d.messages_out,
                        d.initiation_share, il.person_id, p.display_name
                 FROM measure.interaction_dynamics d
-                LEFT JOIN identity_links il ON il.source = d.source
-                     AND il.identity_value = d.correspondent AND il.lifecycle_state = 'active'
+                LEFT JOIN LATERAL (
+                    SELECT person_id FROM identity_links
+                    WHERE identity_value = d.correspondent AND lifecycle_state = 'active'
+                      AND (source = d.source OR (d.source = 'imessages' AND source = 'ios_messages'))
+                    ORDER BY source = d.source DESC
+                    LIMIT 1
+                ) il ON TRUE
                 LEFT JOIN people p ON p.id = il.person_id
                 WHERE d.bucket_start >= :start AND d.bucket_start < :end
                   AND (CAST(:source AS text) IS NULL OR d.source = :source)
@@ -496,21 +505,28 @@ def relationship_messages(
     label, idents, _ = key_identities(engine, key)
     collected = []
     total = 0
+    # An iMessage relationship also lists the device Messages source's messages in the same handle's
+    # threads (never its copies of CSV messages, metadata `csv_twin`).
+    queries = [
+        (s, value)
+        for ident_source, value in idents
+        for s in (ident_source, *[a for a, b in MESSAGE_SOURCE_ALIASES.items() if b == ident_source])
+    ]
     with engine.connect() as c:
-        for source, value in idents:
+        for source, value in queries:
             owner = _owner_for(source, c)
             params = {
                 "source": source, "value": value, "owner": owner, "start": start, "end": end,
                 "roles": list(ROLE_LABELS), "take": cursor + limit,
                 "message_types": ["message.incoming", "message.outgoing"]
-                if source == "imessages" else ["message"],
+                if source != "facebook" else ["message"],
             }
             conv_sql = """
                 WITH conv AS (
                     SELECT conversation_id FROM events
                     WHERE source = :source AND conversation_id IS NOT NULL
                       AND lifecycle_state = 'active'
-                      AND ((:source = 'imessages' AND event_type = 'message.incoming')
+                      AND ((:source <> 'facebook' AND event_type = 'message.incoming')
                         OR (:source = 'facebook' AND event_type = 'message'
                             AND actor_identity IS DISTINCT FROM :owner
                             AND lower(coalesce(actor_identity, '')) <> ALL(:roles)))
@@ -523,6 +539,7 @@ def relationship_messages(
                     conv_sql
                     + "SELECT count(*) FROM events e JOIN conv USING (conversation_id) "
                     "WHERE e.source = :source AND e.lifecycle_state = 'active' "
+                    "AND NOT (e.metadata ? 'csv_twin') "
                     "AND e.event_type = ANY(:message_types) "
                     "AND e.occurred_at >= :start AND e.occurred_at < :end"
                 ),
@@ -536,6 +553,7 @@ def relationship_messages(
                            e.conversation_id, left(e.text, 2000) AS text
                     FROM events e JOIN conv USING (conversation_id)
                     WHERE e.source = :source AND e.lifecycle_state = 'active'
+                      AND NOT (e.metadata ? 'csv_twin')
                       AND e.event_type = ANY(:message_types)
                       AND e.occurred_at >= :start AND e.occurred_at < :end
                     ORDER BY e.occurred_at DESC, e.id DESC
@@ -545,7 +563,7 @@ def relationship_messages(
                 params,
             ).mappings().all()
             for r in rows:
-                if source == "imessages":
+                if source != "facebook":
                     direction = "in" if r["event_type"] == "message.incoming" else "out"
                 else:
                     direction = "out" if r["actor_identity"] == owner else "in"
