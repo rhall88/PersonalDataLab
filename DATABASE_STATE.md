@@ -556,3 +556,10 @@ mentions. 1,616 new name-mention candidates (Ryan, Veyda, Sarah, Chris, Cody, Ly
 and bare "mom"/"dad") await confirmation. Raw inputs, never to delete: the backup folder and
 `DataLabData\iMazing\chat.db snapshot 2026-04-03\chat.db`. Every active partition is clean; the
 only dirty partitions belong to retired deriver versions.
+
+**Update 2026-09-30 (night, later): `ios_messages` name mentions confirmed.** Ryan confirmed 1,418
+of the 1,616 pending `ios_messages` name-mention candidates into `entity.person_link` (15 people;
+active person links now 17,114). The 198 held back are the bare kinship words "mom" (130) and
+"dad" (68), as with every earlier bulk confirmation. `event_resolve_candidates` and
+`intent_resolve_candidates` were re-dirtied and re-run afterwards (they read the confirmed links
+but are not invalidated by a confirmation); both succeeded. Every active partition is clean.
