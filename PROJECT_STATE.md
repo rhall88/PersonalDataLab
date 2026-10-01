@@ -216,6 +216,12 @@ this session: about $2.15 (Whisper 0.50, audio LLM 0.38, Messages LLM 1.27).
 
 **Identity.** Of the 117 new person-link candidates from the phone audio, Ry confirmed 89 on
 2026-09-30; the 28 bare "mom"/"dad" mentions are held back, as with the earlier bulk confirmation.
+The Messages units' name mentions followed: 1,418 of 1,616 confirmed the same night (198 bare
+"mom"/"dad" held back), then the event/intent resolvers were re-dirtied and re-run (a confirmation
+does not invalidate them).
+
+**Where to resume.** The remaining iPhone-backup products, Contacts first (names the unknown
+phone numbers in group chats), then Notes, Calendar and photos; then "find my stuff" (see ROADMAP).
 
 ## Canonical database baseline (2026-09-20)
 
