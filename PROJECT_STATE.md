@@ -167,6 +167,56 @@ are harmless records, not used.
 unsigned DLLs in the project venv (psycopg, SciPy, scikit-learn) until each passed its reputation
 check; Ry turned it off on 2026-09-30.
 
+## iPhone Messages: source `ios_messages` (2026-09-30)
+
+Ry's priority after the audio work: the iPhone backup is the most important source, and Messages
+first. Full design and grounding are in `IOS_BACKUP_INGESTION_SPEC.md` ("Messages"); this is the
+rollout record.
+
+**Decision (Ry, option A).** The CSV source `imessages` stays the copy of record for the 66,365
+messages it shares with the phone (all 74 months already extracted, about $9 to redo); the
+phone's `sms.db` is imported as its own source holding only what the CSV lacks, for about $1-2 of
+GPU instead of $9-10. Switching the phone to master copy later (option B) stays possible.
+
+**Why messages before 2020-08-28 are gone.** The earliest row on the phone is 2020-08-28; there
+are no deletion records or hidden older rows. Ry had one iPhone 6s from about 2014 to 2021, then
+the iPhone 13, so this is not a phone change: the history was removed on the device (most
+likely an earlier "Keep Messages: 1 Year" setting; it is "Forever" now). Only an old backup of the
+6s could hold older texts; none is known to exist.
+
+**Import** (`import-ios-messages`, parser `ios-messages-v1`, migration 030 policy row, contract
+2020-08-28 to 2026-09-30): the backup's `sms.db` plus the 2026-04-03 `chat.db` copy found on the
+Desktop (copied into `DataLabData\iMazing\chat.db snapshot 2026-04-03\`; sha256
+`7fe6a131...`). 93,034 GUID-unique device messages; 66,365 matched to the CSV; imported 18,191
+messages (1,198 only in the April copy), 5,862 reactions, 175 group notices, 85 edits, 477
+deleted messages (kept, `provider_deleted`), 746 photo captions the CSV dropped (`csv_twin`
+copies, never counted twice), 3,021 attachment links (128 files present; the rest are
+iCloud-only), 66,365 `csv_message_on_device` links, 18 identity links mirrored from confirmed
+CSV identities. 28 chunks, 0 conflicts. The first run stopped at chunk 27 (one photo attached to
+two messages produced a duplicate asset in one chunk); fixed to one asset per attachment and
+re-run, the 26 committed chunks short-circuiting.
+
+**Downstream.** `ios_messages` text units use the same 45-minute sessions (4,965 units, 1.28M
+characters, embedded on CPU in 12 minutes). Interaction dynamics/states fold the device threads
+into the `imessages` correspondent series (v2, promoted); daily metrics gained three
+`ios_messages.*` metrics that the messaging total adds when known but does not require
+(`measure_metric_daily_global` v2, promoted); the app's relationship views read both sources.
+
+**GPU extraction + topics for the 4,965 units (about $1.27).** Same recipe as the audio run: Secure
+A100 ($1.59/hr, pod 00:34-01:22 UTC), `llama.cpp` `-np 16 -c 131072 --no-cache-prompt`, API-key
+locked, the pinned Phi-3.5-mini weights; prompts built locally with the real `_bounded_prompt`
+functions. 9,930 requests (4,965 extraction + 4,965 topic) in 44 minutes, 0 failures, 0 hitting the
+token cap, 1.14M generated tokens; applied through `worker._process` with `_extract_one` /
+`_annotate_one` swapped for lookups. Then every dependent step ran: 12,915 entity mentions, 9,081
+relation candidates, 1,902 time resolutions, topic clusters rebuilt (75,717 units, about 35
+minutes of CPU). The global resolvers first ran before mention extraction (the worker does not
+propagate downstream), so the baseline, anomaly, episode, entity/event/intent resolver and claim
+steps were re-dirtied and re-run afterwards, in order. Running total of Ry's $15.27 balance spent
+this session: about $2.15 (Whisper 0.50, audio LLM 0.38, Messages LLM 1.27).
+
+**Identity.** Of the 117 new person-link candidates from the phone audio, Ry confirmed 89 on
+2026-09-30; the 28 bare "mom"/"dad" mentions are held back, as with the earlier bulk confirmation.
+
 ## Canonical database baseline (2026-09-20)
 
 One durable database — `personaldata`, on the dedicated `pdl_canonical_postgres_data` Docker
