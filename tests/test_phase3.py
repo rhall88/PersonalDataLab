@@ -164,10 +164,10 @@ def _metric_value(engine: Engine, name: str, day: str) -> float | None:
         ).scalar_one_or_none()
 
 
-# --- exit test 1: derive sync upserts exactly 20 metric_def rows with their dependencies ------
+# --- exit test 1: derive sync upserts exactly 23 metric_def rows with their dependencies ------
 
 
-def test_sync_upserts_twenty_metric_defs_with_dependencies(database_engine: Engine) -> None:
+def test_sync_upserts_twenty_three_metric_defs_with_dependencies(database_engine: Engine) -> None:
     derive_sync(database_engine)
     with database_engine.connect() as connection:
         names = set(connection.execute(text("SELECT name FROM derive.metric_def")).scalars())
@@ -175,8 +175,8 @@ def test_sync_upserts_twenty_metric_defs_with_dependencies(database_engine: Engi
             text("SELECT COUNT(DISTINCT metric_id) FROM derive.metric_dependency")
         ).scalar_one()
 
-    assert len(names) == 20
-    assert dependency_count == 20
+    assert len(names) == 23
+    assert dependency_count == 23
     assert "communication.unique_correspondents_count" in names
     assert "messaging.total_messages_count" in names
 

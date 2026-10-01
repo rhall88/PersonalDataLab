@@ -49,9 +49,12 @@ class CompositeSpec:
     # (Decision 5). Empty for communication.unique_correspondents_count, which is computed
     # directly from events rather than summed from other metrics.
     constituents: tuple[str, ...]
+    # Added when known that day but never required: a source that only fills gaps in a required
+    # one (ios_messages beside imessages) must not make the total unknown on days it has no row.
+    optional: tuple[str, ...] = ()
 
 
-# 17 per-source metrics, grounded directly against the real database's (source, event_type)
+# 20 per-source metrics, grounded directly against the real database's (source, event_type)
 # breakdown -- see PHASE3_IMPLEMENTATION_PLAN.md's grounding section for the counts.
 METRIC_CATALOG: tuple[MetricSpec, ...] = (
     MetricSpec(
@@ -91,6 +94,20 @@ METRIC_CATALOG: tuple[MetricSpec, ...] = (
             "message.incoming", "message.outgoing", "message.reaction", "message.edit",
             "message.notification", "message.reaction_removed", "message.deletion",
         ),
+    ),
+    # The device's own Messages database holds only the iMessages the CSV export lacks (see
+    # ios_backup/messages.py), so these count messages on top of imessages.*, never the same ones.
+    MetricSpec(
+        "ios_messages.incoming_count", "iMessages received that day that only the phone's own database has.",
+        "count", "ios_messages", "event", "count", ("message.incoming",),
+    ),
+    MetricSpec(
+        "ios_messages.outgoing_count", "iMessages sent that day that only the phone's own database has.",
+        "count", "ios_messages", "event", "count", ("message.outgoing",),
+    ),
+    MetricSpec(
+        "ios_messages.reactions_count", "iMessage reactions that day that only the phone's own database has.",
+        "count", "ios_messages", "event", "count", ("message.reaction",),
     ),
     MetricSpec(
         "google.mail_messages_count", "Gmail messages that day.",
@@ -139,19 +156,26 @@ METRIC_CATALOG: tuple[MetricSpec, ...] = (
 _UNIQUE_CORRESPONDENTS_SOURCES: dict[str, tuple[str, ...]] = {
     "facebook": ("message", "call"),
     "imessages": ("message.incoming", "message.outgoing"),
+    "ios_messages": ("message.incoming", "message.outgoing"),
     "google": ("mail_message", "chat_message", "voice_communication", "meet_call"),
 }
+# The device Messages source shares the CSV source's handles: a correspondent seen in both is one
+# iMessage correspondent, not two. It only fills gaps, so its coverage is not required for a day.
+_CORRESPONDENT_SOURCE_ALIAS = {"ios_messages": "imessages"}
+_OPTIONAL_CORRESPONDENT_SOURCES = frozenset({"ios_messages"})
 
 COMPOSITE_CATALOG: tuple[CompositeSpec, ...] = (
     CompositeSpec(
         "messaging.total_messages_count",
-        "Total message-like communication (Facebook messages, iMessages, Gmail, Google Chat) "
+        "Total message-like communication (Facebook messages, iMessages from both the CSV export "
+        "and the phone's own database, Gmail, Google Chat) "
         "that day.",
         "count",
         (
             "facebook.messages_count", "imessages.incoming_count", "imessages.outgoing_count",
             "google.mail_messages_count", "google.chat_messages_count",
         ),
+        optional=("ios_messages.incoming_count", "ios_messages.outgoing_count"),
     ),
     CompositeSpec(
         "ai_chat.total_turns_count",
@@ -180,7 +204,7 @@ def _dependencies_for(spec: MetricSpec | CompositeSpec) -> set[tuple[str, str]]:
     if not spec.constituents:
         return {(source, "event") for source in _UNIQUE_CORRESPONDENTS_SOURCES}
     deps: set[tuple[str, str]] = set()
-    for name in spec.constituents:
+    for name in (*spec.constituents, *spec.optional):
         deps |= _dependencies_for(_METRIC_LOOKUP[name])
     return deps
 
@@ -291,6 +315,7 @@ def measure_metric_daily(connection: Connection, partition_key: str, epoch_id: i
             WHERE source = :source
               AND lifecycle_state = 'active'
               AND occurred_at IS NOT NULL
+              AND NOT (metadata ? 'csv_twin')
               AND (occurred_at AT TIME ZONE :tz)::date >= :start
               AND (occurred_at AT TIME ZONE :tz)::date < :end
             ORDER BY id
@@ -350,6 +375,9 @@ def _clear_metric_daily_global(connection: Connection, partition_key: str) -> No
     output_relation="measure.metric_daily",
     inputs=("measure_metric_daily",),
     clear_partition=_clear_metric_daily_global,
+    # v2: messaging.total_messages_count also sums ios_messages.*; unique correspondents count a
+    # handle seen in imessages and ios_messages once.
+    code_version="2",
 )
 def measure_metric_daily_global(connection: Connection, partition_key: str, epoch_id: int) -> ComputeResult:
     metric_ids = dict(connection.execute(text("SELECT name, id FROM derive.metric_def")).all())
@@ -360,26 +388,29 @@ def measure_metric_daily_global(connection: Connection, partition_key: str, epoc
         if not spec.constituents:
             continue
         constituent_ids = sorted(metric_ids[name] for name in spec.constituents)
+        optional_ids = sorted(metric_ids[name] for name in spec.optional)
         per_day = connection.execute(
             text(
                 """
-                SELECT bucket_start, array_agg(metric_id ORDER BY metric_id) AS present_ids,
+                SELECT bucket_start,
+                       array_agg(metric_id ORDER BY metric_id) FILTER (WHERE metric_id = ANY(:required))
+                           AS present_ids,
                        SUM(value) AS total
                 FROM measure.metric_daily
                 WHERE metric_id = ANY(:ids)
                 GROUP BY bucket_start
                 """
             ),
-            {"ids": constituent_ids},
+            {"ids": constituent_ids + optional_ids, "required": constituent_ids},
         ).all()
         fingerprint_parts.append(
             [
                 spec.name,
-                [[row.bucket_start.isoformat(), list(row.present_ids), str(row.total)] for row in per_day],
+                [[row.bucket_start.isoformat(), list(row.present_ids or []), str(row.total)] for row in per_day],
             ]
         )
         for row in per_day:
-            if list(row.present_ids) != constituent_ids:
+            if list(row.present_ids or []) != constituent_ids:
                 continue  # not every constituent known that day -- no fabricated partial sum
             output_rows.append(
                 {
@@ -413,14 +444,15 @@ def measure_metric_daily_global(connection: Connection, partition_key: str, epoc
                 FROM events
                 WHERE source = :source AND lifecycle_state = 'active'
                   AND occurred_at IS NOT NULL AND event_type = ANY(:types)
-                  AND actor_identity IS NOT NULL
+                  AND actor_identity IS NOT NULL AND NOT (metadata ? 'csv_twin')
                 """
             ),
             {"source": source, "tz": timezone_name, "types": list(event_types)},
         ).all()
         pairs_by_source[source] = [(row.day, row.actor_identity) for row in rows]
 
-    common_days = set.intersection(*days_by_source.values()) if days_by_source else set()
+    required_days = [d for s, d in days_by_source.items() if s not in _OPTIONAL_CORRESPONDENT_SOURCES]
+    common_days = set.intersection(*required_days) if required_days else set()
     correspondents_by_day: dict[date, set[tuple[str, str]]] = {}
     for source, pairs in pairs_by_source.items():
         for day, actor_identity in pairs:
@@ -428,7 +460,9 @@ def measure_metric_daily_global(connection: Connection, partition_key: str, epoc
                 continue
             if classify(actor_identity) == "role_label":
                 continue
-            correspondents_by_day.setdefault(day, set()).add((source, actor_identity))
+            correspondents_by_day.setdefault(day, set()).add(
+                (_CORRESPONDENT_SOURCE_ALIAS.get(source, source), actor_identity)
+            )
 
     unique_metric_id = metric_ids["communication.unique_correspondents_count"]
     fingerprint_parts.append(

@@ -102,6 +102,7 @@ Three layers, none of which deletes anything:
 ```
 personal-data-lab inspect-ios-backup "<backup folder>"
 personal-data-lab import-ios-backup-all "<backup folder>"
+personal-data-lab import-ios-messages "<backup folder>" [--snapshot "<older chat.db>"]
 ```
 
 Import is restart-safe: each ParsedExport is idempotent, and a re-run short-circuits unchanged files.
@@ -110,7 +111,77 @@ of the same device updates them. A changed parse of the *same* backup is a confl
 importer never guesses between equal-authority claims), which is why the first real import went
 through parser versions v1 to v4; see `PROJECT_STATE.md`.
 
+## Messages: source `ios_messages` (v1.2, 2026-09-30)
+
+The phone's own Messages database (`HomeDomain` `Library/SMS/sms.db`, with its `-wal`/`-shm`)
+is the device's record of every iMessage, SMS and RCS it still holds. The iMazing CSV source
+`imessages` already carries most of that history and every one of its 74 months is extracted, so
+the CSV stays the copy of record for the messages it has, and the device database fills the gaps
+as its own source, `ios_messages`. A separate source keeps every `imessages` partition untouched
+(no re-extraction); downstream, the two read as one iMessage history (see "Downstream" below).
+
+**Grounding (the 2026-09-30 backup).** 91,765 device rows, 2020-08-28 to 2026-09-30 (nothing
+older survives on the phone: Keep Messages is now "Forever", the older history was removed on the
+device before that). Matching rule: a device message equals a CSV message when both fall in the
+same second (+-1 s) with the same direction, decided one-to-one in time order. 66,365 match.
+Of the 16,218 device messages with no CSV twin, 96% sit in blocks with no CSV message within 45
+minutes (RCS threads, chats deleted before the CSV export, everything after the export of
+2026-09-09), so importing them on their own loses no conversational context. Of the matched pairs,
+746 have text on the device but none in the CSV (photo captions the CSV dropped); the other text
+differences are cosmetic (the CSV turns double quotes into single quotes and drops U+FFFC).
+
+**Older copies of the same database.** `import-ios-messages --snapshot <chat.db>` reads older
+copies too; messages are keyed by Apple's GUID and the backup wins. The 2026-04-03 copy (kept as
+`DataLabData/iMazing/chat.db snapshot 2026-04-03/chat.db`) holds 1,198 messages since deleted from
+the phone and absent from the CSV.
+
+**What is imported** (`ios_backup/messages.py`):
+
+| Device row | Becomes |
+|---|---|
+| message with no CSV twin | `message.incoming` / `message.outgoing` event (`sms_db/message`, id = Apple GUID) in its chat's conversation |
+| message whose CSV twin has no text but the device copy does | the same event, metadata `csv_twin`, plus a `more_complete_copy_of` relationship to the CSV event; counts skip it |
+| reaction (associated type 2000-3999) on an imported message, or on a CSV message the CSV shows no reaction for at that second | `message.reaction` / `message.reaction_removed` (`sms_db/reaction`), `reaction_to_message` relationship (to the CSV event when the target is one) |
+| group notice (item_type <> 0) with no CSV notification at that second | `message.notification` |
+| edit / Recently Deleted entry of an imported message | `message.edit` / `message.deletion` events; a deleted message is `provider_deleted` |
+| reply (`thread_originator_guid`) | `message_replies_to` relationship |
+| attachment of an imported message | asset `sms_db/attachment` (id = attachment GUID), hashed when the file is in the backup, else a reference with `available_locally: false`; a file the audio import already holds is linked, not stored again; one asset per attachment even when several messages share it |
+| every matched CSV message | `csv_message_on_device` relationship from the CSV event to its device chat, carrying the GUID, service, device time and attachment GUIDs |
+
+Text is `text`, or the string decoded from `attributedBody` (typedstream NSAttributedString) when
+`text` is NULL; the decoder reproduces `text` exactly on all 77,065 rows that have both. U+FFFC
+placeholders are removed and counted. Handles drop iOS's SMS-filter suffixes (`(smsft)`,
+`(smsfp)`); the owner's messages carry the CSV source's owner sentinel `unknown`. Conversations
+are the device chats (title = group name or participant handles); messages with no chat row become
+`orphan:<handle>` threads ("Deleted chat with ...") or, for sent ones with no handle,
+`orphan:outgoing`.
+
+After import, `mirror_identity_links` links each device handle to the person its CSV identity is
+confirmed as (`tier = computed`, note "same handle as the confirmed imessages identity").
+
+**Downstream.** Policy row by migration 030 (`intimate`, `local_only`); source contract declared
+2020-08-28 to 2026-09-30. Text units: 45-minute sessions per chat, like `imessages`.
+Interaction dynamics fold `ios_messages` threads into the `("imessages", correspondent)` series
+(`measure_interaction_dynamics` / `signal_interaction_state` v2). Daily metrics add
+`ios_messages.incoming_count` / `outgoing_count` / `reactions_count`, which
+`messaging.total_messages_count` adds when known but does not require
+(`measure_metric_daily_global` v2); unique correspondents count a handle seen in both sources
+once. The app's relationship views read identity links and messages from both sources.
+Everything that counts messages skips `csv_twin` copies.
+
+**Result of the first real import** (backup 2026-09-30 + snapshot 2026-04-03): 18,191 messages,
+5,862 reactions, 175 group notices, 85 edits, 477 deleted messages kept as deleted, 3,021
+attachment links (128 files present in the backup; the rest are iCloud-only), 66,365
+`csv_message_on_device` links, 746 caption copies, 18 identity links mirrored. 4,965 new text
+units.
+
+```
+personal-data-lab import-ios-messages "<backup folder>" [--snapshot "<older chat.db>"]
+```
+
 ## Not yet in scope
 
-Messages (`sms.db`, which would supersede the iMazing CSV source), Notes text and call-recording
-transcripts (in `NoteStore.sqlite`), photos, Health, app databases beyond the two above, and video.
+Notes text and call-recording transcripts (in `NoteStore.sqlite`), Contacts (`AddressBook`),
+Calendar, photos, call history / Safari / Health (these need an encrypted backup), app databases
+beyond the ones above, and video. Message attachments that live only in iCloud are referenced, not
+present.

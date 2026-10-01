@@ -196,6 +196,27 @@ def inspect_ios_backup(source: str | Path) -> IosBackupInventory:
     )
 
 
+def find_backup_files(source: str | Path, domain: str, *, path: str | None = None, prefix: str | None = None) -> dict[str, BackupFile]:
+    """Files in one domain of a backup, by relative path: one exact `path`, or all under `prefix`."""
+    root = Path(source)
+    connection = sqlite3.connect(f"file:{(root / 'Manifest.db').as_posix()}?mode=ro", uri=True)
+    try:
+        if path is not None:
+            rows = connection.execute(
+                "SELECT fileID, domain, relativePath, file FROM Files WHERE flags = 1 AND domain = ? AND relativePath = ?",
+                (domain, path),
+            ).fetchall()
+        else:
+            rows = connection.execute(
+                "SELECT fileID, domain, relativePath, file FROM Files WHERE flags = 1 AND domain = ? "
+                "AND substr(relativePath, 1, ?) = ?",
+                (domain, len(prefix or ""), prefix or ""),
+            ).fetchall()
+    finally:
+        connection.close()
+    return {row[2]: _backup_file(root, *row) for row in rows}
+
+
 def render_inventory_table(inventory: IosBackupInventory) -> str:
     lines = [
         f"device: {inventory.device_name} ({inventory.product_type}, iOS {inventory.ios_version})",

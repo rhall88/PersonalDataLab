@@ -540,3 +540,19 @@ any source (see `PROJECT_STATE.md`).
 (document `record_id` now nullable, one-origin CHECK, per-origin chunk uniqueness). Canonical:
 70,752 text units (607 new `ios_backup`, all extracted and topic-labeled), 3,810 document units
 (v2 chunking plus Whisper transcripts), 2,983 new entity mentions, every active partition clean.
+
+**Update 2026-09-30 (night): eighth source `ios_messages`, schema 30.** The phone's own Messages
+database, holding only what the iMazing CSV source (`imessages`) lacks. Migration 030 adds its
+`policy.source_policy` row (`intimate`, `local_only`); `declare.source_contract` covers 2020-08-28
+to 2026-09-30. Canonical now holds, for `ios_messages`: 24,790 events (18,191 messages, 5,862
+reactions + 11 removals, 175 group notices, 85 edits, 399 deletion events; 477 messages are
+`provider_deleted`), 550 conversations (device chats, plus "Deleted chat with ..." orphan threads),
+76,864 relationships (66,365 `csv_message_on_device` from CSV events to device chats, 746
+`more_complete_copy_of`, reactions, replies, attachment links), 2,707 attachment assets (128 files
+present, hashed), and 18 identity links mirrored from confirmed `imessages` identities. A device
+message whose CSV twin has no text carries metadata `csv_twin`; every count skips those. `semantic.text_unit`
+has 75,717 rows (4,965 new `ios_messages`, all extracted and topic-labeled), with 12,915 new entity
+mentions. 1,616 new name-mention candidates (Ryan, Veyda, Sarah, Chris, Cody, Lyle, Maddie, Ashley, ...,
+and bare "mom"/"dad") await confirmation. Raw inputs, never to delete: the backup folder and
+`DataLabData\iMazing\chat.db snapshot 2026-04-03\chat.db`. Every active partition is clean; the
+only dirty partitions belong to retired deriver versions.
