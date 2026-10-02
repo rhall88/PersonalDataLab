@@ -223,6 +223,38 @@ does not invalidate them).
 **Where to resume.** The remaining iPhone-backup products, Contacts first (names the unknown
 phone numbers in group chats), then Notes, Calendar and photos; then "find my stuff" (see ROADMAP).
 
+## iPhone Contacts and Notes (2026-10-02)
+
+Next products of the iPhone backup after Messages (spec: `IOS_BACKUP_INGESTION_SPEC.md`).
+
+**Contacts** (`import-ios-contacts`). The address book has 124 people; 120 are already on an Apple or
+Google contact card (same phone, email, or exact name, and no number or email the cards lack), so per
+the one-copy rule only 4 are imported (Angie, Angela Barnes, Jess, Jodi). They join their
+counterparts through the identity bridge. Of 129 contact proposals, 112 still have unlinked
+identities awaiting Ryan (for example, Angela Barnes's phone number, 179 + 135 messages, is
+unlinked while her Facebook/iMessage *name* is already person 2).
+
+**Notes** (`import-ios-notes`). 157 notes (2022-02 to 2026-09), 203,000 characters of text, 29 checklist
+items in 3 notes with done state, 1 password-protected note (kept, no text), 4 notes with no body on the
+device. 3 call-recording transcripts and 1 attachment text came from the attachment rows; 14 media files
+(9 new assets, 5 already imported as audio). Two protobuf framings appear (gzip and zlib), and a
+checklist item is a paragraph, not an attribute run (first attempt split items mid-word). Notes, call
+transcripts and attachment text became 157 message-layer text units; the three notes call recordings
+now use Apple's own transcript, so their Whisper copies (3 rows) were retired as redundant.
+
+**A trap worth recording.** Importing the 9 new note files dirtied 37 `media_transcribe_whisper`
+partitions, and recomputing a partition re-transcribes every audio file in it. The first derive pass
+started doing that on CPU and was stopped by hand; the partitions were cleared by replaying stored
+transcripts through `worker._process` with `_transcribe_one` swapped for a lookup (34 unchanged, 3
+changed as above). Any future import that adds audio assets should expect this and avoid a plain
+`derive-run` while Whisper partitions are dirty.
+
+**GPU for the 680 re-extracted units** (the units of every month the notes touched, since a month's
+text-unit ids are regenerated): same A100 recipe, 1,360 requests, 0 failures, 0 token-cap hits,
+about 16 minutes; pod 06:47-07:08 UTC, about $0.56. Running total of Ry's $15.27 balance this
+session: about $2.71, so about $12.5 remains. Topic clustering rebuilt on 75,000+ units (about 35
+minutes of CPU).
+
 ## Canonical database baseline (2026-09-20)
 
 One durable database — `personaldata`, on the dedicated `pdl_canonical_postgres_data` Docker

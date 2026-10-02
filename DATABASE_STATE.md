@@ -563,3 +563,12 @@ active person links now 17,114). The 198 held back are the bare kinship words "m
 "dad" (68), as with every earlier bulk confirmation. `event_resolve_candidates` and
 `intent_resolve_candidates` were re-dirtied and re-run afterwards (they read the confirmed links
 but are not invalidated by a confirmation); both succeeded. Every active partition is clean.
+
+**Update 2026-10-02: iPhone Contacts and Notes (no schema change; still 30).** `ios_backup` now also holds
+157 `note` records (1 locked, 4 with no body), 3 `call_recording` records (Apple's on-device call
+transcripts, `transcript_source: apple_notes`), 1 `note_attachment` record, 4 `contact` records
+(`import_reason: new`; 120 phone contacts were duplicates of Apple/Google cards and are not stored),
+9 `ios_backup/notes_media` assets (plus the 6 `notes_audio` assets already present), and
+`note_has_attachment` / `note_attachment_has_file` relationships. `semantic.text_unit` for `ios_backup`:
+761 units (153 from notes, 4 from call/attachment text; 3 Whisper-derived units retired as redundant),
+all extracted and topic-labeled. `media.transcript`: 717 rows (3 retired, see PROJECT_STATE).
