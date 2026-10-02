@@ -84,6 +84,7 @@ from .ios_backup.orchestrator import (
     import_ios_contacts,
     import_ios_messages,
     import_ios_notes,
+    import_ios_photos,
 )
 from .media_dedup import fingerprint_assets, rebuild_supersessions
 from .migrations import LATEST_SCHEMA_VERSION, current_schema_version, migrate_database
@@ -262,6 +263,12 @@ def _parser() -> argparse.ArgumentParser:
     )
     ios_calendar.add_argument("source", help="backup folder containing Manifest.db")
     ios_calendar.add_argument("--database-url", help="overrides DATABASE_URL from .env")
+    ios_photos = subparsers.add_parser(
+        "import-ios-photos",
+        help="import the phone's photo library (metadata, people, albums, thumbnails) from an iOS backup",
+    )
+    ios_photos.add_argument("source", help="backup folder containing Manifest.db")
+    ios_photos.add_argument("--database-url", help="overrides DATABASE_URL from .env")
     ios_notes = subparsers.add_parser(
         "import-ios-notes",
         help="import Apple Notes (text, checklists, call-recording transcripts, media) from an iOS backup",
@@ -1378,6 +1385,15 @@ def main(argv: Sequence[str] | None = None) -> int:
             print(f"[ios-backup] failed {path}", file=sys.stderr)
         print(json.dumps(summary.model_dump(), indent=2))
         return summary.exit_code
+    if args.command == "import-ios-photos":
+        engine = _resolve_guarded_engine(args.database_url, canonical_import=True)
+
+        def photo_progress(_label: str, index: int, total: int) -> None:
+            print(f"[ios-photos] {index}/{total}", flush=True)
+
+        summary = import_ios_photos(engine, args.source, on_progress=photo_progress)
+        print(json.dumps(summary.model_dump(), indent=2))
+        return 0
     if args.command == "import-ios-calendar":
         engine = _resolve_guarded_engine(args.database_url, canonical_import=True)
         print(json.dumps(import_ios_calendar(engine, args.source).model_dump(), indent=2))

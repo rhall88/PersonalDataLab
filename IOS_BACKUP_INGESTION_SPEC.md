@@ -106,6 +106,7 @@ personal-data-lab import-ios-messages "<backup folder>" [--snapshot "<older chat
 personal-data-lab import-ios-contacts "<backup folder>"
 personal-data-lab import-ios-notes "<backup folder>"
 personal-data-lab import-ios-calendar "<backup folder>"
+personal-data-lab import-ios-photos "<backup folder>"
 ```
 
 Import is restart-safe: each ParsedExport is idempotent, and a re-run short-circuits unchanged files.
@@ -237,8 +238,29 @@ response, recurrence, status and calendar are metadata, and the organizer's emai
 recurring event is the single row the phone stores. `import-ios-calendar "<backup>"`. Reminders live in a
 separate database that this backup does not include.
 
+## Photos (v1.6, 2026-10-02)
+
+`CameraRollDomain` `Media/PhotoData/Photos.sqlite` lists 5,574 library items (2008-2026). The backup does
+**not** hold the originals: iCloud Photos keeps them off the phone, and the backup has only 13 `DCIM` files
+plus a 5005-size thumbnail JPEG for 5,419 items. So the product is the library's metadata plus whatever
+file exists (`ios_backup/photos.py`):
+
+* a `photo` record per item: original file name and size, capture time (the record's date), kind (photo,
+  live photo, screenshot, video, ...), size in pixels, favorite/hidden/trashed, GPS (2,408 geotagged; the
+  library's -180/-180 means none), the Moments place name (2,777), people recognized by name (2,186 photos:
+  Veyda 1,913, Sarah Dake 245, Ryan 168), user albums (95 photos), the caption if any, the app that
+  imported it, and `original_in_backup`;
+* the file the record points to (`photo_has_file`), by the one-copy rule: if another source already holds a
+  file with the same original name and byte size (Google Photos holds most), the record links to that
+  **full-size** asset and the thumbnail is not stored (3,953 items); otherwise it links to a thumbnail asset
+  (`ios_backup/photo_thumbnail`, `original_available: false`; 1,466 items); 155 items have no file anywhere.
+
+Thumbnails are keyed by the library file name's stem, and the record keeps the match evidence in metadata.
+`import-ios-photos "<backup>"`. Recognized people are names the phone has; linking them to PDL people is an
+identity step, not done here.
+
 ## Not yet in scope
 
-Photos (`Photos.sqlite` and the original files), call history / Safari / Health (these need an
-encrypted backup), app databases beyond the ones above, and video. Message attachments that live only in
-iCloud are referenced, not present.
+Call history / Safari / Health (these need an encrypted backup, and the password is typed by the owner),
+app databases beyond the ones above, video analysis, and the originals of photos that live only in iCloud.
+Message attachments that live only in iCloud are referenced, not present.

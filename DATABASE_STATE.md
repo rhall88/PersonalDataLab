@@ -576,3 +576,8 @@ all extracted and topic-labeled. `media.transcript`: 717 rows (3 retired, see PR
 **Update 2026-10-02 (later): iPhone Calendar.** 220 `calendar_event` events under `ios_backup` (namespace
 `ios_backup/calendar/event`; 122 subscribed-calendar and 83 already-held events were not stored). Event time
 is the phone's instant; an all-day event is its floating date at 00:00 UTC.
+
+**Update 2026-10-02 (later still): iPhone Photos.** `ios_backup` gained 5,574 `photo` records (namespace
+`ios_backup/photos/photo`, dated by capture time), 1,466 `ios_backup/photo_thumbnail` assets (JPEG
+thumbnails, `original_available: false`) and 5,419 `photo_has_file` relationships (3,953 to full-size assets
+other sources hold, 1,466 to the thumbnails). 155 library items have no file in any source.

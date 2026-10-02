@@ -223,7 +223,7 @@ does not invalidate them).
 **Where to resume.** The remaining iPhone-backup products, Contacts first (names the unknown
 phone numbers in group chats), then Notes, Calendar and photos; then "find my stuff" (see ROADMAP).
 
-## iPhone Contacts and Notes (2026-10-02)
+## iPhone Contacts, Notes, Calendar and Photos (2026-10-02)
 
 Next products of the iPhone backup after Messages (spec: `IOS_BACKUP_INGESTION_SPEC.md`).
 
@@ -245,6 +245,13 @@ now use Apple's own transcript, so their Whisper copies (3 rows) were retired as
 **Calendar** (`import-ios-calendar`). 425 events on the phone; 122 are subscribed holiday/birthday
 calendars (skipped), 83 are already in the Apple/Google exports (same title, same day; skipped), 220 are
 imported as `calendar_event` events with attendees, organizer, location and recurrence in metadata.
+
+**Photos** (`import-ios-photos`). The library lists 5,574 items but the backup has only thumbnails (originals
+are in iCloud). Every item is a `photo` record (2,408 geotagged, 2,186 with recognized people, 95 in albums,
+286 favorites, 110 hidden). 3,953 items are exact copies (same original name and byte size) of files
+Google Photos or ChatGPT already hold, so they link to those full-size assets; 1,466 got a thumbnail asset;
+155 have no file anywhere. Recognized people are Veyda (1,913 photos), Sarah Dake (245), Ryan Hallgarth (168).
+"Sarah Dake" is probably Sarah Hallgarth (person 4); that link is Ryan's to confirm.
 
 **A trap worth recording.** Importing the 9 new note files dirtied 37 `media_transcribe_whisper`
 partitions, and recomputing a partition re-transcribes every audio file in it. The first derive pass

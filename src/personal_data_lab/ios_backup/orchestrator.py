@@ -411,3 +411,86 @@ def import_ios_calendar(engine: Engine, backup: str | Path) -> IosCalendarImport
         device_events=len(device), subscribed_skipped=counts["subscribed"],
         duplicates_skipped=counts["duplicate"], imported=len(kept), short_circuited=skipped,
     )
+
+
+# --- Photos -------------------------------------------------------------------------------------
+
+
+class IosPhotosImportSummary(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    library_items: int
+    linked_to_full_size: int
+    thumbnails_imported: int
+    thumbnails_already_assets: int
+    without_any_file: int
+    geotagged: int
+    with_named_people: int
+    in_albums: int
+
+
+def import_ios_photos(
+    engine: Engine, backup: str | Path, *, on_progress: ProgressCallback | None = None
+) -> IosPhotosImportSummary:
+    """A `photo` record for every library item, linked to a full-size file another source already
+    holds when one exists, else to a thumbnail asset (see photos.py)."""
+    from sqlalchemy import text
+
+    from .inventory import find_backup_files
+    from .photos import (
+        CAMERA_ROLL,
+        PHOTOS_DB,
+        THUMBNAIL_NAMESPACE,
+        existing_copy,
+        library_export,
+        pick_thumbnail,
+        read_library,
+        thumbnail_asset_export,
+        thumbnail_files,
+    )
+    from .photos import (
+        SOURCE as PHOTO_SOURCE,
+    )
+
+    inventory = inspect_ios_backup(backup)
+    photos = read_library(inventory)
+    store_files = find_backup_files(backup, CAMERA_ROLL, path=PHOTOS_DB)
+    if not store_files:
+        raise ValueError(f"{backup} has no {PHOTOS_DB}")
+    store = next(iter(store_files.values()))
+    with engine.connect() as connection:
+        held: dict[tuple[str, int], tuple[str, str, str]] = {}
+        for source, namespace, source_id, filename, size in connection.execute(text(
+            "SELECT source, asset_namespace, source_asset_id, lower(filename), size_bytes FROM assets "
+            "WHERE sha256 IS NOT NULL AND size_bytes > 0 AND lifecycle_state = 'active' "
+            "AND (mime_type LIKE 'image/%' OR mime_type LIKE 'video/%') AND source <> :me ORDER BY id DESC"
+        ), {"me": PHOTO_SOURCE}):
+            held[(filename, size)] = (source, namespace, source_id)  # DESC order: lowest id wins
+        already = {source_id for (source_id,) in connection.execute(text(
+            "SELECT source_asset_id FROM assets WHERE source = :me AND asset_namespace = :ns"
+        ), {"me": PHOTO_SOURCE, "ns": THUMBNAIL_NAMESPACE})}
+    thumbs = thumbnail_files(inventory)
+    links: dict[str, tuple[str, str, str] | None] = {}
+    imported = full = 0
+    for index, photo in enumerate(photos, 1):
+        copy = existing_copy(photo, held)
+        if copy is not None:
+            links[photo.uuid] = copy
+            full += 1
+        else:
+            item = pick_thumbnail(photo, thumbs)
+            if item is not None:
+                links[photo.uuid] = (PHOTO_SOURCE, THUMBNAIL_NAMESPACE, photo.uuid)
+                if photo.uuid not in already:
+                    _import_one(engine, thumbnail_asset_export(photo, item, inventory, _sha256(Path(item.path))))
+                    imported += 1
+        if on_progress is not None and index % 250 == 0:
+            on_progress("photos", index, len(photos))
+    _import_one(engine, library_export(photos, inventory, links, store, _sha256(Path(store.path))))
+    return IosPhotosImportSummary(
+        library_items=len(photos), linked_to_full_size=full, thumbnails_imported=imported,
+        thumbnails_already_assets=sum(1 for p in photos if p.uuid in already),
+        without_any_file=sum(1 for p in photos if links.get(p.uuid) is None),
+        geotagged=sum(1 for p in photos if p.latitude is not None),
+        with_named_people=sum(1 for p in photos if p.people), in_albums=sum(1 for p in photos if p.albums),
+    )
