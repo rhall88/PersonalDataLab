@@ -140,7 +140,8 @@ def _audio_units(connection: Connection, source: str, start, end) -> tuple[bytes
             SELECT rec.id AS record_id, NULL::bigint AS asset_id, rec.occurred_at AS at, rec.text,
                    (rec.metadata->>'duration_seconds')::float AS seconds
             FROM records rec
-            WHERE rec.source = :source AND rec.record_type IN ('voice_memo', 'voicemail')
+            WHERE rec.source = :source
+              AND rec.record_type IN ('voice_memo', 'voicemail', 'note', 'call_recording', 'note_attachment')
               AND rec.lifecycle_state = 'active' AND rec.text IS NOT NULL AND rec.text <> ''
               AND rec.occurred_at >= :window_start AND rec.occurred_at < :window_end
             UNION ALL
@@ -149,6 +150,15 @@ def _audio_units(connection: Connection, source: str, start, end) -> tuple[bytes
             WHERE a.source = :source AND a.lifecycle_state = 'active'
               AND t.status = 'succeeded' AND t.text <> ''
               AND NOT EXISTS (SELECT 1 FROM media.audio_supersession s WHERE s.asset_id = a.id)
+              AND NOT EXISTS (
+                  SELECT 1 FROM relationships r JOIN records rec2 ON rec2.source = r.subject_source
+                   AND rec2.source_record_namespace = r.subject_namespace
+                   AND rec2.source_record_id = r.subject_source_id
+                  WHERE r.subject_kind = 'record' AND r.object_kind = 'asset'
+                    AND r.object_source = a.source AND r.object_namespace = a.asset_namespace
+                    AND r.object_source_id = a.source_asset_id
+                    AND rec2.record_type IN ('call_recording', 'note_attachment')
+                    AND rec2.text IS NOT NULL AND rec2.text <> '')
               AND COALESCE(a.captured_at, a.created_at) >= :window_start
               AND COALESCE(a.captured_at, a.created_at) < :window_end
             ORDER BY at, record_id NULLS LAST, asset_id

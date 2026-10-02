@@ -90,7 +90,24 @@ def _property(props: dict, name: str) -> list[str]:
     return out
 
 
+def _parse_device_card(record_id: int, card: dict) -> _Card | None:
+    """A contact imported from the phone's address book (ios_backup/contacts.py): already
+    structured, no vCard properties."""
+    names = [n.strip() for n in card.get("names") or [] if n and n.strip()]
+    phones = {k for k in (phone_key(p.get("value", "")) for p in card.get("phones") or []) if k}
+    emails = {
+        normalize_email(e["value"]) for e in card.get("emails") or [] if "@" in e.get("value", "")
+    }
+    if not names and not phones and not emails:
+        return None
+    return _Card(
+        record_id=record_id, names=names, given=card.get("given") or None, phones=phones, emails=emails
+    )
+
+
 def _parse_card(record_id: int, metadata: dict) -> _Card | None:
+    if isinstance(metadata.get("ios_contact"), dict):
+        return _parse_device_card(record_id, metadata["ios_contact"])
     props = (metadata.get("apple") or {}).get("properties") or metadata.get("google") or {}
     if not isinstance(props, dict):
         return None

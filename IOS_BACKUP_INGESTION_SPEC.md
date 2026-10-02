@@ -103,6 +103,8 @@ Three layers, none of which deletes anything:
 personal-data-lab inspect-ios-backup "<backup folder>"
 personal-data-lab import-ios-backup-all "<backup folder>"
 personal-data-lab import-ios-messages "<backup folder>" [--snapshot "<older chat.db>"]
+personal-data-lab import-ios-contacts "<backup folder>"
+personal-data-lab import-ios-notes "<backup folder>"
 ```
 
 Import is restart-safe: each ParsedExport is idempotent, and a re-run short-circuits unchanged files.
@@ -179,9 +181,48 @@ units.
 personal-data-lab import-ios-messages "<backup folder>" [--snapshot "<older chat.db>"]
 ```
 
+## Contacts (v1.3, 2026-10-02)
+
+The phone's address book (`HomeDomain` `Library/AddressBook/AddressBook.sqlitedb`, 124 people) is
+read into `contact` records under `ios_backup`, but only the contacts that add something
+(owner's one-copy rule). Each phone contact is compared with every contact card the Apple and
+Google exports already hold, by phone number, email, or exact name:
+
+* no matching card: imported (`import_reason: new`);
+* a matching card, but the phone has a number or email none of the matching cards has: imported
+  (`more_complete`);
+* otherwise: a duplicate, counted in the summary and not stored.
+
+Result: 4 of 124 imported (Angie, Angela Barnes, Jess, Jodi), 120 duplicates. The record keeps the
+structured card in `metadata.ios_contact` (names, phones with labels, emails, addresses, URLs,
+birthday, note, account); photos and Memoji are not copied. The identity bridge
+(`identity_contacts._parse_card`) reads these cards and groups them with their Apple/Google
+counterparts by shared phone/email, so no linking step exists. `import-ios-contacts "<backup>"`.
+
+## Notes (v1.4, 2026-10-02)
+
+`AppDomainGroup-group.com.apple.notes` `NoteStore.sqlite` (with `-wal`/`-shm`) holds every note.
+Three shapes (`ios_backup/notes.py`):
+
+* a `note` record per note: title, body text (the gzip- or zlib-compressed protobuf in
+  `ZICNOTEDATA`: note text, and the attribute runs that mark checklist paragraphs and their done
+  state), folder, account, created/modified dates (`occurred_at` = created), attachments. A note in
+  Recently Deleted is `provider_deleted`. A password-protected note keeps its metadata and has no
+  text (the body is encrypted; the password is never handled here), as do notes whose body was never
+  stored on the device (`body_missing`);
+* a `call_recording` (audio) or `note_attachment` record per attachment that has searchable text
+  (`ZADDITIONALINDEXABLETEXT`): iOS stores a recorded call's transcript, with speaker labels, there.
+  Call-recording records carry `transcript_source: apple_notes`, so Whisper skips their audio and
+  the semantic layer takes the provider transcript instead of any Whisper copy;
+* an asset per file under `.../Media/` (`ios_backup/notes_media`; audio files were already assets from
+  the audio import and are linked, not stored twice), tied to its note by `note_has_attachment` and to its
+  transcript by `note_attachment_has_file`.
+
+Notes, call recordings and attachment text enter the message-layer text units (`ios_backup` partitions,
+chunked, dated by creation). `import-ios-notes "<backup>"`.
+
 ## Not yet in scope
 
-Notes text and call-recording transcripts (in `NoteStore.sqlite`), Contacts (`AddressBook`),
-Calendar, photos, call history / Safari / Health (these need an encrypted backup), app databases
-beyond the ones above, and video. Message attachments that live only in iCloud are referenced, not
-present.
+Calendar (`Calendar.sqlitedb`), photos (`Photos.sqlite` and the original files), call history /
+Safari / Health (these need an encrypted backup), app databases beyond the ones above, and video.
+Message attachments that live only in iCloud are referenced, not present.

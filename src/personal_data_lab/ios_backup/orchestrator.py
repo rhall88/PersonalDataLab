@@ -251,3 +251,120 @@ def import_ios_messages(
         chunks_short_circuited=short_circuited,
         identity_links_mirrored=mirrored,
     )
+
+
+# --- Contacts -----------------------------------------------------------------------------------
+
+
+class IosContactsImportSummary(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    device_contacts: int
+    new: int
+    more_complete: int
+    duplicates_skipped: int
+    imported: int
+    short_circuited: bool
+
+
+def import_ios_contacts(engine: Engine, backup: str | Path) -> IosContactsImportSummary:
+    """Import the phone contacts that add something to the Apple/Google cards (see contacts.py)."""
+    from .contacts import (
+        ADDRESS_BOOK,
+        classify,
+        contact_export,
+        load_existing_cards,
+        read_address_book,
+    )
+    from .inventory import find_backup_files
+
+    inventory = inspect_ios_backup(backup)
+    device = read_address_book(inventory)
+    found = find_backup_files(backup, "HomeDomain", path=ADDRESS_BOOK)
+    if not found:
+        raise ValueError(f"{backup} has no {ADDRESS_BOOK}")
+    item = next(iter(found.values()))
+    with engine.connect() as connection:
+        cards = load_existing_cards(connection)
+    kept, counts = [], Counter()
+    for contact in device:
+        status, matched = classify(contact, cards)
+        counts[status] += 1
+        if status != "duplicate":
+            kept.append((contact, status, matched))
+    parsed = contact_export(
+        kept, inventory, sha256=_sha256(Path(item.path)), path=item.path, size_bytes=item.size_bytes
+    )
+    skipped = _import_one(engine, parsed)
+    return IosContactsImportSummary(
+        device_contacts=len(device), new=counts["new"], more_complete=counts["more_complete"],
+        duplicates_skipped=counts["duplicate"], imported=len(kept), short_circuited=skipped,
+    )
+
+
+# --- Notes --------------------------------------------------------------------------------------
+
+
+class IosNotesImportSummary(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    notes: int
+    locked: int
+    deleted: int
+    without_body: int
+    call_recordings: int
+    attachment_texts: int
+    media_files: int
+    media_assets_imported: int
+    media_already_assets: int
+
+
+def import_ios_notes(engine: Engine, backup: str | Path) -> IosNotesImportSummary:
+    """Notes (records), their provider-text attachments (call-recording transcripts, scan text) and
+    their media files (assets), linked to each other."""
+    from sqlalchemy import text
+
+    from .inventory import find_backup_files
+    from .notes import (
+        NOTE_STORE,
+        NOTES_DOMAIN,
+        media_asset_export,
+        media_files,
+        notes_export,
+        read_note_store,
+    )
+
+    inventory = inspect_ios_backup(backup)
+    notes = read_note_store(inventory)
+    store_files = find_backup_files(backup, NOTES_DOMAIN, path=NOTE_STORE)
+    if not store_files:
+        raise ValueError(f"{backup} has no {NOTE_STORE}")
+    store = next(iter(store_files.values()))
+    files = media_files(inventory)
+    with engine.connect() as connection:
+        existing = {
+            source_id: (namespace, source_id)
+            for namespace, source_id in connection.execute(
+                text("SELECT asset_namespace, source_asset_id FROM assets WHERE source = 'ios_backup' "
+                     "AND source_asset_id LIKE :prefix"),
+                {"prefix": f"{NOTES_DOMAIN}/%"},
+            )
+        }
+    imported = already = 0
+    wanted = {item.relative_path: item for note in notes for a in note.attachments
+              if (item := files.get(a.media_identifier or "")) is not None}
+    for item in wanted.values():
+        if f"{item.domain}/{item.relative_path}" in existing:
+            already += 1
+            continue
+        _import_one(engine, media_asset_export(item, inventory, _sha256(Path(item.path))))
+        imported += 1
+    parsed = notes_export(notes, inventory, files, existing, store, _sha256(Path(store.path)))
+    _import_one(engine, parsed)
+    kinds = Counter(r.record_type for r in parsed.records)
+    return IosNotesImportSummary(
+        notes=kinds["note"], locked=sum(n.locked for n in notes), deleted=sum(n.deleted for n in notes),
+        without_body=sum(1 for n in notes if n.body is None), call_recordings=kinds["call_recording"],
+        attachment_texts=kinds["note_attachment"], media_files=len(wanted),
+        media_assets_imported=imported, media_already_assets=already,
+    )

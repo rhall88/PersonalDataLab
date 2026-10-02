@@ -78,7 +78,12 @@ from .imessages.inventory import render_inventory_table as render_imessages_tabl
 from .imessages.orchestrator import import_imessages_all
 from .ios_backup.inventory import inspect_ios_backup
 from .ios_backup.inventory import render_inventory_table as render_ios_backup_table
-from .ios_backup.orchestrator import import_ios_backup_all, import_ios_messages
+from .ios_backup.orchestrator import (
+    import_ios_backup_all,
+    import_ios_contacts,
+    import_ios_messages,
+    import_ios_notes,
+)
 from .media_dedup import fingerprint_assets, rebuild_supersessions
 from .migrations import LATEST_SCHEMA_VERSION, current_schema_version, migrate_database
 from .openai_export.inventory import inspect_openai
@@ -244,6 +249,18 @@ def _parser() -> argparse.ArgumentParser:
         help="an older copy of the same Messages database (sms.db/chat.db); repeatable",
     )
     ios_messages.add_argument("--database-url", help="overrides DATABASE_URL from .env")
+    ios_contacts = subparsers.add_parser(
+        "import-ios-contacts",
+        help="import the phone contacts that add something to the Apple/Google contact cards",
+    )
+    ios_contacts.add_argument("source", help="backup folder containing Manifest.db")
+    ios_contacts.add_argument("--database-url", help="overrides DATABASE_URL from .env")
+    ios_notes = subparsers.add_parser(
+        "import-ios-notes",
+        help="import Apple Notes (text, checklists, call-recording transcripts, media) from an iOS backup",
+    )
+    ios_notes.add_argument("source", help="backup folder containing Manifest.db")
+    ios_notes.add_argument("--database-url", help="overrides DATABASE_URL from .env")
     inspect_imessages_parser = subparsers.add_parser(
         "inspect-imessages",
         help="inventory independently acquired iMazing Messages CSV exports",
@@ -1354,6 +1371,14 @@ def main(argv: Sequence[str] | None = None) -> int:
             print(f"[ios-backup] failed {path}", file=sys.stderr)
         print(json.dumps(summary.model_dump(), indent=2))
         return summary.exit_code
+    if args.command == "import-ios-notes":
+        engine = _resolve_guarded_engine(args.database_url, canonical_import=True)
+        print(json.dumps(import_ios_notes(engine, args.source).model_dump(), indent=2))
+        return 0
+    if args.command == "import-ios-contacts":
+        engine = _resolve_guarded_engine(args.database_url, canonical_import=True)
+        print(json.dumps(import_ios_contacts(engine, args.source).model_dump(), indent=2))
+        return 0
     if args.command == "import-ios-messages":
         engine = _resolve_guarded_engine(args.database_url, canonical_import=True)
 
