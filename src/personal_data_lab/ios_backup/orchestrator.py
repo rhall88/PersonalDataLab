@@ -368,3 +368,46 @@ def import_ios_notes(engine: Engine, backup: str | Path) -> IosNotesImportSummar
         attachment_texts=kinds["note_attachment"], media_files=len(wanted),
         media_assets_imported=imported, media_already_assets=already,
     )
+
+
+# --- Calendar -----------------------------------------------------------------------------------
+
+
+class IosCalendarImportSummary(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    device_events: int
+    subscribed_skipped: int
+    duplicates_skipped: int
+    imported: int
+    short_circuited: bool
+
+
+def import_ios_calendar(engine: Engine, backup: str | Path) -> IosCalendarImportSummary:
+    """Calendar events the Apple/Google exports do not already hold (see calendar.py)."""
+    from .calendar import CALENDAR_DB, calendar_export, classify, load_existing, read_calendar
+    from .inventory import find_backup_files
+
+    inventory = inspect_ios_backup(backup)
+    device = read_calendar(inventory)
+    found = find_backup_files(backup, "HomeDomain", path=CALENDAR_DB)
+    if not found:
+        raise ValueError(f"{backup} has no {CALENDAR_DB}")
+    item = next(iter(found.values()))
+    with engine.connect() as connection:
+        existing = set(load_existing(connection))
+    counts: Counter[str] = Counter()
+    kept = []
+    for event in device:
+        status = classify(event, existing)
+        counts[status] += 1
+        if status == "new":
+            kept.append(event)
+    parsed = calendar_export(
+        kept, inventory, sha256=_sha256(Path(item.path)), path=item.path, size_bytes=item.size_bytes
+    )
+    skipped = _import_one(engine, parsed)
+    return IosCalendarImportSummary(
+        device_events=len(device), subscribed_skipped=counts["subscribed"],
+        duplicates_skipped=counts["duplicate"], imported=len(kept), short_circuited=skipped,
+    )

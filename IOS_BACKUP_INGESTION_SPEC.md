@@ -105,6 +105,7 @@ personal-data-lab import-ios-backup-all "<backup folder>"
 personal-data-lab import-ios-messages "<backup folder>" [--snapshot "<older chat.db>"]
 personal-data-lab import-ios-contacts "<backup folder>"
 personal-data-lab import-ios-notes "<backup folder>"
+personal-data-lab import-ios-calendar "<backup folder>"
 ```
 
 Import is restart-safe: each ParsedExport is idempotent, and a re-run short-circuits unchanged files.
@@ -221,8 +222,23 @@ Three shapes (`ios_backup/notes.py`):
 Notes, call recordings and attachment text enter the message-layer text units (`ios_backup` partitions,
 chunked, dated by creation). `import-ios-notes "<backup>"`.
 
+## Calendar (v1.5, 2026-10-02)
+
+`HomeDomain` `Library/Calendar/Calendar.sqlitedb` holds 425 events (2014-2026). Imported as
+`calendar_event` events under `ios_backup` (`ios_backup/calendar.py`), skipping:
+
+* events in **subscribed calendars** (US Holidays, Facebook Birthdays: 122), which are not the
+  owner's data; and
+* events the Apple and Google exports already hold (same title on the same day, within a day: 83),
+  per the one-copy rule.
+
+220 events imported. The text is the title; description, location, organizer, attendees with their
+response, recurrence, status and calendar are metadata, and the organizer's email is the actor. A
+recurring event is the single row the phone stores. `import-ios-calendar "<backup>"`. Reminders live in a
+separate database that this backup does not include.
+
 ## Not yet in scope
 
-Calendar (`Calendar.sqlitedb`), photos (`Photos.sqlite` and the original files), call history /
-Safari / Health (these need an encrypted backup), app databases beyond the ones above, and video.
-Message attachments that live only in iCloud are referenced, not present.
+Photos (`Photos.sqlite` and the original files), call history / Safari / Health (these need an
+encrypted backup), app databases beyond the ones above, and video. Message attachments that live only in
+iCloud are referenced, not present.

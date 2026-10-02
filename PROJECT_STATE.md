@@ -242,6 +242,10 @@ checklist item is a paragraph, not an attribute run (first attempt split items m
 transcripts and attachment text became 157 message-layer text units; the three notes call recordings
 now use Apple's own transcript, so their Whisper copies (3 rows) were retired as redundant.
 
+**Calendar** (`import-ios-calendar`). 425 events on the phone; 122 are subscribed holiday/birthday
+calendars (skipped), 83 are already in the Apple/Google exports (same title, same day; skipped), 220 are
+imported as `calendar_event` events with attendees, organizer, location and recurrence in metadata.
+
 **A trap worth recording.** Importing the 9 new note files dirtied 37 `media_transcribe_whisper`
 partitions, and recomputing a partition re-transcribes every audio file in it. The first derive pass
 started doing that on CPU and was stopped by hand; the partitions were cleared by replaying stored

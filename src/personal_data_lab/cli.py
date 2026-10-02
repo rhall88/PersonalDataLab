@@ -80,6 +80,7 @@ from .ios_backup.inventory import inspect_ios_backup
 from .ios_backup.inventory import render_inventory_table as render_ios_backup_table
 from .ios_backup.orchestrator import (
     import_ios_backup_all,
+    import_ios_calendar,
     import_ios_contacts,
     import_ios_messages,
     import_ios_notes,
@@ -255,6 +256,12 @@ def _parser() -> argparse.ArgumentParser:
     )
     ios_contacts.add_argument("source", help="backup folder containing Manifest.db")
     ios_contacts.add_argument("--database-url", help="overrides DATABASE_URL from .env")
+    ios_calendar = subparsers.add_parser(
+        "import-ios-calendar",
+        help="import the calendar events the Apple/Google exports do not already hold from an iOS backup",
+    )
+    ios_calendar.add_argument("source", help="backup folder containing Manifest.db")
+    ios_calendar.add_argument("--database-url", help="overrides DATABASE_URL from .env")
     ios_notes = subparsers.add_parser(
         "import-ios-notes",
         help="import Apple Notes (text, checklists, call-recording transcripts, media) from an iOS backup",
@@ -1371,6 +1378,10 @@ def main(argv: Sequence[str] | None = None) -> int:
             print(f"[ios-backup] failed {path}", file=sys.stderr)
         print(json.dumps(summary.model_dump(), indent=2))
         return summary.exit_code
+    if args.command == "import-ios-calendar":
+        engine = _resolve_guarded_engine(args.database_url, canonical_import=True)
+        print(json.dumps(import_ios_calendar(engine, args.source).model_dump(), indent=2))
+        return 0
     if args.command == "import-ios-notes":
         engine = _resolve_guarded_engine(args.database_url, canonical_import=True)
         print(json.dumps(import_ios_notes(engine, args.source).model_dump(), indent=2))

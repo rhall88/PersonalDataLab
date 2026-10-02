@@ -572,3 +572,7 @@ transcripts, `transcript_source: apple_notes`), 1 `note_attachment` record, 4 `c
 `note_has_attachment` / `note_attachment_has_file` relationships. `semantic.text_unit` for `ios_backup`:
 761 units (153 from notes, 4 from call/attachment text; 3 Whisper-derived units retired as redundant),
 all extracted and topic-labeled. `media.transcript`: 717 rows (3 retired, see PROJECT_STATE).
+
+**Update 2026-10-02 (later): iPhone Calendar.** 220 `calendar_event` events under `ios_backup` (namespace
+`ios_backup/calendar/event`; 122 subscribed-calendar and 83 already-held events were not stored). Event time
+is the phone's instant; an all-day event is its floating date at 00:00 UTC.
