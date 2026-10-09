@@ -97,7 +97,7 @@ class AdapterRegistry:
 
 class MyActivityAdapter:
     adapter_name = "my_activity"
-    parser_version = "google-my-activity-v1"
+    parser_version = "google-my-activity-v2"
     product_keys = ("my_activity", "youtube")
     supported_patterns = (
         "**/MyActivity.json",

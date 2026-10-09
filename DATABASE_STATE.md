@@ -37,6 +37,29 @@ one in isolation):
 Zero drift in either source. The canonical-rebuild proposal below is now fully executed and
 verified, not just executed.
 
+## Update 2026-10-09: Google My Activity HTML events dated from their own cards
+
+Every My Activity file in the September 2026 Takeout is HTML, and the HTML path of
+`google-my-activity-v1` never read the time line printed in each card ("Jun 15, 2025, 3:01:56
+PM EDT"), so all 11,723 HTML activity events (Chrome, YouTube, Gemini, Play, Search, Maps,
+shopping, ads) had `occurred_at` NULL. `google-my-activity-v2` parses that line (US zone
+abbreviations and UTC/GMT; anything else is kept as `unparsed_time`), marks dated rows
+`_pdl.occurred_at_basis = "html_card_time"`, and rejects any card time later than the
+export itself plus one day. Google emitted two Lens cards dated "Apr 27, 2395"; those keep
+the provider text and stay undated. The time line is read separately from the card record,
+so `source_record_id`s are unchanged and nothing is duplicated.
+
+A re-import cannot apply this (same `exported_at` authority, so changed payloads reconcile
+as `conflicted`), so the rows were repaired in place by re-parsing all 41 original Takeout
+members with the v2 parser and writing exactly its output: a new full `event_versions` row
+(the v1 version is kept) and the canonical row updated. Each row was first checked to differ
+from v1 only by this fix. Result: 11,721 rows dated, 2 left undated by design, 0 refused,
+0 missing; a final pass found every row identical to v2 output.
+
+Not changed here: other undated Google families (`account_access` CSV, Google Chat,
+Google Pay, Meet, Nest) have different causes. Derived layers were not re-run; run
+`derive-sync` / `derive-run` to propagate.
+
 ## Update 2026-09-20: Facebook added as a sixth canonical source
 
 A new `facebook_export` module (see [`FACEBOOK_PRODUCTION_ACCEPTANCE_REPORT.md`](FACEBOOK_PRODUCTION_ACCEPTANCE_REPORT.md))

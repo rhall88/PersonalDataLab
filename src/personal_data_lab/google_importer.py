@@ -5,7 +5,7 @@ import hashlib
 import json
 import re
 from collections.abc import Callable, Iterable, Iterator
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta, timezone
 from html.parser import HTMLParser
 from pathlib import Path, PurePosixPath
 from typing import Any, BinaryIO
@@ -17,7 +17,7 @@ from .fingerprints import FingerprintError, canonical_json_bytes
 from .models import NormalizedEvent, ParsedExport
 
 SOURCE = "google"
-PARSER_VERSION = "google-my-activity-v1"
+PARSER_VERSION = "google-my-activity-v2"
 _READ_SIZE = 1024 * 1024
 _TAKEOUT_COMPONENT = re.compile(
     r"takeout-(\d{8}T\d{6}Z)(?:-\d+)*(?: \([1-9]\d*\))?(?:\.zip)?",
@@ -235,6 +235,64 @@ def _record_id(digest: bytes, duplicate_number: int) -> str:
     return f"activity:{digest.hex()}{suffix}"
 
 
+# HTML activity cards carry their time only as display text, one line under the title, e.g.
+# "Jun 15, 2025, 3:01:56 PM EDT" (newer exports put a U+202F narrow no-break space before
+# AM/PM). Abbreviations not listed here are left unparsed rather than guessed.
+_HTML_CARD_TIME = re.compile(
+    r"^(?P<month>[A-Z][a-z]{2}) (?P<day>\d{1,2}), (?P<year>\d{4}), "
+    r"(?P<hour>\d{1,2}):(?P<minute>\d{2}):(?P<second>\d{2})[\s\u202f\u00a0]*"
+    r"(?P<meridiem>AM|PM)[\s\u202f\u00a0]*(?P<zone>[A-Z]{2,5})$"
+)
+_HTML_ZONE_OFFSETS_HOURS = {
+    "UTC": 0, "GMT": 0,
+    "EST": -5, "EDT": -4, "CST": -6, "CDT": -5, "MST": -7, "MDT": -6,
+    "PST": -8, "PDT": -7, "AKST": -9, "AKDT": -8, "HST": -10,
+}
+# Some Gemini cards run the response text straight onto the time line with no line break
+# ("Nov 6, 2024, 1:31:34 AM EDTWindows 10 reset..."). Only a known zone abbreviation is
+# accepted in that position, longest first, so "EDTW..." still resolves to EDT.
+_HTML_CARD_TIME_GLUED = re.compile(
+    _HTML_CARD_TIME.pattern.removesuffix(r"(?P<zone>[A-Z]{2,5})$")
+    + "(?P<zone>"
+    + "|".join(sorted(_HTML_ZONE_OFFSETS_HOURS, key=len, reverse=True))
+    + ")(?![a-z])"
+)
+_MONTHS = {
+    name: number
+    for number, name in enumerate(
+        ("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"),
+        start=1,
+    )
+}
+
+
+def _html_card_time(lines: Iterable[str]) -> tuple[datetime | None, str | None]:
+    """Return (UTC time, raw line) for the first card line that is a My Activity timestamp.
+
+    The raw line is returned even when its time zone is unrecognized, so it can be kept as
+    `unparsed_time` instead of silently dropped.
+    """
+    for line in lines:
+        match = _HTML_CARD_TIME.match(line.strip()) or _HTML_CARD_TIME_GLUED.match(line.strip())
+        if match is None:
+            continue
+        offset = _HTML_ZONE_OFFSETS_HOURS.get(match["zone"])
+        month = _MONTHS.get(match["month"])
+        if offset is None or month is None:
+            return None, line.strip()
+        hour = int(match["hour"]) % 12 + (12 if match["meridiem"] == "PM" else 0)
+        try:
+            local = datetime(
+                int(match["year"]), month, int(match["day"]),
+                hour, int(match["minute"]), int(match["second"]),
+                tzinfo=timezone(timedelta(hours=offset)),
+            )
+        except ValueError:
+            return None, line.strip()
+        return local.astimezone(UTC), line.strip()
+    return None, None
+
+
 def _normalize_activity(
     record: Any,
     *,
@@ -243,6 +301,7 @@ def _normalize_activity(
     representation: str,
     exported_at: datetime | None,
     duplicate_counts: dict[tuple[str, bytes], int],
+    card_time: tuple[datetime | None, str | None] = (None, None),
 ) -> NormalizedEvent:
     if not isinstance(record, dict):
         raise GoogleExportError(f"activity record at index {index} must be an object")
@@ -260,6 +319,21 @@ def _normalize_activity(
     adapter_metadata: dict[str, Any] = {}
     if raw_time is not None and occurred_at is None:
         adapter_metadata["unparsed_time"] = raw_time
+    if raw_time is None:
+        card_occurred_at, card_time_text = card_time
+        # An activity cannot postdate the export that contains it. Google has emitted such
+        # times (Lens cards dated "Apr 27, 2395"); keep the provider text, assign no time.
+        if (
+            card_occurred_at is not None
+            and exported_at is not None
+            and card_occurred_at > exported_at + timedelta(days=1)
+        ):
+            card_occurred_at = None
+        if card_occurred_at is not None:
+            occurred_at = card_occurred_at
+            adapter_metadata["occurred_at_basis"] = "html_card_time"
+        elif card_time_text is not None:
+            adapter_metadata["unparsed_time"] = card_time_text
     if used_path_product:
         adapter_metadata["takeout_product"] = path_product
     if adapter_metadata:
@@ -415,6 +489,8 @@ def _normalize_html_card(
     if links:
         record["titleUrl"] = links[0]
         record["links"] = list(links)
+    # The time line is read separately and never added to `record`, so the card's
+    # content-derived source_record_id is unchanged from earlier parser versions.
     return _normalize_activity(
         record,
         index=0,
@@ -422,6 +498,7 @@ def _normalize_html_card(
         representation="html",
         exported_at=exported_at,
         duplicate_counts=duplicate_counts,
+        card_time=_html_card_time(lines[1:]),
     )
 
 

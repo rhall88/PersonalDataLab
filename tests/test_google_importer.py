@@ -36,7 +36,7 @@ def test_parses_standalone_my_activity_json(tmp_path: Path) -> None:
     event = parsed.events[0]
 
     assert parsed.source == "google"
-    assert parsed.parser_version == "google-my-activity-v1"
+    assert parsed.parser_version == "google-my-activity-v2"
     assert parsed.category == "my_activity/generic/json"
     assert parsed.snapshot_scope == "account/activity"
     assert parsed.event_count == 1
@@ -229,6 +229,102 @@ def test_parses_html_fallback_and_preserves_links(tmp_path: Path) -> None:
     assert event.event_type == "youtube_activity"
     assert "Watched A video" in event.text
     assert event.metadata["google"]["titleUrl"] == "https://youtu.be/abc"
+
+
+def _html_card(time_line: str) -> str:
+    return f"""
+        <html><body>
+          <div class="outer-cell mdl-cell">
+            <div class="header-cell">YouTube</div>
+            <div class="content-cell">Watched <a href="https://youtu.be/abc">A video</a>
+              <br>{time_line}
+            </div>
+            <div class="content-cell">Products:<br>YouTube</div>
+          </div>
+        </body></html>
+        """
+
+
+@pytest.mark.parametrize(
+    ("time_line", "expected_utc"),
+    [
+        ("Jun 15, 2025, 3:01:56 PM EDT", "2025-06-15T19:01:56+00:00"),
+        ("Jan 3, 2024, 12:05:00 AM EST", "2024-01-03T05:05:00+00:00"),
+        ("Dec 31, 2023, 11:59:59\u202fPM\u202fCST", "2024-01-01T05:59:59+00:00"),
+        ("Mar 9, 2026, 12:30:00 PM UTC", "2026-03-09T12:30:00+00:00"),
+    ],
+)
+def test_html_card_time_line_becomes_occurred_at(
+    tmp_path: Path, time_line: str, expected_utc: str
+) -> None:
+    source = tmp_path / "MyActivity.html"
+    source.write_text(_html_card(time_line), encoding="utf-8")
+
+    (parsed,) = parse_google_export(source)
+    event = parsed.events[0]
+
+    assert parsed.parser_version == "google-my-activity-v2"
+    assert event.occurred_at is not None
+    assert event.occurred_at.isoformat() == expected_utc
+    assert event.metadata["_pdl"]["occurred_at_basis"] == "html_card_time"
+    # The provider's own text, including the time line, is kept verbatim.
+    assert time_line.replace("\u202f", " ").split(" ")[0] in event.metadata["google"]["title"]
+
+
+def test_html_card_time_does_not_change_record_identity(tmp_path: Path) -> None:
+    dated = tmp_path / "dated" / "MyActivity.html"
+    dated.parent.mkdir()
+    dated.write_text(_html_card("Jun 15, 2025, 3:01:56 PM EDT"), encoding="utf-8")
+    (dated_event,) = parse_google_export(dated)[0].events
+
+    # Identity is derived only from the provider card content, never from the parsed time,
+    # so rows imported by earlier parser versions are reconciled rather than duplicated.
+    record = {"header": "YouTube", "title": dated_event.metadata["google"]["title"]}
+    record["titleUrl"] = "https://youtu.be/abc"
+    record["links"] = ["https://youtu.be/abc"]
+    from personal_data_lab.fingerprints import canonical_json_bytes
+
+    digest = hashlib.sha256(canonical_json_bytes(record)).hexdigest()
+    assert dated_event.source_record_id == f"activity:{digest}"
+
+
+def test_html_card_time_glued_to_following_text_is_still_read(tmp_path: Path) -> None:
+    source = tmp_path / "MyActivity.html"
+    source.write_text(
+        _html_card("Nov 6, 2024, 1:31:34 AM EDTWindows 10 reset keeps going back"),
+        encoding="utf-8",
+    )
+
+    (parsed,) = parse_google_export(source)
+
+    assert parsed.events[0].occurred_at.isoformat() == "2024-11-06T05:31:34+00:00"
+
+
+def test_html_card_time_after_the_export_is_not_trusted(tmp_path: Path) -> None:
+    archive = tmp_path / "takeout-20260909T012526Z-7-001.zip"
+    with ZipFile(archive, "w") as zipped:
+        zipped.writestr(
+            "Takeout/My Activity/Google Lens/MyActivity.html",
+            _html_card("Apr 27, 2395, 1:19:50 AM EDT"),
+        )
+
+    (parsed,) = parse_google_export(archive)
+    event = parsed.events[0]
+
+    assert event.occurred_at is None
+    assert event.metadata["_pdl"]["unparsed_time"] == "Apr 27, 2395, 1:19:50 AM EDT"
+
+
+def test_html_card_with_unknown_zone_keeps_raw_time_unparsed(tmp_path: Path) -> None:
+    source = tmp_path / "MyActivity.html"
+    source.write_text(_html_card("Jun 15, 2025, 3:01:56 PM IST"), encoding="utf-8")
+
+    (parsed,) = parse_google_export(source)
+    event = parsed.events[0]
+
+    assert event.occurred_at is None
+    assert event.metadata["_pdl"]["unparsed_time"] == "Jun 15, 2025, 3:01:56 PM IST"
+    assert parsed.parse_warnings == ("activity timestamp could not be normalized",)
 
 
 def test_identical_duplicate_records_get_deterministic_distinct_ids(tmp_path: Path) -> None:
