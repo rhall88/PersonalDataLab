@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from datetime import UTC, datetime
 from pathlib import Path
 from zipfile import ZipFile
 
@@ -160,6 +161,53 @@ def test_structured_adapter_unwraps_single_key_envelope_and_keeps_mixed_dict_as_
     prefs = _parsed(members["ad_preferences.json"])
     assert prefs.record_count == 1
     assert prefs.records[0].metadata["facebook"]["label_values"] == [{"label": "x"}]
+
+
+def test_backdated_life_event_occurs_on_its_event_date_not_its_creation_date(
+    tmp_path: Path,
+) -> None:
+    created = 1505844287  # 2017-09-19: when the profile entry was created on Facebook
+    graduated = 1564848000  # 2019-08-03: the date the life event actually happened
+    life_event = {
+        "timestamp": created,
+        "title": "Ryan added a life event from August 3, 2019: Graduated from Ivy Tech.",
+        "data": [{"backdated_timestamp": graduated}, {}],
+        "attachments": [
+            {"data": [{"life_event": {"title": "Graduated from Ivy Tech",
+                                      "end_date": {"day": 3, "year": 2019, "month": 8}}}]}
+        ],
+    }
+    ordinary_post = {"timestamp": created, "title": "An ordinary post."}
+    source = _zip(
+        tmp_path / "facebook-export.zip",
+        [
+            (
+                "your_facebook_activity/posts/your_posts__check_ins__photos_and_videos_1.json",
+                json.dumps([life_event, ordinary_post]),
+            )
+        ],
+    )
+    (member,) = inspect_facebook(source).members
+    parsed = _parsed(member)
+
+    life_record, ordinary_record = parsed.records
+    assert life_record.occurred_at == datetime.fromtimestamp(graduated, tz=UTC)
+    assert parsed.events[0].occurred_at == datetime.fromtimestamp(graduated, tz=UTC)
+    assert life_record.metadata["_pdl"]["occurred_at_basis"] == "backdated_timestamp"
+    # The creation time is not lost: the complete provider value is retained.
+    assert life_record.metadata["facebook"]["timestamp"] == created
+
+    assert ordinary_record.occurred_at == datetime.fromtimestamp(created, tz=UTC)
+    assert "occurred_at_basis" not in ordinary_record.metadata["_pdl"]
+
+
+def test_structured_parser_version_changes_so_reimports_reprocess(tmp_path: Path) -> None:
+    source = _zip(
+        tmp_path / "facebook-export.zip",
+        [("connections/friends/your_friends.json", json.dumps({"friends_v2": [{"name": "Ada"}]}))],
+    )
+    (member,) = inspect_facebook(source).members
+    assert _parsed(member).parser_version == "facebook-export-v1/facebook_structured+backdated-1"
 
 
 def test_mojibake_and_null_bytes_are_fixed_without_altering_plain_text() -> None:

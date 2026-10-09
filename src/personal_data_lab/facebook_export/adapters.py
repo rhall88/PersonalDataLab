@@ -111,6 +111,34 @@ _TIME_NAMES = (
 )
 _TITLE_NAMES = ("title", "name", "event_type")
 _TEXT_NAMES = ("content", "text", "description", "share_text")
+# Bumped when the structured adapter's normalized output changes, so the restart-safe run
+# key (which includes the parser version) reprocesses members instead of short-circuiting.
+STRUCTURED_REVISION = "backdated-1"
+
+
+def _backdated_timestamp(value: dict[str, object]) -> datetime | None:
+    """Return Facebook's backdated "when it happened" time for an item, if it has one.
+
+    Life events (and other backdated posts) carry two times: the top-level ``timestamp``
+    is when the item was created on Facebook, while ``data[].backdated_timestamp`` is the
+    date the user assigned to the event itself (e.g. a graduation two years later than the
+    profile entry that announced it). Only the latter answers "when did this occur".
+    """
+    data = value.get("data")
+    if not isinstance(data, list):
+        return None
+    for item in data:
+        if isinstance(item, dict):
+            backdated = _timestamp(item.get("backdated_timestamp"))
+            if backdated is not None:
+                return backdated
+    return None
+
+
+def _parser_version(adapter: str) -> str:
+    if adapter == StructuredAdapter.adapter_name:
+        return f"{PARSER_VERSION}/{adapter}+{STRUCTURED_REVISION}"
+    return f"{PARSER_VERSION}/{adapter}"
 
 
 def _identity(value: object, occurrence: int = 1) -> str:
@@ -162,7 +190,7 @@ def _export(
     category = f"facebook/{member.product_key}/{_dataset_key(member)}/{_path_token(member)}"
     return ParsedExport(
         source="facebook",
-        parser_version=f"{PARSER_VERSION}/{adapter}",
+        parser_version=_parser_version(adapter),
         category=category,
         filename=member.filename,
         original_path=member.source_locator,
@@ -213,7 +241,13 @@ def _objects(
         base = _identity(value)
         occurrences[base] += 1
         source_id = _identity(value, occurrences[base])
-        occurred_at = _timestamp(_first_value(value, _TIME_NAMES))
+        backdated_at = _backdated_timestamp(value)
+        if backdated_at is not None:
+            occurred_at = backdated_at
+            extra: dict[str, object] = {"occurred_at_basis": "backdated_timestamp"}
+        else:
+            occurred_at = _timestamp(_first_value(value, _TIME_NAMES))
+            extra = {}
         title = _string(_first_value(value, _TITLE_NAMES))
         text = _string(_first_value(value, _TEXT_NAMES))
         records.append(
@@ -225,7 +259,7 @@ def _objects(
                 title=title,
                 text=text,
                 occurred_at=occurred_at,
-                metadata=_metadata(member, value, adapter),
+                metadata=_metadata(member, value, adapter, **extra),
                 authority_kind="unknown",
             )
         )
@@ -238,7 +272,7 @@ def _objects(
                     source_record_namespace=_namespace(member, "event"),
                     text=text or title,
                     source_record_id=source_id,
-                    metadata=_metadata(member, value, adapter),
+                    metadata=_metadata(member, value, adapter, **extra),
                     authority_kind="unknown",
                 )
             )
@@ -256,7 +290,7 @@ class StructuredAdapter:
     support_level = "losslessly_structured"
     interpretation_level = "generic_lossless"
     adapter_name = "facebook_structured"
-    parser_version = f"{PARSER_VERSION}/structured"
+    parser_version = f"{PARSER_VERSION}/structured+{STRUCTURED_REVISION}"
 
     def parse(self, stream: BinaryIO, member: FacebookMember) -> ParsedExport:
         content = stream.read(MAX_TEXT_BYTES + 1)

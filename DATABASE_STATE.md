@@ -37,6 +37,33 @@ one in isolation):
 Zero drift in either source. The canonical-rebuild proposal below is now fully executed and
 verified, not just executed.
 
+## Update 2026-10-09: Facebook backdated items re-dated in the canonical database
+
+Facebook life events carry two times: the top-level `timestamp` (when the item was created
+on Facebook) and `data[].backdated_timestamp` (when the event itself happened). The
+structured adapter used the first, so a graduation was dated to the day the matching
+"started school" profile entry was created, about two years early. The adapter now prefers
+`backdated_timestamp` and marks such rows `_pdl.occurred_at_basis = "backdated_timestamp"`;
+its parser version is `facebook-export-v1/facebook_structured+backdated-1`.
+
+Only 4 real-world items were affected (Ivy Tech start/graduation, Purdue start/graduation),
+each present twice (`your_posts_check_ins_photos_and_videos_1` and
+`profile_update_history`), so 8 events and 8 records. Event invitations, reactions, and
+comments were checked and were already correctly dated.
+
+A plain re-import cannot apply this: Facebook rows have `authority_kind = 'unknown'`, so a
+changed payload reconciles as `conflicted` and is not written. The 16 rows were instead
+repaired in one transaction by re-parsing the original export with the fixed adapter and
+writing exactly its output: a new full row in `event_versions`/`record_versions` (the
+original version is untouched) and the canonical row updated, `canonical_revision` 1 → 2.
+Each row was first checked to differ from the stored content *only* by this fix (the
+pre-fix adapter's fingerprint had to equal the stored fingerprint). A second pass found
+0 remaining differences, so a later Facebook import reconciles these rows as `unchanged`.
+A JSON copy of the 16 pre-repair rows was kept outside the repository.
+
+Derived layers computed from these rows (metrics, episodes) were not re-run as part of
+this repair; run `derive-sync` / `derive-run` to propagate.
+
 ## Update 2026-09-20: Facebook added as a sixth canonical source
 
 A new `facebook_export` module (see [`FACEBOOK_PRODUCTION_ACCEPTANCE_REPORT.md`](FACEBOOK_PRODUCTION_ACCEPTANCE_REPORT.md))
